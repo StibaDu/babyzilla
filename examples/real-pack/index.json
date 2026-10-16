@@ -1,0 +1,80 @@
+{
+  "sessionID": "ses_eba5e7fa7ffe57sadbXu3hF44G",
+  "created": "2026-10-16T17:35:54.019Z",
+  "model": {
+    "providerID": "ollama-cloud",
+    "id": "glm-5.3-flash"
+  },
+  "projectDir": "~/projects/babyzilla (redacted)",
+  "stats": {
+    "rawTokens": 72223,
+    "packTokens": 1184,
+    "savedPct": 98
+  },
+  "rawTranscriptTokens": 72223,
+  "modules": [
+    {
+      "name": "00-state",
+      "kind": "state",
+      "file": "00-state.md",
+      "path": "00-state.md",
+      "tokens": 316,
+      "triggers": [
+        "contextpack",
+        "plugin",
+        "status",
+        "next steps",
+        "phase 4",
+        "lowfat"
+      ],
+      "hot": true
+    },
+    {
+      "name": "design-decisions",
+      "kind": "decisions",
+      "file": "decisions-design-decisions.md",
+      "path": "decisions-design-decisions.md",
+      "tokens": 326,
+      "triggers": [
+        "jsonl",
+        "distiller",
+        "format",
+        "hot cold",
+        "library",
+        "design"
+      ],
+      "hot": true
+    },
+    {
+      "name": "opencode-hook-shapes",
+      "kind": "code",
+      "file": "code-opencode-hook-shapes.md",
+      "path": "code-opencode-hook-shapes.md",
+      "tokens": 355,
+      "triggers": [
+        "hook",
+        "compaction",
+        "prompt",
+        "api",
+        "shape",
+        "opencode"
+      ],
+      "hot": false
+    },
+    {
+      "name": "build-failures",
+      "kind": "errors",
+      "file": "errors-build-failures.md",
+      "path": "errors-build-failures.md",
+      "tokens": 187,
+      "triggers": [
+        "failed",
+        "bug",
+        "invalid json",
+        "extractor",
+        "400"
+      ],
+      "hot": false
+    }
+  ]
+}

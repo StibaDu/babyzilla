@@ -1,0 +1,11 @@
+# OpenCode v2.0.29 hook/API shapes (empirically verified via debug logs)
+- `ctx.session.hook("compaction", cb(event, output))` → return SessionCompactionResult {summary(required), providerState?, metadata?, tokens?}; event ≈ {sessionID, model, messages}.
+- compaction event messages are **provider-normalized AI-SDK style**: {role:"user"|"assistant"|"tool", content:[{type:"text"|"reasoning"|"tool-call"|"tool-result", text/output/state}]} — NOT {type:"user", parts:[...]}.
+- prompt hook event: {sessionID, messageID, prompt, metadata, delivery}; **prompt is an OBJECT** {text,...}, not an array.
+- tool execute.after event: {tool?, input?, result?, status?, sessionID?} — all possibly null; defensive reads.
+- `ctx.generate.text({model:{providerID,id}, prompt})` → {text} (used for distillation, ~line 442 of index.js).
+- `ctx.session.synthetic` payload requires BOTH name and text (HTTP 400 "Missing key" otherwise).
+- `ctx.session.get({sessionID})` → .location.directory (used for library promotion).
+- API: `opencode api post /api/session/<sid>/compact -d '{}'` (body required); compaction runs at next step boundary — idle session needs a prompt after; messages route = /api/session/<sid>/context (NOT /messages); OpenAPI at /openapi.json.
+- Plugin load is lazy per location → hooks can MISS the 1st compaction registered right after.
+- journal.jsonl line schema: {t, tool, status, tokens(est), head(1200 chars)}.

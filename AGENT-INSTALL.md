@@ -56,6 +56,20 @@ babyzilla    local    ...path to the installed package...
 
 **If this fails** (network, npm, or Git issues) use **Method B** instead:
 
+Verify Method A by checking the config entry exists (the install command
+said `installed and added to .../opencode.json`):
+
+```sh
+grep -r babyzilla ~/.config/opencode/opencode.json* 2>/dev/null || grep -r babyzilla .opencode/opencode.json* 2>/dev/null
+```
+
+**Expected:** a line containing `github:StibaDu/babyzilla`.
+Do **not** rely on `opencode plugin list` for verification — on v2.0.29 it
+can report nothing for Git-installed plugins (observed), which is not an
+error.
+
+**If `plugin add` itself failed** use **Method B** instead:
+
 ```sh
 git clone --depth 1 https://github.com/StibaDu/babyzilla.git \
   "$HOME/.local/share/opencode/babyzilla"
@@ -98,9 +112,15 @@ SID=$(opencode api post /api/session -d '{"title":"bz-install-check"}' \
   | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).data.id))')
 echo "session: $SID"
 opencode api post /api/session/$SID/prompt -d '{"text":"hi"}' > /dev/null
-sleep 4
+sleep 25
 cat ~/.opencode/contextpacks/debug.log
 ```
+
+The plugin instance loads when a session **turn runs** (agent loop start) —
+so the prompt must actually complete with a model reply. On a fresh machine
+this also verifies your human's provider setup works; if the turn itself
+fails for provider reasons, STOP and report that (it is not a BabyZilla
+failure, but BabyZilla cannot be verified without a working model).
 
 **Expected output** contains lines like:
 

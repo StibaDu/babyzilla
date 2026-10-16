@@ -1,0 +1,308 @@
+{
+  "directed": false,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "AGENT-INSTALL.md",
+      "file_type": "document",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "agent_install",
+      "community": 0,
+      "community_name": "BabyZilla Installation Guide (for your AI agent)",
+      "norm_label": "agent-install.md"
+    },
+    {
+      "label": "BabyZilla Installation Guide (for your AI agent)",
+      "file_type": "document",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "agent_install_babyzilla_installation_guide_for_your_ai_agent",
+      "community": 0,
+      "community_name": "BabyZilla Installation Guide (for your AI agent)",
+      "norm_label": "babyzilla installation guide (for your ai agent)"
+    },
+    {
+      "label": "Step 0 \u2014 Environment check",
+      "file_type": "document",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L18",
+      "_origin": "ast",
+      "id": "agent_install_step_0_environment_check",
+      "community": 0,
+      "community_name": "BabyZilla Installation Guide (for your AI agent)",
+      "norm_label": "step 0 \u2014 environment check"
+    },
+    {
+      "label": "Step 1 \u2014 Install the plugin (Method A: one command)",
+      "file_type": "document",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L38",
+      "_origin": "ast",
+      "id": "agent_install_step_1_install_the_plugin_method_a_one_command",
+      "community": 0,
+      "community_name": "BabyZilla Installation Guide (for your AI agent)",
+      "norm_label": "step 1 \u2014 install the plugin (method a: one command)"
+    },
+    {
+      "label": "Step 2 \u2014 Verify the plugin loads",
+      "file_type": "document",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L105",
+      "_origin": "ast",
+      "id": "agent_install_step_2_verify_the_plugin_loads",
+      "community": 0,
+      "community_name": "BabyZilla Installation Guide (for your AI agent)",
+      "norm_label": "step 2 \u2014 verify the plugin loads"
+    },
+    {
+      "label": "Step 3 \u2014 Functional test (compaction produces a ContextPack)",
+      "file_type": "document",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L138",
+      "_origin": "ast",
+      "id": "agent_install_step_3_functional_test_compaction_produces_a_contextpack",
+      "community": 1,
+      "community_name": "Step 3 \u2014 Functional test (compaction produces a ContextPack)",
+      "norm_label": "step 3 \u2014 functional test (compaction produces a contextpack)"
+    },
+    {
+      "label": "3a. Create the scratch session",
+      "file_type": "document",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L144",
+      "_origin": "ast",
+      "id": "agent_install_3a_create_the_scratch_session",
+      "community": 1,
+      "community_name": "Step 3 \u2014 Functional test (compaction produces a ContextPack)",
+      "norm_label": "3a. create the scratch session"
+    },
+    {
+      "label": "3b. Fill it with the sample prompt (\u224811K tokens)",
+      "file_type": "document",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L152",
+      "_origin": "ast",
+      "id": "agent_install_3b_fill_it_with_the_sample_prompt_11k_tokens",
+      "community": 1,
+      "community_name": "Step 3 \u2014 Functional test (compaction produces a ContextPack)",
+      "norm_label": "3b. fill it with the sample prompt (\u224811k tokens)"
+    },
+    {
+      "label": "3c. Request compaction, then force the step boundary",
+      "file_type": "document",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L178",
+      "_origin": "ast",
+      "id": "agent_install_3c_request_compaction_then_force_the_step_boundary",
+      "community": 1,
+      "community_name": "Step 3 \u2014 Functional test (compaction produces a ContextPack)",
+      "norm_label": "3c. request compaction, then force the step boundary"
+    },
+    {
+      "label": "3d. Wait for the pack and measure",
+      "file_type": "document",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L188",
+      "_origin": "ast",
+      "id": "agent_install_3d_wait_for_the_pack_and_measure",
+      "community": 1,
+      "community_name": "Step 3 \u2014 Functional test (compaction produces a ContextPack)",
+      "norm_label": "3d. wait for the pack and measure"
+    },
+    {
+      "label": "Step 4 \u2014 Optional: the babyzilla CLI",
+      "file_type": "document",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L222",
+      "_origin": "ast",
+      "id": "agent_install_step_4_optional_the_babyzilla_cli",
+      "community": 0,
+      "community_name": "BabyZilla Installation Guide (for your AI agent)",
+      "norm_label": "step 4 \u2014 optional: the babyzilla cli"
+    },
+    {
+      "label": "Step 5 \u2014 Report to your human",
+      "file_type": "document",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L238",
+      "_origin": "ast",
+      "id": "agent_install_step_5_report_to_your_human",
+      "community": 0,
+      "community_name": "BabyZilla Installation Guide (for your AI agent)",
+      "norm_label": "step 5 \u2014 report to your human"
+    },
+    {
+      "label": "Troubleshooting quick reference",
+      "file_type": "document",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L253",
+      "_origin": "ast",
+      "id": "agent_install_troubleshooting_quick_reference",
+      "community": 0,
+      "community_name": "BabyZilla Installation Guide (for your AI agent)",
+      "norm_label": "troubleshooting quick reference"
+    },
+    {
+      "label": "Privacy",
+      "file_type": "document",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L264",
+      "_origin": "ast",
+      "id": "agent_install_privacy",
+      "community": 0,
+      "community_name": "BabyZilla Installation Guide (for your AI agent)",
+      "norm_label": "privacy"
+    }
+  ],
+  "links": [
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L1",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_install",
+      "target": "agent_install_babyzilla_installation_guide_for_your_ai_agent",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L264",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_install_babyzilla_installation_guide_for_your_ai_agent",
+      "target": "agent_install_privacy",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L18",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_install_babyzilla_installation_guide_for_your_ai_agent",
+      "target": "agent_install_step_0_environment_check",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L38",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_install_babyzilla_installation_guide_for_your_ai_agent",
+      "target": "agent_install_step_1_install_the_plugin_method_a_one_command",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L105",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_install_babyzilla_installation_guide_for_your_ai_agent",
+      "target": "agent_install_step_2_verify_the_plugin_loads",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L138",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_install_babyzilla_installation_guide_for_your_ai_agent",
+      "target": "agent_install_step_3_functional_test_compaction_produces_a_contextpack",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L222",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_install_babyzilla_installation_guide_for_your_ai_agent",
+      "target": "agent_install_step_4_optional_the_babyzilla_cli",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L238",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_install_babyzilla_installation_guide_for_your_ai_agent",
+      "target": "agent_install_step_5_report_to_your_human",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L253",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_install_babyzilla_installation_guide_for_your_ai_agent",
+      "target": "agent_install_troubleshooting_quick_reference",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L144",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_install_step_3_functional_test_compaction_produces_a_contextpack",
+      "target": "agent_install_3a_create_the_scratch_session",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L152",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_install_step_3_functional_test_compaction_produces_a_contextpack",
+      "target": "agent_install_3b_fill_it_with_the_sample_prompt_11k_tokens",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L178",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_install_step_3_functional_test_compaction_produces_a_contextpack",
+      "target": "agent_install_3c_request_compaction_then_force_the_step_boundary",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "AGENT-INSTALL.md",
+      "source_location": "L188",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_install_step_3_functional_test_compaction_produces_a_contextpack",
+      "target": "agent_install_3d_wait_for_the_pack_and_measure",
+      "confidence_score": 1.0
+    }
+  ],
+  "hyperedges": [],
+  "built_at_commit": "ea916c77e3aa20f567a2d3fd30b52239358f7c1d"
+}

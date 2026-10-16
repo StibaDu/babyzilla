@@ -59,6 +59,22 @@ Every tool result appends one line to the session's `journal.jsonl`:
 are quantifiable (`babyzilla stats`, `lowfat pack show`) and how big a session
 got before compaction.
 
+## Layer 2 — `execute.before` hook (lowfat integration)
+
+Adapted from the bundled lowfat v2 plugin ([zdk/lowfat](https://github.com/zdk/lowfat),
+Apache-2.0). On every shell/bash tool call the plugin asks `lowfat rewrite`
+to transform the command (`git` → `lowfat git`, `ls` → `lowfat ls`, piped
+`| lowfat` markers are skipped). The rewritten command executes and its
+compact output is what the transcript records — plus a row in lowfat's own
+SQLite history backing `lowfat stats`.
+
+The lowfat binary is discovered at plugin load: `PATH`, then
+`~/.local/bin/lowfat`, `~/.cargo/bin/lowfat`, `/usr/local/bin/lowfat`. If it
+is missing, layer 2 logs
+`layer 2 skipped: lowfat binary not found` and everything else keeps working.
+Install it per `AGENT-INSTALL.md` (release tarball — no Rust toolchain) or
+build from source.
+
 ## Library promotion
 
 `tool` and `errors` modules from real project sessions are **promoted** to

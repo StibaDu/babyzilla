@@ -1,12 +1,19 @@
 # BabyZilla 🦖
 
-**70–99% context compression for [OpenCode](https://opencode.ai) v2.**
+**70–99% context compression for [OpenCode](https://opencode.ai) v2 — in two layers, one install.**
 
-BabyZilla replaces OpenCode's compaction summary with AI-distilled **context
-modules** — small files that preserve what actually matters (state, decisions,
-code pointers, failure histories) and drop what doesn't (tool-output bulk).
-It runs automatically at every compaction. Your agent keeps working with,
-measured on real sessions:
+- **Layer 1 — Session compaction** (ContextPack): OpenCode's compaction
+  summary is replaced by AI-distilled **context modules** — state, decisions,
+  code pointers, failure histories — dropping tool-output bulk while keeping
+  exact, re-fetchable facts.
+- **Layer 2 — Command compression** (lowfat, bundled and adapted from
+  [zdk/lowfat](https://github.com/zdk/lowfat), Apache-2.0): shell commands are
+  rewritten *before execution* (`git status`, `ls -la`, `docker …` →
+  token-compact forms), so tool output enters the context pre-compressed.
+
+Both run automatically. Layer 2 needs the `lowfat` binary (~3 MB release
+download, no Rust toolchain); without it BabyZilla stays fully functional
+minus that layer.
 
 | Transcript at compaction | Pack | Savings |
 | --- | --- | --- |
@@ -37,20 +44,23 @@ babyzilla stats    # savings across all packs; also: show / verify / prune
 
 ## How it works
 
-1. **At compaction** BabyZilla hooks OpenCode's `compaction` hook, receives
-   the full transcript, and calls your configured model to distill it into
-   JSONL modules: a state module (*hot*, always inlined), a decisions module
-   (*hot*), and topic/code/errors modules (*cold*).
-2. **On later prompts** cold modules auto-attach when the prompt matches
+1. **Layer 2, before every tool call**: the plugin hooks shell execution and,
+   when the `lowfat` binary is present, rewrites the command through
+   `lowfat rewrite` — output enters the context already compressed.
+2. **Layer 1, at compaction**: BabyZilla hooks OpenCode's `compaction` hook,
+   receives the full transcript, and calls your configured model to distill it
+   into JSONL modules: a state module (*hot*, always inlined), a decisions
+   module (*hot*), and topic/code/errors modules (*cold*).
+3. **On later prompts** cold modules auto-attach when the prompt matches
    their trigger words (max 2 modules, 6K-token budget) — so long-session
    context stays available *without staying in the window*.
-3. **Tool results** are journaled (kind + token estimate + 1200-char head) so
+4. **Tool results** are journaled (kind + token estimate + 1200-char head) so
    savings are measurable and future sessions can reuse them.
-4. **Anything fails → nothing happens.** OpenCode's native compaction runs.
+5. **Anything fails → nothing happens.** OpenCode's native compaction runs.
    BabyZilla never modifies or deletes session history.
 
 See [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) for the full picture and
-[docs/OPTIONS.md](docs/OPTIONS.md) for the five knobs.
+[docs/OPTIONS.md](docs/OPTIONS.md) for the six knobs.
 
 ## Why it works
 

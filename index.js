@@ -20,9 +20,13 @@
 //   - Every hook body is wrapped: any failure logs and leaves the event
 //     untouched, so OpenCode falls back to its normal compaction.
 
+import { exec as execCb } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
+
+const execAsync = promisify(execCb);
 
 const ROOT = path.join(os.homedir(), ".opencode", "contextpacks");
 const JOURNAL_LIMIT_ENTRIES = 2000;
@@ -48,6 +52,9 @@ const defaults = {
   library: true,
   // below this many estimated transcript tokens, native compaction is fine.
   minRawTokens: 4000,
+  // layer 2: rewrite shell commands through the `lowfat` binary before
+  // execution, so tool output enters the context pre-compressed.
+  toolCompression: true,
 };
 
 function log(...args) {
@@ -422,6 +429,33 @@ async function promoteToLibrary(sessionID, modules, projectDir) {
 // Plugin
 // ---------------------------------------------------------------------------
 
+// Layer 2 helpers (lowfat integration) — adapted from lowfat's v2 plugin
+// (github.com/zdk/lowfat by zdk — Apache-2.0).
+
+function shellQuote(value) {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+async function resolveLowfatBinary() {
+  try {
+    const { stdout } = await execAsync("command -v lowfat");
+    const onPath = stdout.trim();
+    if (onPath) return onPath;
+  } catch { /* not on PATH */ }
+  const candidates = [
+    path.join(os.homedir(), ".local", "bin", "lowfat"),
+    path.join(os.homedir(), ".cargo", "bin", "lowfat"),
+    "/usr/local/bin/lowfat",
+  ];
+  for (const candidate of candidates) {
+    try {
+      await execAsync(`test -x ${shellQuote(candidate)}`);
+      return candidate;
+    } catch { /* not here */ }
+  }
+  return null;
+}
+
 export default {
   id: "contextpack",
   setup: async (ctx) => {
@@ -447,6 +481,38 @@ export default {
       });
     } else {
       log("tool.hook unavailable — journal capture disabled");
+    }
+
+    // ---- layer 2: command-output compression (lowfat) ----------------------
+    // Adapted from the lowfat v2 tool-hook plugin
+    // (github.com/zdk/lowfat by zdk — Apache-2.0). Rewrites shell commands
+    // through `lowfat rewrite` before execution so tool output enters the
+    // context pre-compressed. Skips silently when the binary is absent.
+    if (opts.toolCompression !== false && typeof ctx.tool?.hook === "function") {
+      const lowfatBinary = await resolveLowfatBinary();
+      if (lowfatBinary) {
+        await ctx.tool.hook("execute.before", async (a) => {
+          try {
+            if (a?.tool !== "shell" && a?.tool !== "bash") return;
+            const command = a?.input?.command;
+            if (typeof command !== "string" || !command) return;
+            if (/\|\s*lowfat\b/.test(command)) return; // already rewritten
+            let out = "";
+            try {
+              const { stdout } = await execAsync(`${shellQuote(lowfatBinary)} rewrite ${shellQuote(command)}`);
+              out = stdout.trim();
+            } catch (err) {
+              out = String(err?.stdout ?? "").trim();
+            }
+            if (out && out !== command) {
+              a.input = { ...a.input, command: out };
+            }
+          } catch { /* rewrite must never break execution */ }
+        });
+        log(`layer 2 active: shell rewrites via ${lowfatBinary}`);
+      } else {
+        log("layer 2 skipped: lowfat binary not found on PATH or ~/.local/bin (see AGENT-INSTALL.md)");
+      }
     }
 
     // ---- compaction replacement ------------------------------------------

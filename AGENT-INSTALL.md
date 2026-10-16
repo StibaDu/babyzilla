@@ -10,8 +10,11 @@ failing step.
 - Time: ~5 minutes. Cost: one small model call in Step 3 (uses the model your
   human already configured in OpenCode).
 - Requirement: **OpenCode v2.x** and **Node ≥ 18**.
-- What you will install: one plugin (OpenCode package) + optionally a small
-  CLI. All data stays in `~/.opencode/contextpacks/` on this machine.
+- What you will install: **one OpenCode plugin with two compression layers**
+  (Layer 1: session compaction via AI-distilled ContextPack modules; Layer 2:
+  shell-command pre-compression via the bundled lowfat integration, which
+  needs a ~3 MB binary) + optionally a small CLI. All data stays in
+  `~/.opencode/contextpacks/` on this machine.
 
 ---
 
@@ -135,6 +138,42 @@ the output of `opencode plugin list` and the last 20 lines of
 
 ---
 
+## Step 2b — Layer 2: install the lowfat binary
+
+BabyZilla's session-compaction layer works already. Its second layer
+(command-output compression, adapted from [zdk/lowfat](https://github.com/zdk/lowfat))
+needs the `lowfat` binary. First check if it is already there:
+
+```sh
+lowfat --version 2>/dev/null || echo "MISSING"
+```
+
+If `MISSING`, install the matching prebuilt release (no Rust toolchain):
+
+```sh
+case "$(uname -s):$(uname -m)" in
+  "Darwin:arm64")   tgt=lowfat-aarch64-apple-darwin ;;
+  "Darwin:x86_64")  tgt=lowfat-x86_64-apple-darwin ;;
+  "Linux:aarch64")  tgt=lowfat-aarch64-unknown-linux-gnu ;;
+  "Linux:x86_64")   tgt=lowfat-x86_64-unknown-linux-gnu ;;
+  *) echo "unsupported platform — skipping layer 2 (Core features unaffected)"; exit 0 ;;
+esac
+curl -fsSL "https://github.com/zdk/lowfat/releases/download/v0.9.0/$tgt.tar.gz" -o /tmp/lowfat.tgz
+tar -xzf /tmp/lowfat.tgz -C /tmp
+mkdir -p ~/.local/bin && mv /tmp/lowfat ~/.local/bin/lowfat && chmod +x ~/.local/bin/lowfat
+lowfat --version
+```
+
+**Expected:** `lowfat 0.9.0`.
+
+- If `curl` fails: `cargo install lowfat --locked` (only if a Rust toolchain
+  exists); otherwise SKIP — Layer 2 is optional, Layer 1 is already active.
+- After installing the binary, the plugin picks it up on next load (next
+  session turn). Verify layer 2 by running `git status` **through your shell
+  tool in an OpenCode session**, then checking `lowfat stats` shows a git row.
+
+---
+
 ## Step 3 — Functional test (compaction produces a ContextPack)
 
 This creates a scratch session, fills it above the compression threshold,
@@ -238,12 +277,16 @@ skip — the CLI is optional; everything essential works without it.
 ## Step 5 — Report to your human
 
 1. Installed method (A/B), plugin version, options in effect (from the
-   `plugin ready` log line).
+   `plugin ready` log line), whether Layer 2 is active (look for
+   `layer 2 active: shell rewrites via …` in the debug log — if instead you
+   see `layer 2 skipped`, report that the lowfat binary is missing and
+   re-run Step 2b).
 2. Measured savings from Step 3d (e.g. `11.5K raw → 269 pack tok, 98.2%`).
 3. What happens now: at any future compaction (automatic when context fills,
    or manual `/compact`), the summary is replaced by AI-distilled modules;
    relevant cold modules auto-attach to later prompts (max 2, 6K-token budget);
-   `/contextpack` in any OpenCode session shows live stats.
+   every shell call the agent makes is pre-compressed by the lowfat layer (if
+   installed); `/contextpack` in any OpenCode session shows live stats.
 4. Data location + removal: everything lives in `~/.opencode/contextpacks/`.
    Uninstall: remove the plugin entry / `opencode plugin remove babyzilla`,
    then `rm -rf ~/.opencode/contextpacks`.
@@ -259,6 +302,7 @@ skip — the CLI is optional; everything essential works without it.
 | first compaction produced nothing | lazy load can miss a compaction that fires immediately | benign — next compaction works |
 | `distillation failed ... falling back to native` | model/provider issue for the distill call | benign fallback; check provider auth |
 | `already in flight / yielding` log lines | duplicate compaction protection | benign, expected noise |
+| `layer 2 skipped: lowfat binary not found` | lowfat binary not installed | layer 1 works; run Step 2b for command compression |
 | pack exists but `verify` reports missing files | modules reference files your human moved/deleted | informational only |
 
 ## Privacy

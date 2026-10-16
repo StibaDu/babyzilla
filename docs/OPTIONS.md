@@ -27,6 +27,7 @@ once.)
 
 | Option | Default | Notes |
 | --- | --- | --- |
+| `toolCompression` | `true` | Layer 2 — rewrite shell commands through the `lowfat` binary before execution (`lowfat` by zdk, bundled integration). Needs the binary; without it the layer is skipped. |
 | `distillModel` | `null` | `null` = use the session's model. Set `{"providerID":"…","id":"…"}` to pin a specific distiller (recommend a cheap, instruction-reliable model — distillation is a summarization task, not an agentic one). |
 | `maxAttach` | `2` | Max cold modules auto-attached to one prompt. Raise to 3–4 if you often jump between topics. |
 | `attachBudgetTokens` | `6000` | Total estimated-token budget for auto-attached modules per prompt. |

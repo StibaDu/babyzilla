@@ -5,6 +5,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import {
   loadPacks, loadPack, renderStats, renderPack, statsJson,
   scanRefs, parseRefToken, isUncertainPath, resolveFirst,
@@ -290,4 +292,15 @@ test("retrieve accepts file:// and clamps to end of file", () => {
 test("retrieve rejects a missing ref or file", () => {
   assert.throws(() => retrieve(undefined), /usage: babyzilla retrieve/);
   assert.throws(() => retrieve("/definitely/not/here:1"), /ENOENT/);
+});
+
+test("the CLI runs when reached through a symlink on PATH", () => {
+  // `~/.local/bin/babyzilla -> bin/babyzilla.mjs` is the normal install. The
+  // main guard must realpath argv[1], otherwise the process exits silently.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bz-link-"));
+  const link = path.join(dir, "babyzilla");
+  fs.symlinkSync(fileURLToPath(new URL("../bin/babyzilla.mjs", import.meta.url)), link);
+  const res = spawnSync(link, ["--version"], { encoding: "utf8" });
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /^babyzilla \d+\.\d+\.\d+/);
 });

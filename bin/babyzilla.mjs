@@ -715,7 +715,11 @@ function main() {
   }
 }
 
-// run only when executed directly (importable for tests)
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  main();
+// run only when executed directly (importable for tests).
+// realpath both sides: the bin is normally reached through a symlink on PATH
+// (~/.local/bin/babyzilla), and argv[1] keeps the link path.
+if (process.argv[1]) {
+  let self = path.resolve(process.argv[1]);
+  try { self = fs.realpathSync(self); } catch { /* keep the resolved path */ }
+  if (import.meta.url === pathToFileURL(self).href) main();
 }

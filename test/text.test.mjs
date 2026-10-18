@@ -1,7 +1,7 @@
 // Pure-helper tests — no plugin load, no filesystem, no model calls.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { estTokens, compressToolText, compressToolResult, routeDistill } from "../lib/text.mjs";
+import { estTokens, compressToolText, compressToolResult, routeDistill, selectCompressibleParts } from "../lib/text.mjs";
 
 // ── estTokens ───────────────────────────────────────────────────────────────
 
@@ -107,6 +107,60 @@ test("compressToolResult only rewrites the large parts of a mixed result", () =>
   assert.equal(event.result.content[0].text, small);
   assert.match(event.result.content[1].text, /elided by ContextPack/);
   assert.equal(event.result.content[2].text, undefined);
+});
+
+test("compressToolResult is idempotent", () => {
+  const event = { tool: "read", result: { content: [{ type: "text", text: longText(400) }] } };
+  assert.equal(compressToolResult(event, opts), 1);
+  const once = event.result.content[0].text;
+  assert.equal(compressToolResult(event, opts), 0);
+  assert.equal(event.result.content[0].text, once);
+});
+
+// ── selectCompressibleParts ─────────────────────────────────────────────────
+
+const toolPart = (id, text) => ({ type: "tool", id, name: "read", state: { content: [{ type: "text", text }] } });
+const assistant = (...parts) => ({ type: "assistant", content: parts });
+
+test("selectCompressibleParts protects the most recent results", () => {
+  const messages = [
+    { type: "user", text: "hi" },
+    assistant(toolPart("a", "A"), toolPart("b", "B"), toolPart("c", "C")),
+  ];
+  const picked = selectCompressibleParts(messages, 2);
+  assert.deepEqual(picked.map((p) => p.id), ["a"]);
+});
+
+test("selectCompressibleParts skips parts that are already compressed", () => {
+  const messages = [assistant(
+    toolPart("a", "A"),
+    toolPart("b", "B\n\n[ContextPack] compressed"),
+    toolPart("c", "C"),
+  )];
+  const picked = selectCompressibleParts(messages, 1);
+  assert.deepEqual(picked.map((p) => p.id), ["a"]);
+});
+
+test("selectCompressibleParts ignores non-tool and text parts", () => {
+  const messages = [
+    { type: "user", text: "hi" },
+    assistant({ type: "text", text: "thinking" }, { type: "tool", id: "x" }),
+  ];
+  assert.deepEqual(selectCompressibleParts(messages, 0), []);
+});
+
+test("selectCompressibleParts can restrict to specific tools", () => {
+  const messages = [assistant(
+    { type: "tool", id: "s", name: "shell", state: { content: [{ type: "text", text: "sh" }] } },
+    toolPart("r", "R"),
+  )];
+  assert.deepEqual(selectCompressibleParts(messages, 0, new Set(["read"])).map((p) => p.id), ["r"]);
+});
+
+test("selectCompressibleParts with protectRecent 0 returns all eligible parts", () => {
+  const messages = [assistant(toolPart("a", "A"), toolPart("b", "B"))];
+  assert.deepEqual(selectCompressibleParts(messages, 0).map((p) => p.id), ["a", "b"]);
+  assert.deepEqual(selectCompressibleParts(null, 1), []);
 });
 
 // ── routeDistill ────────────────────────────────────────────────────────────

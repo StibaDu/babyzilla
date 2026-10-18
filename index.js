@@ -25,7 +25,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { estTokens, compressToolText, compressToolResult, routeDistill } from "./lib/text.mjs";
+import { estTokens, compressToolText, compressToolResult, routeDistill, selectCompressibleParts } from "./lib/text.mjs";
 import {
   fmt, dirSlug,
   TOOL_RESULT_HEAD_CHARS, TOOL_RESULT_TAIL_CHARS, USER_BUDGET_TOKENS,
@@ -38,6 +38,9 @@ const execAsync = promisify(execCb);
 
 const ROOT = path.join(os.homedir(), ".opencode", "contextpacks");
 const JOURNAL_LIMIT_ENTRIES = 2000;
+// Tools whose results are safe to compress at the source. Shell output is
+// already handled by lowfat, so re-compressing it would only lose structure.
+const COMPRESSIBLE_TOOLS = new Set(["read", "grep", "glob", "list"]);
 // Compaction re-entrancy: sid → expiry ms. Two queued compaction events (or a
 // re-registered hook after a config reload) must not distill the same session
 // concurrently; a conservative TTL covers abnormal aborts.
@@ -75,6 +78,9 @@ const defaults = {
   toolResultMinTokens: 1200,
   toolResultHeadLines: 40,
   toolResultTailLines: 20,
+  // keep this many of the most recent tool results verbatim — the agent is
+  // working from them, so compressing them causes re-reads.
+  toolResultProtectRecent: 1,
 };
 
 function log(...args) {
@@ -369,6 +375,24 @@ async function resolveLowfatBinary() {
   return null;
 }
 
+// Compress tool results from the live session context, protecting the most
+// recent one(s). Runs on every tool completion, so it must stay cheap and
+// idempotent: parts that already carry the ContextPack footer are skipped.
+async function compressOlderToolResults(ctx, sessionID, opts) {
+  if (typeof ctx.session?.context !== "function" || !sessionID) return 0;
+  const messages = await ctx.session.context({ sessionID });
+  const targets = selectCompressibleParts(messages, opts.toolResultProtectRecent ?? 1, COMPRESSIBLE_TOOLS);
+  let n = 0;
+  for (const part of targets) {
+    n += compressToolResult(
+      { tool: part.name, result: { content: part.state.content } },
+      opts,
+      (tool, before, after) => log(`tool result compressed: ${tool} ${fmt(before)}→${fmt(after)} tok`),
+    );
+  }
+  return n;
+}
+
 export default {
   id: "contextpack",
   setup: async (ctx) => {
@@ -376,7 +400,7 @@ export default {
 
     // ---- journal capture (stats + raw bulk record) -------------------------
     if (typeof ctx.tool?.hook === "function") {
-      await ctx.tool.hook("execute.after", (event) => {
+      await ctx.tool.hook("execute.after", async (event) => {
         try {
           const toolName = event?.tool ?? event?.toolName ?? event?.name ?? "?";
           const sid = event?.sessionID;
@@ -391,13 +415,22 @@ export default {
             head: (out || err || "").slice(0, 1200),
           }).catch(() => {});
         } catch { /* journal must never affect execution */ }
-        // compress large tool results before the model ever sees them
+        // compress large tool results, but never the most recent one(s):
+        // the agent is actively working from those, and compressing them
+        // causes the re-reads we saw in the head-to-head.
         if (opts.toolResultCompression) {
           try {
-            const toolName = String(event?.tool ?? event?.toolName ?? event?.name ?? "").toLowerCase();
-            if (toolName === "read" || toolName === "grep" || toolName === "glob" || toolName === "list") {
-              compressToolResult(event, opts, (tool, before, after) =>
-                log(`tool result compressed: ${tool} ${fmt(before)}→${fmt(after)} tok`));
+            let compressed = 0;
+            if (typeof ctx.session?.context === "function" && event?.sessionID) {
+              compressed = await compressOlderToolResults(ctx, event.sessionID, opts);
+            }
+            // No context API (older runtime): fall back to compressing in place.
+            if (!compressed && typeof ctx.session?.context !== "function") {
+              const toolName = String(event?.tool ?? event?.toolName ?? event?.name ?? "").toLowerCase();
+              if (COMPRESSIBLE_TOOLS.has(toolName)) {
+                compressToolResult(event, opts, (tool, before, after) =>
+                  log(`tool result compressed: ${tool} ${fmt(before)}→${fmt(after)} tok`));
+              }
             }
           } catch (e) { log("tool result compression skipped:", e?.message ?? e); }
         }
@@ -602,7 +635,21 @@ export default {
             }
             prompt.files.push({ uri: `file://${p}` });
           }
-          if (picked.length) log(`prompt hook: attached ${picked.map((m) => m.file).join(", ")} by trigger match`);
+          if (picked.length) {
+            log(`prompt hook: attached ${picked.map((m) => m.file).join(", ")} by trigger match`);
+            // Module prose often carries line counts captured when the pack was
+            // made; those drift as files change. Tell the model explicitly.
+            if (typeof ctx.session?.synthetic === "function") {
+              const captured = idx.updated ?? idx.created;
+              try {
+                await ctx.session.synthetic({
+                  sessionID: sid,
+                  text: `[ContextPack] attached ${picked.length} module(s) captured ${captured ?? "earlier"}. Line counts and file sizes inside them may be stale — verify exact content with the read tool (offset/limit) or \`babyzilla retrieve <path>:<start>-<end>\` before relying on numbers.`,
+                });
+                log("prompt hook: freshness note sent");
+              } catch (e) { log("attach freshness note skipped:", e?.message ?? e); }
+            }
+          }
         } catch (e) {
           log("prompt hook failed (non-fatal):", e?.message ?? e);
         }

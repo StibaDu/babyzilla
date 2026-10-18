@@ -6,6 +6,13 @@ All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
 ### Added
 
+- **`babyzilla retrieve <path>[:<start>[-<end>]]`** — print an exact, numbered
+  line range, so an elided span can be pulled back without re-reading the file.
+- **`toolResultProtectRecent`** (default `1`) — the most recent tool results
+  stay verbatim; only older ones are compressed. Removes the "compress → agent
+  re-reads" loop.
+- **Attach freshness note** — when a cold module is attached, the session gets
+  a short note that its captured line counts may be stale, and how to verify.
 - **CI** — GitHub Actions runs the test suite on Node 18, 20 and 22 for every
   push to `main` and every pull request.
 - **`docs/BENCHMARKS.md`** — the measured head-to-head against Headroom 0.41.0
@@ -16,7 +23,7 @@ All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 - The pure distillation helpers (`reduceForDistill`, `parseModules`,
   `buildSummary`, `distillationPrompt`, `moduleFileFor`, `libraryIndex`) moved
   into `lib/` so Layer 1 is unit-testable without loading the plugin.
-- Test suite grew from 30 to **60 tests**, including regression coverage for the
+- Test suite grew from 30 to **70 tests**, including regression coverage for the
   library-path bug fixed in 0.3.0.
 
 ## [0.3.0] — 2026-10-18

@@ -46,6 +46,7 @@ Optional companion CLI (zero deps, needs Node ≥ 18):
 ```sh
 npm i -g git+https://github.com/StibaDu/babyzilla.git
 babyzilla stats    # savings across all packs; also: show / verify / prune
+babyzilla retrieve src/app.js:120-160   # exact span, numbered
 ```
 
 ## How it works
@@ -53,20 +54,24 @@ babyzilla stats    # savings across all packs; also: show / verify / prune
 1. **Layer 2, before every tool call**: the plugin hooks shell execution and,
    when the `lowfat` binary is present, rewrites the command through
    `lowfat rewrite` — output enters the context already compressed.
-2. **Layer 1, at compaction**: BabyZilla hooks OpenCode's `compaction` hook,
+2. **Layer 2b, after each `read` / `grep` / `glob`**: large results are
+   compacted at the source. The most recent result stays verbatim
+   (`toolResultProtectRecent`), so the agent keeps the content it is actively
+   working from; older ones are reduced to head + tail + structure.
+3. **Layer 1, at compaction**: BabyZilla hooks OpenCode's `compaction` hook,
    receives the full transcript, and calls your configured model to distill it
    into JSONL modules: a state module (*hot*, always inlined), a decisions
    module (*hot*), and topic/code/errors modules (*cold*).
-3. **On later prompts** cold modules auto-attach when the prompt matches
+4. **On later prompts** cold modules auto-attach when the prompt matches
    their trigger words (max 2 modules, 6K-token budget) — so long-session
    context stays available *without staying in the window*.
-4. **Tool results** are journaled (kind + token estimate + 1200-char head) so
+5. **Tool results** are journaled (kind + token estimate + 1200-char head) so
    savings are measurable and future sessions can reuse them.
-5. **Anything fails → nothing happens.** OpenCode's native compaction runs.
+6. **Anything fails → nothing happens.** OpenCode's native compaction runs.
    BabyZilla never modifies or deletes session history.
 
 See [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) for the full picture and
-[docs/OPTIONS.md](docs/OPTIONS.md) for the six knobs.
+[docs/OPTIONS.md](docs/OPTIONS.md) for every option.
 
 ## Why it works
 

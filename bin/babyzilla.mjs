@@ -380,12 +380,60 @@ export function renderPrune(root = packRoot(), olderThan, dryRun) {
 
 // ── CLI entry ───────────────────────────────────────────────────────────────
 
+// ── retrieve ────────────────────────────────────────────────────────────────
+
+/**
+ * Print an exact, numbered line range from a file.
+ *
+ *   retrieve("src/app.js")            → first `maxLines` lines
+ *   retrieve("src/app.js:120")        → line 120 (± context)
+ *   retrieve("src/app.js:120-160")    → lines 120..160
+ *   retrieve("file:///abs/path:5-9")  → same, file:// accepted
+ *
+ * This is the CLI counterpart of the read tool's offset/limit: it lets an
+ * agent (or a human) pull back a span that ContextPack elided, without
+ * re-reading the whole file.
+ */
+export function retrieve(ref, { cwd = process.cwd(), maxLines = 400, context = 0 } = {}) {
+  if (!ref) throw new Error("usage: babyzilla retrieve <path>[:<start>[-<end>]] [--context N] [--max-lines N]");
+  let spec = String(ref).replace(/^file:\/\//, "");
+  let start = null;
+  let end = null;
+  const m = /^(.*?):(\d+)(?:-(\d+))?$/.exec(spec);
+  if (m) {
+    spec = m[1];
+    start = Number(m[2]);
+    end = m[3] ? Number(m[3]) : start;
+  }
+  const file = path.resolve(cwd, spec);
+  const lines = fs.readFileSync(file, "utf8").split("\n");
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  let a;
+  let b;
+  if (start === null) {
+    a = 1;
+    b = Math.min(lines.length, Math.max(1, maxLines));
+  } else {
+    a = Math.max(1, start - context);
+    b = Math.min(lines.length, Math.max(end, start) + context);
+    if (b >= a && b - a + 1 > maxLines) b = a + maxLines - 1;
+  }
+  const out = [`Read file ${file}, lines ${a}-${b} of ${lines.length}`];
+  for (let i = a; i <= b; i++) out.push(`${i}: ${lines[i - 1]}`);
+  if (b < lines.length) {
+    out.push(`[... ${lines.length - b} more lines — pass :${b + 1}-${Math.min(lines.length, b + maxLines)} for the next span ...]`);
+  }
+  return out.join("\n") + "\n";
+}
+
 const HELP = `babyzilla ${"— inspect ContextPack session data"}
 
 Usage:
   babyzilla show [sessionID]        one pack's stats & module index (default: newest)
   babyzilla stats [--json]          aggregate savings across all packs
   babyzilla verify [sessionID]      check path:line pointers still resolve
+  babyzilla retrieve <path>[:<start>[-<end>]] [--context N] [--max-lines N]
+                                    print an exact, numbered line range
   babyzilla prune [--older-than 2w] [--dry-run]
                                     remove old session packs (sessions untouched)
 
@@ -401,6 +449,13 @@ function main() {
       case "show": out(show(rest[0] || undefined)); break;
       case "stats": out(rest.includes("--json") ? JSON.stringify(statsJson(), null, 2) + "\n" : renderStats()); break;
       case "verify": out(renderVerify(rest[0] || undefined)); break;
+      case "retrieve": {
+        const ref = rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined;
+        const maxLines = rest.includes("--max-lines") ? Number(rest[rest.indexOf("--max-lines") + 1]) : 400;
+        const ctxLines = rest.includes("--context") ? Number(rest[rest.indexOf("--context") + 1]) : 0;
+        out(retrieve(ref, { maxLines, context: ctxLines }));
+        break;
+      }
       case "prune": {
         const older = rest.includes("--older-than") ? rest[rest.indexOf("--older-than") + 1] : "2w";
         out(renderPrune(undefined, older, rest.includes("--dry-run")));

@@ -9,6 +9,7 @@ import {
   loadPacks, loadPack, renderStats, renderPack, statsJson,
   scanRefs, parseRefToken, isUncertainPath, resolveFirst,
   parseDuration, prunePlan, libraryStats, renderVerify, savingsPct,
+  retrieve,
 } from "../bin/babyzilla.mjs";
 
 // ── fixture helpers ─────────────────────────────────────────────────────────
@@ -231,4 +232,44 @@ test("renderPack includes hot/cold markers, triggers, journal line", () => {
   assert.match(out, /● hot/);
   assert.match(out, /○ cold/);
   assert.match(out, /tool results/);
+});
+// ── retrieve ────────────────────────────────────────────────────────────────
+
+function tmpFile(lines) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bz-ret-"));
+  const file = path.join(dir, "sample.txt");
+  fs.writeFileSync(file, lines.join("\n") + "\n");
+  return file;
+}
+
+test("retrieve prints an exact numbered range", () => {
+  const file = tmpFile(Array.from({ length: 10 }, (_, i) => `line ${i + 1}`));
+  const out = retrieve(`${file}:3-5`);
+  assert.match(out, /lines 3-5 of 10/);
+  assert.match(out, /\n3: line 3\n4: line 4\n5: line 5\n/);
+});
+
+test("retrieve without a range starts at 1 and caps at maxLines", () => {
+  const file = tmpFile(Array.from({ length: 50 }, (_, i) => `line ${i + 1}`));
+  const out = retrieve(file, { maxLines: 5 });
+  assert.match(out, /lines 1-5 of 50/);
+  assert.match(out, /more lines/);
+});
+
+test("retrieve expands around a single line with context", () => {
+  const file = tmpFile(Array.from({ length: 20 }, (_, i) => `line ${i + 1}`));
+  const out = retrieve(`${file}:10`, { context: 2 });
+  assert.match(out, /lines 8-12 of 20/);
+});
+
+test("retrieve accepts file:// and clamps to end of file", () => {
+  const file = tmpFile(["a", "b", "c"]);
+  const out = retrieve(`file://${file}:2-99`);
+  assert.match(out, /lines 2-3 of 3/);
+  assert.match(out, /3: c/);
+});
+
+test("retrieve rejects a missing ref or file", () => {
+  assert.throws(() => retrieve(undefined), /usage: babyzilla retrieve/);
+  assert.throws(() => retrieve("/definitely/not/here:1"), /ENOENT/);
 });

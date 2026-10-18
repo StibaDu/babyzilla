@@ -52,12 +52,31 @@ library for the project. Matching modules are attached as prompt files
 `attachBudgetTokens`. The attached files appear to the agent just like
 native prompt attachments.
 
-### 3. `tool.hook("execute.after")` — the journal
+### 3. `tool.hook("execute.after")` — the journal + tool-result compression
 
 Every tool result appends one line to the session's `journal.jsonl`:
 `{t, tool, status, tokens (est), head (≤1200 chars)}`. This is how savings
 are quantifiable (`babyzilla stats`, `lowfat pack show`) and how big a session
 got before compaction.
+
+The same hook compresses large tool results (Layer 2b, below).
+
+## Layer 2b — tool-result compression (`execute.after`)
+
+`read`, `grep`, `glob` and `list` results above `toolResultMinTokens` are
+rewritten in place before they are persisted, so every later turn pays the
+smaller size. The rewrite keeps a head, a tail, and every structural
+(`import`/`export`/`class`/`def`/…), diagnostic (`ERROR`/`FATAL`/`panic`/…) and
+`TODO` line; line numbers are preserved and elided spans are marked.
+
+Compression is **deferred by one result**: `toolResultProtectRecent` (default
+`1`) keeps the most recent result verbatim, because that is the content the
+agent is actively working from. On the next tool call it becomes eligible.
+
+`session.context({sessionID})` returns the live message objects, so the plugin
+can compress older parts without touching the session history in the database.
+The rewrite is idempotent: a part that already carries the ContextPack footer
+is skipped.
 
 ## Layer 2 — `execute.before` hook (lowfat integration)
 

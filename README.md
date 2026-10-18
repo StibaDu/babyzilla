@@ -74,7 +74,10 @@ per-project library that outlives individual sessions.
 ## Requirements & privacy
 
 - OpenCode **v2**, any model configured (distillation uses the session's
-  model by default; pin a cheaper one with `distillModel`).
+  model by default; pin a cheaper one with `distillModel`). This includes
+  **OpenCode's free tier** — session-less distillation calls are rejected
+  there, so BabyZilla falls back to the session-scoped call automatically
+  (see `distillVia` in `docs/OPTIONS.md`).
 - Distillation sends transcript text to your configured model provider.
   Journals, module files, and stats stay on disk in
   `~/.opencode/contextpacks/` — delete anytime (`babyzilla prune` or

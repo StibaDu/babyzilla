@@ -45,6 +45,15 @@ log("contextpack module loaded, data dir:", ROOT);
 const defaults = {
   // null -> use the session's own model for distillation.
   distillModel: null,
+  // how to route the distillation call:
+  //   "auto"    -> try the session-less call first (the unchanged legacy path)
+  //                and only fall back to the session-scoped call when it is
+  //                rejected. Every working provider stays byte-identical while
+  //                gated ones (OpenCode's free tier) now succeed via fallback.
+  //   "session" -> try the session-scoped call first (uses the session's own
+  //                model), falling back to the session-less call.
+  //   "text"    -> session-less only, no fallback (strict legacy behaviour).
+  distillVia: "auto",
   // max cold modules attached to one prompt + their combined token budget.
   maxAttach: 2,
   attachBudgetTokens: 6000,
@@ -301,6 +310,37 @@ function normalizeModel(m) {
   return providerID && id ? { providerID, id } : null;
 }
 
+// Route distillation text generation.
+//
+// `ctx.generate.text` is intentionally session-less, but some provider-side
+// gates reject session-less calls — OpenCode's free tier answers them with
+// "free tier can only be used from within OpenCode", which used to force the
+// native-compaction fallback. `ctx.session.generate` carries the session
+// identity and is accepted, so it is used as a fallback (or, if opted in, as
+// the primary route). The legacy session-less call stays first by default, so
+// providers that already work are unaffected.
+async function distillText(ctx, { sessionID, model, prompt, preferSession, allowFallback = true }) {
+  const canSession = typeof ctx.session?.generate === "function" && !!sessionID;
+  const canText = typeof ctx.generate?.text === "function";
+  const viaSession = async () => {
+    if (!canSession) throw new Error("session-scoped generate unavailable");
+    return (await ctx.session.generate({ sessionID, prompt }))?.text;
+  };
+  const viaText = async () => {
+    if (!canText) throw new Error("generate.text unavailable");
+    return (await ctx.generate.text({ model, prompt }))?.text;
+  };
+  const first = preferSession ? viaSession : viaText;
+  if (!allowFallback) return first();
+  const second = preferSession ? viaText : viaSession;
+  try {
+    return await first();
+  } catch (e) {
+    log(`distillation call failed (${preferSession ? "session" : "text"}), retrying via the other route:`, e?.message ?? e);
+    return second();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Pack IO
 // ---------------------------------------------------------------------------
@@ -552,7 +592,10 @@ export default {
           let modules = null;
           for (let attempt = 1; attempt <= 2 && !modules; attempt++) {
             const retryNote = attempt > 1 ? "\n\nIMPORTANT: your previous reply was not parseable. Output ONLY newline-delimited JSON objects per line, exactly as instructed. No thinking, no fences." : "";
-            const out = await ctx.generate.text({ model, prompt: DISTILL_INSTRUCTIONS + "\n\n" + prompt + retryNote });
+            const mode = opts.distillVia ?? "auto";
+            const preferSession = mode === "session";
+            const allowFallback = mode !== "text";
+            const out = { text: await distillText(ctx, { sessionID: event.sessionID, model, prompt: DISTILL_INSTRUCTIONS + "\n\n" + prompt + retryNote, preferSession, allowFallback }) };
             try {
               modules = parseModules(out.text);
             } catch (e) {

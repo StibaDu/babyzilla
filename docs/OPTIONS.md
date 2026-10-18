@@ -12,6 +12,7 @@ hot-reload on config change):
       "package": "babyzilla",
       "options": {
         "distillModel": null,
+        "distillVia": "auto",
         "maxAttach": 2,
         "attachBudgetTokens": 6000,
         "library": true,
@@ -29,6 +30,7 @@ once.)
 | --- | --- | --- |
 | `toolCompression` | `true` | Layer 2 — rewrite shell commands through the `lowfat` binary before execution (`lowfat` by zdk, bundled integration). Needs the binary; without it the layer is skipped. |
 | `distillModel` | `null` | `null` = use the session's model. Set `{"providerID":"…","id":"…"}` to pin a specific distiller (recommend a cheap, instruction-reliable model — distillation is a summarization task, not an agentic one). |
+| `distillVia` | `"auto"` | How the distillation call is routed. `"auto"` tries the session-less call first (unchanged behaviour) and falls back to the session-scoped call when a provider rejects it — this is what makes **OpenCode's free tier** work. `"session"` tries the session-scoped call first. `"text"` keeps the strict legacy behaviour (session-less only, no fallback). |
 | `maxAttach` | `2` | Max cold modules auto-attached to one prompt. Raise to 3–4 if you often jump between topics. |
 | `attachBudgetTokens` | `6000` | Total estimated-token budget for auto-attached modules per prompt. |
 | `library` | `true` | Promote tool/errors modules to the cross-session project library. |

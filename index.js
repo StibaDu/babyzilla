@@ -428,7 +428,15 @@ function matchModules(idx, userText) {
 // ---------------------------------------------------------------------------
 
 async function libraryIndex(dir) {
-  return (await readJson(path.join(ROOT, "library", dirSlug(dir), "index.json"))) ?? { modules: [] };
+  const base = path.join(ROOT, "library", dirSlug(dir));
+  const idx = (await readJson(path.join(base, "index.json"))) ?? { modules: [] };
+  // Library indexes store only `file` (they live next to their index). Attach the
+  // absolute path here so the prompt hook does not fall back to the session pack
+  // directory, where no such file exists.
+  if (Array.isArray(idx.modules)) {
+    idx.modules = idx.modules.map((m) => (m.path ? m : { ...m, path: path.join(base, m.file) }));
+  }
+  return idx;
 }
 
 async function promoteToLibrary(sessionID, modules, projectDir) {
@@ -710,7 +718,13 @@ export default {
             budget -= m.tokens;
           }
           for (const m of picked) {
-            const p = m.path ?? `${ROOT}/sessions/${sid}/${m.file}`;
+            const p = m.path ?? path.join(ROOT, "sessions", sid, m.file);
+            // A stale or deleted module must never abort the user's turn: OpenCode
+            // rejects the whole prompt when an attachment cannot be read.
+            try { await fs.access(p); } catch {
+              log(`prompt hook: skipping missing module file ${m.file} (${p})`);
+              continue;
+            }
             prompt.files.push({ uri: `file://${p}` });
           }
           if (picked.length) log(`prompt hook: attached ${picked.map((m) => m.file).join(", ")} by trigger match`);

@@ -98,7 +98,7 @@ except Layer 1.
    ~8K tokens of tool results stay byte-for-byte. Every row and pointer is
    reversible through the content-addressed page store (falling back to the
    session database). Works for `shell`, `grep`, `read` — everything.
-4. **Layer 3, historical user bulk**: a user message *older than the current
+4. **Layer 1b, historical user bulk**: a user message *older than the current
    turn* above 32K tokens (`requestUserBulkMinTokens`) is condensed the same
    way — opening, constraint lines and closing kept verbatim, the rest paged
    behind a recall handle. The **live** user message is never touched.

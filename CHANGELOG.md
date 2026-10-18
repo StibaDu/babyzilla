@@ -2,7 +2,7 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.3.2] — 2026-10-18
 
 ### Fixed
 

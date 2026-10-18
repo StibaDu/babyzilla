@@ -276,6 +276,19 @@ Useful commands: `babyzilla show` (newest pack), `stats [--json]`,
 `prune --older-than 2w --dry-run` (housekeeping). If npm install fails,
 skip — the CLI is optional; everything essential works without it.
 
+If you installed from a clone instead, link it so the `babyzilla recall <hash>`
+hints that appear in the transcript actually resolve:
+
+```sh
+mkdir -p ~/.local/bin
+ln -sf "$PWD/bin/babyzilla.mjs" ~/.local/bin/babyzilla
+chmod +x bin/babyzilla.mjs
+babyzilla --version   # must print a version, not nothing
+```
+
+(Through a symlink the CLI used to exit silently; fixed in v0.7.1. If
+`babyzilla --version` prints nothing, you are on an older copy.)
+
 ---
 
 ## Step 5 — Report to your human

@@ -2,6 +2,25 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.7.1] — 2026-10-18
+
+### Fixed
+
+- **`babyzilla recall` was a silent no-op through a symlink.** The CLI's main
+  guard compared `import.meta.url` with the raw `argv[1]`, so
+  `~/.local/bin/babyzilla -> bin/babyzilla.mjs` matched nothing and the process
+  exited 0 with no output. Every `babyzilla recall <hash>` hint printed by a
+  marker or a ledger row therefore did nothing. Both sides are now realpathed.
+  Regression test spawns the bin through a symlink.
+- Recall handles are only advertised when the bytes are actually paged: a
+  synthetic `call_…`/`i3` id is no longer printed as if it were recallable.
+
+### Changed
+
+- README banner shrunk to `smslant` (47 cols) and moved to the very top; the
+  layer overview is now six layers in execution order.
+- `AGENT-INSTALL.md` documents the `~/.local/bin` symlink and how to verify it.
+
 ## [0.7.0] — 2026-10-18
 
 ### Added

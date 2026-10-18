@@ -123,6 +123,36 @@ test("parseModules accepts a single {modules:[...]} object", () => {
   assert.equal(parseModules(raw).length, 2);
 });
 
+test("parseModules accepts a top-level array", () => {
+  const raw = JSON.stringify([
+    { kind: "state", name: "00-state", triggers: ["a"], content: "s" },
+    { kind: "topic", name: "t", triggers: ["b"], content: "body" },
+  ]);
+  const mods = parseModules(raw);
+  assert.equal(mods.length, 2);
+  assert.equal(mods[0].kind, "state");
+  assert.equal(mods[1].name, "t");
+});
+
+test("parseModules accepts a pretty-printed array", () => {
+  const raw = JSON.stringify([
+    { kind: "state", name: "00-state", triggers: ["a"], content: "s" },
+    { kind: "code", name: "hooks", triggers: ["b"], content: "body" },
+  ], null, 2);
+  const mods = parseModules(raw);
+  assert.equal(mods.length, 2);
+  assert.equal(mods[1].kind, "code");
+});
+
+test("parseModules ignores a prose [ before a {modules} object", () => {
+  const raw = "[ContextPack] note\n" + JSON.stringify({ modules: [
+    { kind: "state", name: "00-state", triggers: [], content: "s" },
+  ] });
+  const mods = parseModules(raw);
+  assert.equal(mods.length, 1);
+  assert.equal(mods[0].content, "s");
+});
+
 test("parseModules strips think blocks and code fences", () => {
   const raw = " thinkinginternal reasoning with {braces}</think>\n```json\n" +
     '{"kind":"state","name":"00-state","triggers":["x"],"content":"ok"}\n```';

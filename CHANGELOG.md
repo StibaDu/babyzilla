@@ -2,6 +2,14 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- `parseModules` now accepts a **top-level JSON array** (compact or
+  pretty-printed), not just JSONL or `{modules:[…]}`. Models that answer with
+  an array no longer cost a retry.
+
 ## [0.3.1] — 2026-10-18
 
 ### Added

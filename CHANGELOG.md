@@ -2,6 +2,17 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.5.0] — 2026-10-18
+
+### Added
+
+- `babyzilla cost [sessionID] [--limit N] [--json]` — provider-side spend from
+  OpenCode's own usage records (`session_v2`): input, cached input, output,
+  cache-hit rate, and cost estimated at list prices next to the recorded cost.
+  Layer 1b's `request-stats.json` counts *message* tokens; this closes the loop
+  with what the provider actually billed. Uses `node:sqlite` lazily, so the
+  rest of the CLI still runs on older Node versions.
+
 ## [0.4.0] — 2026-10-18
 
 ### Added

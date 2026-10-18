@@ -61,6 +61,7 @@ Optional companion CLI (zero deps, needs Node ≥ 18):
 ```sh
 npm i -g git+https://github.com/StibaDu/babyzilla.git
 babyzilla stats    # savings across all packs; also: show / verify / prune
+babyzilla cost     # provider-side spend from OpenCode's usage records
 babyzilla retrieve src/app.js:120-160   # exact span, numbered
 ```
 

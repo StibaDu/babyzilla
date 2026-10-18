@@ -1,6 +1,6 @@
 {
   "name": "babyzilla",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "70-99% context compression for OpenCode v2: AI-distilled ContextPack modules replace the compaction summary, with trigger-based auto-attach on later prompts.",
   "type": "module",
   "main": "index.js",

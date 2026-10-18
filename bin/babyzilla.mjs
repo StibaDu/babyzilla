@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { sessionCosts, totals } from "../lib/cost.mjs";
 
 // ── colors & formatting ─────────────────────────────────────────────────────
 
@@ -219,6 +220,39 @@ export function renderStats(root = packRoot()) {
       `${c(DIM)}${String(p.modules.length).padStart(3)} modules${c(RESET)}`,
     ].join("  "));
   }
+  s.push("");
+  return s.join("\n") + "\n";
+}
+
+const money = (n) =>
+  n >= 1000 ? `$${(n / 1000).toFixed(1)}K`
+  : n >= 1 ? `$${n.toFixed(2)}`
+  : n > 0 ? `$${n.toFixed(3)}`
+  : "$0";
+
+export function renderCost({ filter = null, limit = 20 } = {}) {
+  const rows = sessionCosts({ filter, limit });
+  if (!rows.length) return `  ${c(DIM)}No provider usage recorded.${c(RESET)}\n`;
+  const t = totals(rows);
+  const s = [];
+  s.push(`  ${c(BOLD)}provider spend${c(RESET)} ${c(DIM)}(OpenCode usage · est=list prices · db=provider-recorded)${c(RESET)}`);
+  s.push("  " + c(DIM) + "─".repeat(20) + c(RESET));
+  s.push(`  ${c(DIM)}${"session".padEnd(12)}${"agent".padEnd(7)}${"model".padEnd(30)}${"input".padStart(9)}${"cached".padStart(9)}${"output".padStart(8)}${"hit".padStart(7)}${"est".padStart(10)}${"db".padStart(10)}${c(RESET)}`);
+  for (const r of rows) {
+    s.push([
+      `${c(CYAN)}  ${r.sessionID.slice(0, 10).padEnd(12)}${c(RESET)}`,
+      `${c(DIM)}${(r.agent || "-").slice(0, 6).padEnd(7)}${c(RESET)}`,
+      `${(r.model || "?").replace(/^[^/]+\//, "").slice(0, 29).padEnd(30)}`,
+      `${c(DIM)}${fmtTokens(r.usage.input).padStart(9)}${c(RESET)}`,
+      `${c(DIM)}${fmtTokens(r.usage.cacheRead).padStart(9)}${c(RESET)}`,
+      `${c(DIM)}${fmtTokens(r.usage.output).padStart(8)}${c(RESET)}`,
+      `${c(DIM)}${`${r.cacheHitPct.toFixed(0)}%`.padStart(7)}${c(RESET)}`,
+      `${(r.estimatedCost === null ? "-" : money(r.estimatedCost)).padStart(10)}`,
+      `${money(r.recordedCost).padStart(10)}`,
+    ].join(" "));
+  }
+  s.push("");
+  s.push(`  ${c(DIM)}${t.sessions} sessions · cache hit ${t.cacheHitPct.toFixed(1)}% · est ${money(t.estimatedCost)} · provider ${money(t.recordedCost)}${c(RESET)}`);
   s.push("");
   return s.join("\n") + "\n";
 }
@@ -464,6 +498,8 @@ const HELP = `babyzilla ${"— inspect ContextPack session data"}
 Usage:
   babyzilla show [sessionID]        one pack's stats & module index (default: newest)
   babyzilla stats [--json]          aggregate savings across all packs
+  babyzilla cost [sessionID] [--limit N] [--json]
+                                    provider-side spend from the OpenCode database
   babyzilla verify [sessionID]      check path:line pointers still resolve
   babyzilla retrieve <path>[:<start>[-<end>]] [--context N] [--max-lines N]
                                     print an exact, numbered line range
@@ -472,6 +508,7 @@ Usage:
 
 Environment:
   BABYZILLA_ROOT=<dir>              data root (default ~/.opencode/contextpacks)
+  OPENCODE_DB=<path>                OpenCode database for babyzilla cost
 `;
 
 function main() {
@@ -481,6 +518,14 @@ function main() {
     switch (cmd ?? "") {
       case "show": out(show(rest[0] || undefined)); break;
       case "stats": out(rest.includes("--json") ? JSON.stringify(statsJson(), null, 2) + "\n" : renderStats()); break;
+      case "cost": {
+        const filter = rest[0] && !rest[0].startsWith("--") ? rest[0] : null;
+        const limit = rest.includes("--limit") ? Number(rest[rest.indexOf("--limit") + 1]) : 20;
+        out(rest.includes("--json")
+          ? JSON.stringify({ sessions: sessionCosts({ filter, limit }) }, null, 2) + "\n"
+          : renderCost({ filter, limit }));
+        break;
+      }
       case "verify": out(renderVerify(rest[0] || undefined)); break;
       case "retrieve": {
         const ref = rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined;

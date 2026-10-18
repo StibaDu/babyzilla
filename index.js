@@ -25,6 +25,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { estTokens, compressToolText, routeDistill } from "./lib/text.mjs";
 
 const execAsync = promisify(execCb);
 
@@ -81,51 +82,14 @@ function log(...args) {
 
 function safeStr(v) { try { return JSON.stringify(v); } catch { return "[unserializable]"; } }
 
-function estTokens(s) {
-  if (!s) return 0;
-  return Math.ceil(String(s).length / 4);
-}
-
-// ---------------------------------------------------------------------------
 // Tool-result compression (read / grep / glob)
 //
 // Tool results are the bulk of a session and are resent on every later turn.
 // Headroom compressed them on the wire; we compress them at the source. The
 // rewrite keeps a head, a tail, and every structural or diagnostic line, and
 // leaves line numbers intact so the agent can re-read an exact range.
-// ---------------------------------------------------------------------------
-
-const STRUCT_LINE_RE = /^\s*(?:\d+:\s*)?(?:export|import|from\b|class\b|def\b|async def|function\b|async function|interface\b|type\b|struct\b|impl\b|enum\b|mod\b|module\b|namespace\b|package\b|use\b|fn\b|func\b|const\b|let\b|var\b|public\b|private\b|protected\b|static\b|@|#include|##|###|####)/;
-const DIAG_LINE_RE = /(?:\b(?:ERROR|FATAL|CRITICAL|WARN(?:ING)?|Exception|Traceback|panic|segfault|failed|failure)\b|\bERR[-_]?\d|\b[A-Z]{2,}[-_]\d{2,})/i;
-const TODO_LINE_RE = /\b(?:TODO|FIXME|XXX|HACK)\b/;
-
-function compressToolText(text, { headLines, tailLines }) {
-  if (typeof text !== "string" || !text) return null;
-  const lines = text.split("\n");
-  if (lines.length < headLines + tailLines + 20) return null;
-  const keep = new Set();
-  for (let i = 0; i < Math.min(headLines, lines.length); i++) keep.add(i);
-  for (let i = Math.max(0, lines.length - tailLines); i < lines.length; i++) keep.add(i);
-  for (let i = 0; i < lines.length; i++) {
-    const l = lines[i];
-    if (STRUCT_LINE_RE.test(l) || DIAG_LINE_RE.test(l) || TODO_LINE_RE.test(l)) keep.add(i);
-  }
-  const out = [];
-  let omitted = 0;
-  for (let i = 0; i < lines.length; i++) {
-    if (keep.has(i)) {
-      if (omitted) {
-        out.push(`[... ${omitted} line${omitted === 1 ? "" : "s"} elided by ContextPack — not truncation ...]`);
-        omitted = 0;
-      }
-      out.push(lines[i]);
-    } else omitted++;
-  }
-  if (omitted) out.push(`[... ${omitted} lines elided by ContextPack — not truncation ...]`);
-  // Only rewrite when it actually saves meaningful space.
-  if (out.length >= lines.length * 0.85) return null;
-  return out.join("\n");
-}
+// (`compressToolText` and `estTokens` live in lib/text.mjs so they are unit
+// testable without loading this module.)
 
 function compressToolResult(event, opts) {
   const parts = Array.isArray(event?.result?.content) ? event.result.content : null;
@@ -396,15 +360,13 @@ async function distillText(ctx, { sessionID, model, prompt, preferSession, allow
     if (!canText) throw new Error("generate.text unavailable");
     return (await ctx.generate.text({ model, prompt }))?.text;
   };
-  const first = preferSession ? viaSession : viaText;
-  if (!allowFallback) return first();
-  const second = preferSession ? viaText : viaSession;
-  try {
-    return await first();
-  } catch (e) {
-    log(`distillation call failed (${preferSession ? "session" : "text"}), retrying via the other route:`, e?.message ?? e);
-    return second();
-  }
+  return routeDistill({
+    viaSession,
+    viaText,
+    preferSession,
+    allowFallback,
+    onError: (route, e) => log(`distillation call failed (${route}), retrying via the other route:`, e?.message ?? e),
+  });
 }
 
 // ---------------------------------------------------------------------------

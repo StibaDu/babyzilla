@@ -71,6 +71,13 @@ agent can *re-fetch exact evidence from disk* instead of trusting a paraphrase.
 Cold modules live as real files — grep-able, merge-able, and promoted into a
 per-project library that outlives individual sessions.
 
+## Examples
+
+- [`examples/tool-result-compression.md`](examples/tool-result-compression.md) —
+  Layer 2b, before/after, with measured token counts.
+- [`examples/real-pack/`](examples/real-pack/) — a real pack produced for a
+  3-hour session (98.4% smaller than the incoming transcript).
+
 ## Requirements & privacy
 
 - OpenCode **v2**, any model configured (distillation uses the session's

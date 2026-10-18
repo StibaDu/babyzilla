@@ -1,5 +1,11 @@
 # Real pack specimen
 
+> **Version note:** this specimen was captured at **v0.1.0**. The plugin has
+> since added Layer 2 (shell rewriting, v0.2.0), Layer 2b (tool-result
+> compression), free-tier support and session-scoped distillation (v0.3.0) —
+> see [`../tool-result-compression.md`](../tool-result-compression.md) for the
+> newer layer. The pack structure below is unchanged.
+
 This is the actual ContextPack BabyZilla produced for one real session
 (a 3+-hour OpenCode plugin-development session).
 

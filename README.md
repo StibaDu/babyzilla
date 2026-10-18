@@ -2,14 +2,14 @@
 
 [![tests](https://github.com/StibaDu/babyzilla/actions/workflows/test.yml/badge.svg)](https://github.com/StibaDu/babyzilla/actions/workflows/test.yml)
 
-**70–99% context compression for [OpenCode](https://opencode.ai) v2 — in five layers, one install.**
+**70–99% context compression for [OpenCode](https://opencode.ai) v2 — in six layers, one install.**
 
 - **Layer 1 — Session compaction** (ContextPack): OpenCode's compaction
   summary is replaced by AI-distilled **context modules** — state, decisions,
   code pointers, failure histories — dropping tool-output bulk while keeping
   exact, re-fetchable facts.
 - **Layer 1b — Per-request budget**: before *every* request the outgoing
-  message list is capped — target 10% of the incoming context
+  message list is capped — target 8% of the incoming context
   (`requestTargetRatio`), floored at 12K and hard-capped at 45K
   (`requestBudgetTokens`). Old tool output, assistant prose, reasoning and
   attachments are compressed in place; if that is not enough, the oldest parts
@@ -31,8 +31,15 @@
   results are compacted *at the source*, before they are persisted and resent
   on every later turn. Head, tail, structural and error lines are kept; line
   numbers stay intact.
+- **Layer 3 — Deterministic ledger + recall**: what Layer 1b has to drop does
+  not become an anonymous "elided" marker. Every old tool step collapses to
+  one row built from the call itself — `#12 · bash · npm test · exit 1 ·
+  3.1K tok · recall 8c1f…` — so the model keeps the index of what was already
+  tried without the payload. Nothing is rewritten by a model, and every row and
+  pointer is reversible: `babyzilla recall <id>` prints the exact original
+  text (add `:start-end` for a span) from a content-addressed page store.
 
-All five run automatically. Layer 2 needs the `lowfat` binary (~3 MB release
+All six run automatically. Layer 2 needs the `lowfat` binary (~3 MB release
 download, no Rust toolchain); without it BabyZilla stays fully functional
 minus that layer.
 
@@ -62,56 +69,66 @@ Optional companion CLI (zero deps, needs Node ≥ 18):
 npm i -g git+https://github.com/StibaDu/babyzilla.git
 babyzilla stats    # savings across all packs; also: show / verify / prune
 babyzilla cost     # provider-side spend from OpenCode's usage records
-babyzilla recall call_abc123:120-180    # exact original behind an elision marker
+babyzilla recall 8c1f0b7a9d2e4c15   # exact original behind a paging marker / ledger row
+babyzilla recall 8c1f0b7a9d2e4c15:120-180   # just those lines
 babyzilla retrieve src/app.js:120-160   # exact span, numbered
 ```
 
 ## How it works
 
-1. **Layer 1b, before every request**: OpenCode v2's `session.hook("context")`   hands the plugin the exact `messages` array it is about to send. Above
-   `requestBudgetTokens` (45K by default) BabyZilla compresses old tool output,
-   assistant prose, reasoning and attachments in place, then elides the oldest
-   bulk to one-line pointers if the budget is still exceeded. Every pointer is
-   reversible: it names a `babyzilla recall <id>` handle that prints the exact
-   original text from the content-addressed page store (falling back to the
-   session database). Works for `shell`, `grep`, `read` — everything. The
-   target is 8% of the incoming context
-   (`requestTargetRatio`), with a 12K floor. The current user turn, the newest
-   messages and the newest result per file stay verbatim. A rewrite that would
-   save less than 12% (`requestMinSavingsPct`) is skipped instead of churning
-   the prompt cache. No compaction required — so 1M-token models are covered.
-1c. **Layer 3, deterministic ledger**: when old tool output does have to go,
-   it is not replaced with an anonymous "elided" marker. Each old step becomes
-   one row built from the call itself — `#12 · bash · npm test · exit 1 ·
-   3.1K tok · recall 8c1f…` — plus a recall handle. The model keeps the index
-   of what was already tried (which is what it actually reasons about) without
-   the payload. No model call, so nothing can drift. The newest 8K tokens of
-   tool results stay byte-for-byte. Historical *user* bulk (injected
-   checkpoints, pasted transcripts above 32K tokens) is condensed the same way
-   — opening, constraint lines and closing kept verbatim — while the live user
-   message is never touched.
-2. **Layer 2, before every tool call**: the plugin hooks shell execution and,
+The layers run in this order, cheapest first. None of them needs a model call
+except Layer 1.
+
+1. **Layer 2, before every tool call**: the plugin hooks shell execution and,
    when the `lowfat` binary is present, rewrites the command through
    `lowfat rewrite` — output enters the context already compressed.
-3. **Layer 2b, after each `read` / `grep` / `glob`**: large results are
+2. **Layer 2b, after each `read` / `grep` / `glob`**: large results are
    compacted at the source. The most recent results stay verbatim
    (`toolResultProtectRecent`), the current turn is untouched, and older
    duplicates of the same file/command are compressed first; the rest keep
    head + tail + structure with the exact text one `babyzilla recall` away.
-4. **Layer 1, at compaction**: BabyZilla hooks OpenCode's `compaction` hook,
+3. **Layer 1b + Layer 3, before every request**: OpenCode v2's
+   `session.hook("context")` hands the plugin the exact `messages` array it is
+   about to send. Above the budget — 8% of the incoming request
+   (`requestTargetRatio`), floored at 12K and hard-capped at 45K
+   (`requestBudgetTokens`) — BabyZilla compresses old tool output, assistant
+   prose, reasoning and attachments in place. Steps that still have to go
+   become **ledger rows** built from the call itself (`#12 · bash · npm test ·
+   exit 1 · 3.1K tok · recall 8c1f…`), never anonymous markers, and the newest
+   ~8K tokens of tool results stay byte-for-byte. Every row and pointer is
+   reversible through the content-addressed page store (falling back to the
+   session database). Works for `shell`, `grep`, `read` — everything.
+4. **Layer 3, historical user bulk**: a user message *older than the current
+   turn* above 32K tokens (`requestUserBulkMinTokens`) is condensed the same
+   way — opening, constraint lines and closing kept verbatim, the rest paged
+   behind a recall handle. The **live** user message is never touched.
+5. **Cache safety**: a rewrite that would save less than 12%
+   (`requestMinSavingsPct`) is rolled back instead of churning the provider's
+   prompt cache, and so is any rewrite that would push the request over the
+   model window. No compaction is required for any of this — which is what
+   makes it work on 1M-token models.
+6. **Layer 1c, proactive compaction**: OpenCode's own compaction only fires
+   near the model's context limit, so a 1M-token session can grow unbounded
+   before Layer 1 ever runs. Once the context passes
+   `max(proactiveCompactMinTokens, proactiveCompactRatio × window)` BabyZilla
+   asks OpenCode to compact (rate-limited per session), so the pack kicks in at
+   ~35% of the window instead of ~90%. Disable with `proactiveCompaction: false`.
+7. **Layer 1, at compaction**: BabyZilla hooks OpenCode's `compaction` hook,
    receives the full transcript, and calls your configured model to distill it
    into JSONL modules: a state module (*hot*, always inlined), a decisions
    module (*hot*), and topic/code/errors modules (*cold*).
-5. **On later prompts** cold modules auto-attach when the prompt matches
+8. **On later prompts** cold modules auto-attach when the prompt matches
    their trigger words (max 2 modules, 6K-token budget) — so long-session
    context stays available *without staying in the window*.
-6. **Tool results** are journaled (kind + token estimate + 1200-char head) so
+9. **Tool results** are journaled (kind + token estimate + 1200-char head) so
    savings are measurable and future sessions can reuse them.
-7. **Anything fails → nothing happens.** OpenCode's native compaction runs.
-   BabyZilla never modifies or deletes session history.
+10. **Anything fails → nothing happens.** OpenCode's native compaction runs.
+    BabyZilla never modifies or deletes session history: paging moves text to a
+    local page store, it does not destroy it.
 
-See [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) for the full picture and
-[docs/OPTIONS.md](docs/OPTIONS.md) for every option.
+See [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) for the full picture,
+[docs/OPTIONS.md](docs/OPTIONS.md) for every option, and
+[examples/](examples/) for before/after of each layer.
 
 ## Why it works
 

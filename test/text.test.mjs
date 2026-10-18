@@ -1,7 +1,7 @@
 // Pure-helper tests — no plugin load, no filesystem, no model calls.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { estTokens, compressToolText, compressToolResult, routeDistill, selectCompressibleParts, compactMessagesForRequest, compressTextBlock } from "../lib/text.mjs";
+import { estTokens, compressToolText, compressToolResult, routeDistill, selectCompressibleParts, compactMessagesForRequest, compressTextBlock, requestBudget } from "../lib/text.mjs";
 
 // ── estTokens ───────────────────────────────────────────────────────────────
 
@@ -408,21 +408,35 @@ test("compactMessagesForRequest compresses string-content messages", () => {
 
 // ── recovery handles, savings gate and turn protection ──────────────────────
 
-test("elision markers carry a recall handle for the exact original text", () => {
-  const bulk = numberedText(4000);
-  const old = { id: "msg_old", role: "assistant", content: [
-    { type: "tool-result", id: "call_abc", name: "read", result: { type: "text", value: bulk } },
-  ] };
-  const messages = [
-    llmUser("task"),
-    old,
-    llmAssistant({ type: "tool-result", id: "call_new", name: "read", result: { type: "text", value: bulk } }),
-  ];
-  compactMessagesForRequest(messages, {
-    requestBudgetTokens: 1000, requestTargetRatio: 0, requestMinTokens: 100,
+test("ledger rows advertise a recall handle only for real page hashes", () => {
+  const bulk = numberedText(800);
+  const fresh = () => {
+    const messages = [llmUser("task")];
+    for (let i = 0; i < 10; i++) {
+      messages.push(llmAssistant({
+        type: "tool-result", id: `call_${i}`, name: "read",
+        result: { type: "text", value: bulk },
+        state: { input: { filePath: `/tmp/f${i}.js` }, status: "completed" },
+      }));
+    }
+    return messages;
+  };
+  const opts = {
+    requestBudgetTokens: 900, requestTargetRatio: 0, requestMinTokens: 100,
     requestProtectRecent: 1, requestPartMinTokens: 100, requestProtectTurns: false,
-  });
-  assert.match(old.content[0].result.value, /babyzilla recall msg_old/);
+    requestLedgerKeepRecent: 1, requestLedgerKeepTokens: 0,
+  };
+
+  const messages = fresh();
+  compactMessagesForRequest(messages, opts);
+  const noStore = messages[1].content[0].result.value;
+  assert.match(noStore, /· read ·/);
+  assert.doesNotMatch(noStore, /recall/);
+
+  // With a page store, the handle is the content hash the CLI resolves.
+  const messages2 = fresh();
+  compactMessagesForRequest(messages2, { ...opts, pageRef: () => "0123456789abcdef" });
+  assert.match(messages2[1].content[0].result.value, /recall 0123456789abcdef/);
 });
 
 test("a rewrite that saves less than requestMinSavingsPct is rolled back", () => {
@@ -575,4 +589,35 @@ test("bulk user condensation is off by default at the library layer", () => {
     requestCompressUserBulk: false,
   });
   assert.equal(messages[0].content[0].text, blob);
+});
+
+test("requestBudget applies the documented 8% ratio, 12K floor and 45K hard cap", () => {
+  // 100K request: 8% = 8K, raised to the 12K floor.
+  assert.equal(requestBudget({ before: 100_000, opts: {} }).budget, 12_000);
+  // 400K request: 8% = 32K, still under the 45K hard cap.
+  assert.equal(requestBudget({ before: 400_000, opts: {} }).budget, 32_000);
+  // 1M request: 8% would be 80K, the hard cap wins.
+  assert.equal(requestBudget({ before: 1_000_000, opts: {} }).hardCap, 45_000);
+  assert.equal(requestBudget({ before: 1_000_000, opts: {} }).budget, 45_000);
+  // A prompt cap (model window) beats everything else.
+  assert.equal(requestBudget({ before: 95_000, maxPrompt: 20_000, opts: {} }).hardCap, 20_000);
+  // Explicit budget is the escape hatch, including below the floor.
+  assert.equal(requestBudget({ before: 90_000, opts: { requestBudgetTokens: 5_000 } }).budget, 5_000);
+});
+
+test("ledger rows never advertise a recall handle that cannot resolve", () => {
+  const parts = [];
+  for (let i = 0; i < 8; i++) {
+    parts.push({ role: "assistant", content: [{ type: "tool-call", id: `call_${i}`, name: "read", input: { filePath: `/tmp/f${i}.js` } }] });
+    parts.push({ role: "tool", content: [{ type: "tool-result", id: `call_${i}`, name: "read", result: { type: "text", value: numberedText(400) } }] });
+  }
+  const messages = [...parts, { role: "user", content: [{ type: "text", text: "carry on" }] }];
+  compactMessagesForRequest(messages, {
+    requestBudgetTokens: 2000, requestTargetRatio: 0, requestMinTokens: 100,
+    requestProtectRecent: 1, requestProtectTurns: false, requestMinSavingsPct: 0,
+    requestLedgerKeepRecent: 2, requestPartMinTokens: 100,
+  });
+  const text = messages.filter((m) => m.role === "tool").map((m) => m.content[0].result.value).join("\n");
+  assert.match(text, /#\d+ · read · \/tmp\/f\d\.js/);
+  assert.doesNotMatch(text, /recall i\d/);
 });

@@ -34,6 +34,16 @@ BabyZilla:
 5. A rewrite that would save less than `requestMinSavingsPct` (12%) is rolled
    back, so near-no-op passes do not churn the prompt prefix or the model's
    view of the transcript.
+6. Before a part is reduced to a pointer, it is turned into a **ledger row**
+   (Layer 3) if it is an old tool step: `#12 · bash · npm test · exit 1 · 3.1K tok
+   · recall 8c1f0b7a9d2e4c15`. Tool, target, status and size come from the call
+   itself, so the row is a trustworthy index of what was already tried. The
+   newest `requestLedgerKeepTokens` (8K) / `requestLedgerKeepRecent` (5) results
+   are never ledgered.
+7. A **historical** user message above `requestUserBulkMinTokens` (32K) is
+   condensed to its opening, its constraint-shaped lines and its closing, plus
+   a recall handle. The live user message is never touched — only bulk that a
+   harness checkpoint or a pasted transcript left behind.
 
 Every rewrite is idempotent (parts carrying `[ContextPack]` are skipped), and
 a failure leaves the messages structurally valid. Measured on a 1.13M-token
@@ -136,6 +146,42 @@ is missing, layer 2 logs
 `layer 2 skipped: lowfat binary not found` and everything else keeps working.
 Install it per `AGENT-INSTALL.md` (release tarball — no Rust toolchain) or
 build from source.
+
+## Layer 3 — the turn ledger (`context`, before elision)
+
+Layer 2b compresses a result *once*, at the source. But a 200-step session still
+carries those results in every later request. Historically that was handled by
+replacing them with a bare pointer, which costs the model its memory of what it
+already did.
+
+The ledger keeps the memory and drops the bytes. Each old tool step becomes one
+deterministic row:
+
+```
+[ContextPack] #12 · bash · npm test · exit 1 · 3.1K tok · recall 8c1f0b7a9d2e4c15
+```
+
+Nothing is inferred: the tool name, target (`filePath` / `command` / `pattern`),
+exit status, token size and recall handle all come from the call and its result
+metadata. No model call, so no drift on every pass.
+
+Rules:
+
+* only steps older than the working set — the newest
+  `requestLedgerKeepRecent` (5) results and the newest
+  `requestLedgerKeepTokens` (8K) tokens are untouchable;
+* nothing under `requestLedgerMinTokens` (60) is ledgered: a row would cost as
+  much as the text;
+* the newest result per file/command and the current user turn stay verbatim;
+* `requestLedger: false` falls back to head+tail and plain pointers.
+
+A row is an *index*, not content. Before editing, re-read the file — the handle
+prints the exact original bytes:
+
+```sh
+babyzilla recall 8c1f0b7a9d2e4c15        # whole output
+babyzilla recall 8c1f0b7a9d2e4c15:120-180 # a span
+```
 
 ## Library promotion
 

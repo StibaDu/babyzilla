@@ -1,7 +1,7 @@
 {
   "name": "babyzilla",
   "version": "0.7.0",
-  "description": "70-99% context compression for OpenCode v2: AI-distilled ContextPack modules replace the compaction summary, with trigger-based auto-attach on later prompts.",
+  "description": "70-99% context compression for OpenCode v2: ContextPack modules, per-request budgeting, tool-result compaction, and a reversible ledger — old steps shrink to one-liners you can `recall` byte-exactly.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -32,11 +32,16 @@
     "opencode-plugin",
     "context",
     "compaction",
+    "context-window",
     "llm",
     "tokens",
-    "contextpack"
+    "token-savings",
+    "prompt-caching",
+    "contextpack",
+    "ai-agent"
   ],
   "license": "MIT",
+  "homepage": "https://github.com/StibaDu/babyzilla#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/StibaDu/babyzilla.git"

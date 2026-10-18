@@ -27,6 +27,14 @@ All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
 - `requestMinSavingsPct` default 12: a rewrite that saves less is rolled back,
   so the prompt stays cache-stable instead of churning.
+- `requestBudget()` is exported: the 8% / 12K floor / 45K cap interaction is now
+  covered by tests instead of only by docs.
+
+### Fixed
+
+- Markers no longer advertise handles that cannot be resolved. Loop indexes
+  (`i3`) and raw call ids (`call_…`) are not persisted by OpenCode, so only a
+  real 16-hex page hash is printed as `babyzilla recall <hash>`.
 
 ## [0.6.0] — 2026-10-18
 

@@ -1,6 +1,8 @@
 # BabyZilla 🦖
 
-**70–99% context compression for [OpenCode](https://opencode.ai) v2 — in two layers, one install.**
+[![tests](https://github.com/StibaDu/babyzilla/actions/workflows/test.yml/badge.svg)](https://github.com/StibaDu/babyzilla/actions/workflows/test.yml)
+
+**70–99% context compression for [OpenCode](https://opencode.ai) v2 — in three layers, one install.**
 
 - **Layer 1 — Session compaction** (ContextPack): OpenCode's compaction
   summary is replaced by AI-distilled **context modules** — state, decisions,
@@ -10,8 +12,12 @@
   [zdk/lowfat](https://github.com/zdk/lowfat), Apache-2.0): shell commands are
   rewritten *before execution* (`git status`, `ls -la`, `docker …` →
   token-compact forms), so tool output enters the context pre-compressed.
+- **Layer 2b — Tool-result compression**: large `read` / `grep` / `glob`
+  results are compacted *at the source*, before they are persisted and resent
+  on every later turn. Head, tail, structural and error lines are kept; line
+  numbers stay intact.
 
-Both run automatically. Layer 2 needs the `lowfat` binary (~3 MB release
+All three run automatically. Layer 2 needs the `lowfat` binary (~3 MB release
 download, no Rust toolchain); without it BabyZilla stays fully functional
 minus that layer.
 
@@ -73,6 +79,8 @@ per-project library that outlives individual sessions.
 
 ## Examples
 
+- [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) — the measured head-to-head
+  against Headroom (same model, same files, four rounds).
 - [`examples/tool-result-compression.md`](examples/tool-result-compression.md) —
   Layer 2b, before/after, with measured token counts.
 - [`examples/real-pack/`](examples/real-pack/) — a real pack produced for a

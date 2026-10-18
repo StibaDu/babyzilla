@@ -2,6 +2,23 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **CI** — GitHub Actions runs the test suite on Node 18, 20 and 22 for every
+  push to `main` and every pull request.
+- **`docs/BENCHMARKS.md`** — the measured head-to-head against Headroom 0.41.0
+  (same model, same files, four rounds), with methodology and caveats.
+
+### Changed
+
+- The pure distillation helpers (`reduceForDistill`, `parseModules`,
+  `buildSummary`, `distillationPrompt`, `moduleFileFor`, `libraryIndex`) moved
+  into `lib/` so Layer 1 is unit-testable without loading the plugin.
+- Test suite grew from 30 to **60 tests**, including regression coverage for the
+  library-path bug fixed in 0.3.0.
+
 ## [0.3.0] — 2026-10-18
 
 ### Added

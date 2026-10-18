@@ -25,7 +25,14 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { estTokens, compressToolText, routeDistill } from "./lib/text.mjs";
+import { estTokens, compressToolText, compressToolResult, routeDistill } from "./lib/text.mjs";
+import {
+  fmt, dirSlug,
+  TOOL_RESULT_HEAD_CHARS, TOOL_RESULT_TAIL_CHARS, USER_BUDGET_TOKENS,
+  reduceForDistill, DISTILL_INSTRUCTIONS, distillationPrompt,
+  parseModules, moduleFileFor, buildSummary,
+} from "./lib/distill.mjs";
+import { libraryIndex } from "./lib/library.mjs";
 
 const execAsync = promisify(execCb);
 
@@ -37,10 +44,6 @@ const JOURNAL_LIMIT_ENTRIES = 2000;
 const compactionInFlight = new Map();
 // Tool results are the bulk of a session. Pre-trim them so the distiller call
 // fits comfortably even when the session just overflowed its context window.
-const TOOL_RESULT_HEAD_CHARS = 1600;
-const TOOL_RESULT_TAIL_CHARS = 200;
-const USER_BUDGET_TOKENS = 48_000; // transcript budget fed to the distiller
-
 log("contextpack module loaded, data dir:", ROOT);
 
 const defaults = {
@@ -88,34 +91,8 @@ function safeStr(v) { try { return JSON.stringify(v); } catch { return "[unseria
 // Headroom compressed them on the wire; we compress them at the source. The
 // rewrite keeps a head, a tail, and every structural or diagnostic line, and
 // leaves line numbers intact so the agent can re-read an exact range.
-// (`compressToolText` and `estTokens` live in lib/text.mjs so they are unit
-// testable without loading this module.)
-
-function compressToolResult(event, opts) {
-  const parts = Array.isArray(event?.result?.content) ? event.result.content : null;
-  if (!parts) return;
-  for (const part of parts) {
-    if (!part || typeof part.text !== "string") continue;
-    const before = estTokens(part.text);
-    if (before < opts.toolResultMinTokens) continue;
-    const compressed = compressToolText(part.text, {
-      headLines: opts.toolResultHeadLines,
-      tailLines: opts.toolResultTailLines,
-    });
-    if (!compressed) continue;
-    const after = estTokens(compressed);
-    part.text = `${compressed}\n\n[ContextPack] ${fmt(before)} → ${fmt(after)} tokens (${Math.max(0, Math.round((1 - after / before) * 100))}% smaller). Elided spans can be read verbatim with offset/limit.`;
-    log(`tool result compressed: ${event?.tool ?? "?"} ${fmt(before)}→${fmt(after)} tok`);
-  }
-}
-
-function slug(s) {
-  return String(s || "").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "module";
-}
-
-function dirSlug(p) {
-  return slug(String(p).replace(/^[/\\]+|[/\\]+$/g, "").split(/[\\\/]/).pop() || p) || "root";
-}
+// (`compressToolResult`, `compressToolText` and `estTokens` live in
+// lib/text.mjs so they are unit testable without loading this module.)
 
 async function readJson(file) {
   try { return JSON.parse(await fs.readFile(file, "utf8")); } catch { return null; }
@@ -235,104 +212,6 @@ function deepText(v, depth) {
   return deepText(Object.values(v), depth + 1);
 }
 
-// Pre-trim the transcript so the distiller call fits a large-but-finite window:
-// full text for user/assistant turns, head+tail for tool output.
-function reduceForDistill(text, budgetTokens) {
-  const est = estTokens(text);
-  if (est <= budgetTokens) return { text, dropped: 0, rawTokens: est };
-  const paras = text.split(/\n\n/);
-  // paragraphs that look like tool blocks (start with "[tool") get trimmed hard
-  const kept = [];
-  let keptTokens = 0;
-  let dropped = 0;
-  for (let i = paras.length - 1; i >= 0; i--) { // newest first
-    const p = paras[i];
-    const t = estTokens(p);
-    const isTool = p.startsWith("[tool");
-    let piece = p;
-    if (isTool && p.length > TOOL_RESULT_HEAD_CHARS + TOOL_RESULT_TAIL_CHARS) {
-      piece = p.slice(0, TOOL_RESULT_HEAD_CHARS) + "\n[... trimmed ...]\n" + p.slice(-TOOL_RESULT_TAIL_CHARS);
-    }
-    if (keptTokens + estTokens(piece) > budgetTokens && kept.length > 0) { dropped += t; continue; }
-    kept.unshift(piece);
-    keptTokens += estTokens(piece);
-  }
-  if (dropped > 0) kept.unshift(`[... ${dropped} tokens of older tool output omitted by ContextPack pre-trim ...]`);
-  return { text: kept.join("\n\n"), dropped, rawTokens: est };
-}
-
-// ---------------------------------------------------------------------------
-// Distiller
-// ---------------------------------------------------------------------------
-
-const DISTILL_INSTRUCTIONS = `You are a ContextPack distiller. Convert the session transcript into compact "context modules" so an AI agent can continue this work with no information loss.
-
-HARD RULES:
-- Preserve VERBATIM: every decision + its rationale, the current work state, next steps, exact error messages, key numbers, file paths, URLs, important identifiers.
-- Every fact must carry a pointer: file:line, command, tool name, or URL.
-- DROP raw tool output, repeated file contents, process chatter, and dead ends — but keep ONE line per notable failure explaining what failed and why.
-- Be aggressive: total output should be ~4% of the transcript's size. Terse markdown, no prose padding.
-
-OUTPUT FORMAT — newline-delimited JSON. Each line is ONE complete JSON object (no fences, no blank lines, no thinking, no commentary):
-{"kind":"state","name":"00-state","triggers":["kw"],"content":"markdown with \\n escapes"}
-Then optionally more lines for other modules:
-{"kind":"decisions|code|tool|errors|topic","name":"kebab-slug","triggers":["kw1","kw2"],"content":"markdown"}
-
-- The FIRST line must be the single "state" module (name "00-state"): current goal, status/progress, what is in flight, precise next steps, open questions.
-- Optionally 0-3 "decisions", 0-4 "code", 0-3 "tool", 0-4 "errors", 0-3 "topic". Skip empty categories.
-- "content" is terse markdown; keep \\n escaped inside the JSON string; max ~40 lines per module.
-- "triggers": 3-8 lowercase words that a person's NEXT message about this topic would plausibly contain.`;
-
-function distillationPrompt(prevPack, reduced) {
-  let prior = "";
-  if (prevPack?.modules?.length) {
-    const hot = prevPack.modules.filter((m) => m.hot);
-    prior = `PRIOR COMPACTED CONTEXT from earlier compactions (carry forward anything still relevant; re-emit still-relevant cold modules with unchanged content):\n${hot.map((m) => m.content).join("\n\n")}\n\n--- TRANSCRIPT OF NEW WORK SINCE ---\n`;
-  }
-  return `${prior}${reduced}`;
-}
-
-function parseModules(raw) {
-  if (!raw) throw new Error("empty distiller response");
-  let t = String(raw).replace(/<think>[\s\S]*?<\/think>/g, "").replace(/```(?:json)?/g, "");
-  const a = t.indexOf("{");
-  const b = t.lastIndexOf("}");
-  if (a < 0 || b <= a) throw new Error("no JSON found in distiller response");
-  // JSONL tolerant parsing: one module object per output line. A truncated
-  // tail only loses trailing modules instead of corrupting the whole pack.
-  const mods = [];
-  try {
-    const single = JSON.parse(t.slice(a, b + 1));
-    if (Array.isArray(single?.modules)) mods.push(...single.modules);
-  } catch { /* fall through to line parsing */ }
-  if (!mods.length) {
-    for (const line of t.split(/\n/)) {
-      const la = line.indexOf("{");
-      const lb = line.lastIndexOf("}");
-      if (la < 0 || lb <= la) continue;
-      try {
-        const o = JSON.parse(line.slice(la, lb + 1));
-        if (o && typeof o === "object" && !Array.isArray(o) && o.kind) mods.push(o);
-      } catch { /* skip malformed line */ }
-    }
-  }
-  if (!mods.length) throw new Error("no parseable module lines in distiller response");
-  return mods
-    .slice(0, 14)
-    .map((m) => ({
-      kind: ["state", "decisions", "code", "tool", "errors", "topic"].includes(m?.kind) ? m.kind : "topic",
-      name: slug(m?.name || m?.kind),
-      triggers: (Array.isArray(m?.triggers) ? m.triggers : []).map((s) => String(s).toLowerCase()).filter(Boolean).slice(0, 8),
-      content: String(m?.content ?? ""),
-    }))
-    .filter((m) => m.content.trim());
-}
-
-function moduleFileFor(mod) {
-  if (mod.kind === "state") return "00-state.md";
-  return `${mod.kind}-${mod.name}.md`;
-}
-
 function normalizeModel(m) {
   if (!m) return null;
   const providerID = m.providerID;
@@ -398,36 +277,6 @@ async function writeJournal(sessionID, entry) {
 // Summary construction
 // ---------------------------------------------------------------------------
 
-function trimTo(text, maxChars) {
-  return text.length <= maxChars ? text : text.slice(0, maxChars).replace(/\s+\S*$/, "") + "\n[... truncated ...]";
-}
-
-function buildSummary(pack, stats) {
-  const { modules, files } = pack;
-  const state = modules.find((m) => m.kind === "state");
-  const decisions = modules.filter((m) => m.kind === "decisions");
-  const cold = modules.filter((m) => m.kind !== "state" && m.kind !== "decisions");
-
-  const parts = [];
-  parts.push(`[ContextPack] Session context compressed ${stats.savedPct}% (raw ~${fmt(stats.rawTokens)} tokens → pack ~${fmt(stats.packTokens)} tokens, ${modules.length} modules).`);
-  if (state) parts.push(`## CURRENT STATE\n${trimTo(state.content, 6000)}`);
-  if (decisions.length) {
-    parts.push(`## DECISIONS (already made — do not relitigate)\n${decisions.map((m) => trimTo(m.content, 1200)).join("\n\n")}`);
-  }
-  if (cold.length) {
-    parts.push("## MODULES ON DISK (auto-attached to your prompts when triggers match; otherwise read the file first, then work)");
-    parts.push(cold.map((m) => {
-      const f = files[m.name];
-      const tg = m.triggers.slice(0, 6).join(", ");
-      return `- file://${f} (~${fmt(estTokens(m.content))} tok; kind ${m.kind}; triggers: ${tg})`;
-    }).join("\n"));
-    parts.push("For any task matching a trigger above, read that module before acting. Work only from the pack + referenced files; do not re-read the historical transcript.");
-  }
-  return parts.join("\n\n");
-}
-
-function fmt(n) { return n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n); }
-
 // ---------------------------------------------------------------------------
 // Trigger matching
 // ---------------------------------------------------------------------------
@@ -454,18 +303,6 @@ function matchModules(idx, userText) {
 // ---------------------------------------------------------------------------
 // Library (cross-session packs)
 // ---------------------------------------------------------------------------
-
-async function libraryIndex(dir) {
-  const base = path.join(ROOT, "library", dirSlug(dir));
-  const idx = (await readJson(path.join(base, "index.json"))) ?? { modules: [] };
-  // Library indexes store only `file` (they live next to their index). Attach the
-  // absolute path here so the prompt hook does not fall back to the session pack
-  // directory, where no such file exists.
-  if (Array.isArray(idx.modules)) {
-    idx.modules = idx.modules.map((m) => (m.path ? m : { ...m, path: path.join(base, m.file) }));
-  }
-  return idx;
-}
 
 async function promoteToLibrary(sessionID, modules, projectDir) {
   if (!projectDir || projectDir === os.homedir()) return;
@@ -559,7 +396,8 @@ export default {
           try {
             const toolName = String(event?.tool ?? event?.toolName ?? event?.name ?? "").toLowerCase();
             if (toolName === "read" || toolName === "grep" || toolName === "glob" || toolName === "list") {
-              compressToolResult(event, opts);
+              compressToolResult(event, opts, (tool, before, after) =>
+                log(`tool result compressed: ${tool} ${fmt(before)}→${fmt(after)} tok`));
             }
           } catch (e) { log("tool result compression skipped:", e?.message ?? e); }
         }
@@ -736,7 +574,7 @@ export default {
               if (typeof ctx.session?.get === "function") {
                 const info = await ctx.session.get({ sessionID: sid });
                 const dir = info?.directory ?? info?.location?.directory ?? info?.project?.directory;
-                if (dir) idx = await libraryIndex(dir);
+                if (dir) idx = await libraryIndex(dir, ROOT);
               }
             } catch { /* library lookup optional */ }
           }

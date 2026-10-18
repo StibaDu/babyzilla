@@ -1,7 +1,7 @@
 // Pure-helper tests — no plugin load, no filesystem, no model calls.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { estTokens, compressToolText, routeDistill } from "../lib/text.mjs";
+import { estTokens, compressToolText, compressToolResult, routeDistill } from "../lib/text.mjs";
 
 // ── estTokens ───────────────────────────────────────────────────────────────
 
@@ -69,6 +69,44 @@ test("compressToolText preserves line numbers after elision", () => {
     .map(Number);
   // first five and last five, in order
   assert.deepEqual(keptNumbers, [1, 2, 3, 4, 5, 196, 197, 198, 199, 200]);
+});
+
+// ── compressToolResult ──────────────────────────────────────────────────────
+
+const longText = (n) => Array.from({ length: n }, (_, i) => `${i + 1}:   step(${i});`).join("\n");
+const opts = { toolResultMinTokens: 1200, toolResultHeadLines: 10, toolResultTailLines: 5 };
+
+test("compressToolResult rewrites a large part in place", () => {
+  const event = { tool: "read", result: { content: [{ type: "text", text: longText(400) }] } };
+  const seen = [];
+  const n = compressToolResult(event, opts, (...args) => seen.push(args));
+  assert.equal(n, 1);
+  const text = event.result.content[0].text;
+  assert.match(text, /elided by ContextPack — not truncation/);
+  assert.match(text, /\[ContextPack\] 1\.\dK → \d+\w? tokens/);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0][0], "read");
+});
+
+test("compressToolResult leaves small results untouched", () => {
+  const event = { tool: "read", result: { content: [{ type: "text", text: longText(40) }] } };
+  assert.equal(compressToolResult(event, opts), 0);
+  assert.equal(event.result.content[0].text, longText(40));
+});
+
+test("compressToolResult ignores events without a content array", () => {
+  assert.equal(compressToolResult({ tool: "read", result: {} }, opts), 0);
+  assert.equal(compressToolResult({}, opts), 0);
+});
+
+test("compressToolResult only rewrites the large parts of a mixed result", () => {
+  const small = "short output";
+  const big = longText(400);
+  const event = { tool: "grep", result: { content: [{ type: "text", text: small }, { type: "text", text: big }, { type: "text" }] } };
+  assert.equal(compressToolResult(event, opts), 1);
+  assert.equal(event.result.content[0].text, small);
+  assert.match(event.result.content[1].text, /elided by ContextPack/);
+  assert.equal(event.result.content[2].text, undefined);
 });
 
 // ── routeDistill ────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.3.1] — 2026-10-18
 
 ### Added
 
@@ -23,7 +23,7 @@ All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 - The pure distillation helpers (`reduceForDistill`, `parseModules`,
   `buildSummary`, `distillationPrompt`, `moduleFileFor`, `libraryIndex`) moved
   into `lib/` so Layer 1 is unit-testable without loading the plugin.
-- Test suite grew from 30 to **70 tests**, including regression coverage for the
+- Test suite grew from 30 to **71 tests**, including regression coverage for the
   library-path bug fixed in 0.3.0.
 
 ## [0.3.0] — 2026-10-18

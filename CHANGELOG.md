@@ -2,6 +2,19 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.5.1] — 2026-10-18
+
+### Fixed
+
+- **Cross-platform startup.** Layer 2 no longer depends on a POSIX shell:
+  lowfat is located with `where` on Windows (`command -v` elsewhere) and
+  invoked via `execFile` instead of a shell-quoted string. Homebrew and
+  Windows install locations are probed; a missing lowfat still only disables
+  Layer 2.
+- **CI on macOS/Windows.** `npm test` expands `test/*.test.mjs` in Node, so the
+  suite also runs under cmd.exe, and the `node:sqlite` test is skipped below
+  Node 22.5. The matrix now covers Ubuntu, macOS and Windows.
+
 ## [0.5.0] — 2026-10-18
 
 ### Added

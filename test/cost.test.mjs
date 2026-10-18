@@ -4,8 +4,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { estimateCost, priceRow, sessionCosts, totals } from "../lib/cost.mjs";
+
+// node:sqlite shipped in Node 22.5; keep the rest of the suite runnable on 18/20.
+let DatabaseSync = null;
+try {
+  ({ DatabaseSync } = await import("node:sqlite"));
+} catch { /* older Node — the database test is skipped below */ }
 
 test("estimateCost uses input, cached and output rates", () => {
   const usage = { input: 1_000_000, cacheRead: 1_000_000, output: 1_000_000 };
@@ -46,7 +51,7 @@ function tempDb(rows) {
   return { dir, dbPath };
 }
 
-test("sessionCosts groups usage, sorts by cost and filters by prefix", () => {
+test("sessionCosts groups usage, sorts by cost and filters by prefix", { skip: !DatabaseSync && "node:sqlite needs Node >= 22.5" }, () => {
   const { dir, dbPath } = tempDb([
     {
       id: "ses_aaa111", agent: "build", model: { id: "glm-5.2", providerID: "ollama-cloud" },

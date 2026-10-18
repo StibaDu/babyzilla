@@ -21,7 +21,7 @@
 //   - Every hook body is wrapped: any failure logs and leaves the event
 //     untouched, so OpenCode falls back to its normal compaction.
 
-import { exec as execCb } from "node:child_process";
+import { exec as execCb, execFile as execFileCb } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -36,6 +36,7 @@ import {
 import { libraryIndex } from "./lib/library.mjs";
 
 const execAsync = promisify(execCb);
+const execFileAsync = promisify(execFileCb);
 
 const ROOT = path.join(os.homedir(), ".opencode", "contextpacks");
 const JOURNAL_LIMIT_ENTRIES = 2000;
@@ -420,24 +421,32 @@ async function promoteToLibrary(sessionID, modules, projectDir) {
 // Layer 2 helpers (lowfat integration) — adapted from lowfat's v2 plugin
 // (github.com/zdk/lowfat by zdk — Apache-2.0).
 
-function shellQuote(value) {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
+// Lowfat is optional: when it is missing, Layer 2 is skipped and everything
+// else keeps working. Resolution must not assume a POSIX shell — Windows
+// hosts have neither `command -v` nor `test -x`.
 async function resolveLowfatBinary() {
+  const win = process.platform === "win32";
+  const exe = win ? "lowfat.exe" : "lowfat";
   try {
-    const { stdout } = await execAsync("command -v lowfat");
-    const onPath = stdout.trim();
+    const { stdout } = await execAsync(win ? "where lowfat" : "command -v lowfat");
+    const onPath = stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)[0];
     if (onPath) return onPath;
   } catch { /* not on PATH */ }
   const candidates = [
-    path.join(os.homedir(), ".local", "bin", "lowfat"),
-    path.join(os.homedir(), ".cargo", "bin", "lowfat"),
+    path.join(os.homedir(), ".local", "bin", exe),
+    path.join(os.homedir(), ".cargo", "bin", exe),
     "/usr/local/bin/lowfat",
+    "/opt/homebrew/bin/lowfat",
   ];
+  if (win) {
+    if (process.env.LOCALAPPDATA) candidates.push(path.join(process.env.LOCALAPPDATA, "Programs", "lowfat", exe));
+    candidates.push(path.join(os.homedir(), "scoop", "shims", exe));
+  }
   for (const candidate of candidates) {
     try {
-      await execAsync(`test -x ${shellQuote(candidate)}`);
+      const st = await fs.stat(candidate);
+      if (!st.isFile()) continue;
+      if (!win && (st.mode & 0o111) === 0) continue;
       return candidate;
     } catch { /* not here */ }
   }
@@ -524,7 +533,7 @@ export default {
             if (/\|\s*lowfat\b/.test(command)) return; // already rewritten
             let out = "";
             try {
-              const { stdout } = await execAsync(`${shellQuote(lowfatBinary)} rewrite ${shellQuote(command)}`);
+              const { stdout } = await execFileAsync(lowfatBinary, ["rewrite", command], { maxBuffer: 8 * 1024 * 1024 });
               out = stdout.trim();
             } catch (err) {
               out = String(err?.stdout ?? "").trim();

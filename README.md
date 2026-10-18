@@ -124,6 +124,10 @@ per-project library that outlives individual sessions.
   tier** — session-less distillation calls are rejected there, so BabyZilla
   falls back to the session-scoped call automatically (see `distillVia` in
   `docs/OPTIONS.md`).
+- **macOS, Linux and Windows.** Layers 1 and 1c are pure OpenCode hooks; the
+  optional lowfat integration probes PATH with `where` on Windows and its
+  absence only disables Layer 2. Node ≥ 18 for the CLI; `babyzilla cost` needs
+  Node ≥ 22.5 (`node:sqlite`) and fails with a clear message otherwise.
 - Distillation sends transcript text to your configured model provider.
   Journals, module files, and stats stay on disk in
   `~/.opencode/contextpacks/` — delete anytime (`babyzilla prune` or
@@ -131,6 +135,7 @@ per-project library that outlives individual sessions.
 
 ## Status
 
-Tested on OpenCode v2.0.29 (macOS). Linux expected to work identically;
-Windows untested. If you try it, please open an issue with your version and
-savings numbers — they go into the table above.
+Tested on OpenCode v2.0.29 (macOS). The test suite runs in CI on macOS, Linux
+and Windows (Node 18, 20, 22). Layer 2 needs the optional `lowfat` binary and
+is skipped when absent. If you try it, please open an issue with your version
+and savings numbers — they go into the table above.

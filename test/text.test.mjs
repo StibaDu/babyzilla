@@ -493,3 +493,86 @@ test("elided text is paged and the marker carries its recall handle", () => {
   assert.ok(handle, "marker names a recall handle");
   assert.equal(pages.get(handle), bulk, "page stores the exact original text");
 });
+
+// ── Layer 3: deterministic turn ledger ──────────────────────────────────────
+
+test("old tool steps collapse to deterministic ledger rows", () => {
+  const bulk = numberedText(4000);
+  const messages = [llmUser("task")];
+  for (let i = 0; i < 30; i++) {
+    const bash = i % 2 === 1;
+    messages.push({
+      id: `a${i}`, role: "assistant", content: [
+        { type: "tool-call", id: `c${i}`, name: bash ? "bash" : "read", input: bash ? { command: `npm test -- ${i}` } : { filePath: `/tmp/f${i}.js` } },
+      ],
+    });
+    messages.push({
+      id: `t${i}`, role: "tool", content: [
+        {
+          type: "tool-result", id: `c${i}`, name: bash ? "bash" : "read",
+          result: { type: "text", value: bulk },
+          metadata: bash ? { exit: 1 } : undefined,
+        },
+      ],
+    });
+  }
+  compactMessagesForRequest(messages, {
+    requestBudgetTokens: 5000, requestTargetRatio: 0, requestMinTokens: 100,
+    requestProtectRecent: 1, requestProtectTurns: false, requestPartMinTokens: 100,
+    requestMinSavingsPct: 0,
+    requestLedger: true, requestLedgerKeepRecent: 5, requestLedgerMinTokens: 10,
+    pageRef: () => "h1",
+  });
+  // Step 1 is the first read; rows carry tool, target, size and a recall handle.
+  assert.match(messages[2].content[0].result.value, /#1 · read · \/tmp\/f0\.js · ok · .*recall h1/);
+  // Step 2 is bash with metadata.exit=1.
+  assert.match(messages[4].content[0].result.value, /#2 · bash · npm test -- 1 · exit 1 · .*recall h1/);
+  // The newest results stay byte-for-byte verbatim.
+  assert.match(messages.at(-1).content[0].result.value, /1:   step\(0\)/);
+});
+
+test("ledger can be disabled, falling back to head+tail", () => {
+  const bulk = numberedText(4000);
+  const messages = [llmUser("task")];
+  for (let i = 0; i < 10; i++) {
+    messages.push(llmAssistant({ type: "tool-result", id: `c${i}`, name: "read", result: { type: "text", value: bulk } }));
+  }
+  compactMessagesForRequest(messages, {
+    requestBudgetTokens: 1000, requestTargetRatio: 0, requestMinTokens: 100,
+    requestProtectRecent: 1, requestProtectTurns: false, requestPartMinTokens: 100,
+    requestMinSavingsPct: 0, requestLedger: false,
+  });
+  assert.match(messages[1].content[0].result.value, /older tool output elided/);
+  assert.doesNotMatch(messages[1].content[0].result.value, /· read ·/);
+});
+
+test("huge historical user messages are condensed, the live one is not", () => {
+  const blob = `<conversation-checkpoint>\n${"filler text about the past. ".repeat(9000)}\nNever touch production.\n${"more filler ".repeat(3000)}\n</conversation-checkpoint>`;
+  const live = "ok cool, go";
+  const messages = [
+    llmUser(blob),
+    { id: "a1", role: "assistant", content: [{ type: "text", text: "done" }] },
+    llmUser(live),
+  ];
+  compactMessagesForRequest(messages, {
+    requestBudgetTokens: 5000, requestTargetRatio: 0, requestMinTokens: 100,
+    requestProtectRecent: 1, requestProtectTurns: false, requestMinSavingsPct: 0,
+    requestCompressUserBulk: true, requestUserBulkMinTokens: 2000,
+    pageRef: () => "h9",
+  });
+  assert.match(messages[0].content[0].text, /historical user context condensed/);
+  assert.match(messages[0].content[0].text, /Never touch production\./);
+  assert.match(messages[0].content[0].text, /recall h9/);
+  assert.equal(messages[2].content[0].text, live);
+});
+
+test("bulk user condensation is off by default at the library layer", () => {
+  const blob = "line ".repeat(20000);
+  const messages = [llmUser(blob), llmUser("live")];
+  compactMessagesForRequest(messages, {
+    requestBudgetTokens: 1000, requestTargetRatio: 0, requestMinTokens: 100,
+    requestProtectRecent: 1, requestProtectTurns: false, requestMinSavingsPct: 0,
+    requestCompressUserBulk: false,
+  });
+  assert.equal(messages[0].content[0].text, blob);
+});

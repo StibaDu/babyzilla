@@ -68,8 +68,7 @@ babyzilla retrieve src/app.js:120-160   # exact span, numbered
 
 ## How it works
 
-1. **Layer 1b, before every request**: OpenCode v2's `session.hook("context")`
-   hands the plugin the exact `messages` array it is about to send. Above
+1. **Layer 1b, before every request**: OpenCode v2's `session.hook("context")`   hands the plugin the exact `messages` array it is about to send. Above
    `requestBudgetTokens` (45K by default) BabyZilla compresses old tool output,
    assistant prose, reasoning and attachments in place, then elides the oldest
    bulk to one-line pointers if the budget is still exceeded. Every pointer is
@@ -81,6 +80,16 @@ babyzilla retrieve src/app.js:120-160   # exact span, numbered
    messages and the newest result per file stay verbatim. A rewrite that would
    save less than 12% (`requestMinSavingsPct`) is skipped instead of churning
    the prompt cache. No compaction required — so 1M-token models are covered.
+1c. **Layer 3, deterministic ledger**: when old tool output does have to go,
+   it is not replaced with an anonymous "elided" marker. Each old step becomes
+   one row built from the call itself — `#12 · bash · npm test · exit 1 ·
+   3.1K tok · recall 8c1f…` — plus a recall handle. The model keeps the index
+   of what was already tried (which is what it actually reasons about) without
+   the payload. No model call, so nothing can drift. The newest 8K tokens of
+   tool results stay byte-for-byte. Historical *user* bulk (injected
+   checkpoints, pasted transcripts above 32K tokens) is condensed the same way
+   — opening, constraint lines and closing kept verbatim — while the live user
+   message is never touched.
 2. **Layer 2, before every tool call**: the plugin hooks shell execution and,
    when the `lowfat` binary is present, rewrites the command through
    `lowfat rewrite` — output enters the context already compressed.

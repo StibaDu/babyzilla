@@ -62,6 +62,8 @@ const CONTRACT_NOTE = [
   "· Older tool output is paged out of the prompt, never deleted. A `[ContextPack]` marker carries a `babyzilla recall <id>` handle that prints the exact original text (add `:start-end` for a span).",
   "· The current user turn and the newest messages are sent verbatim; the newest result per file/command is kept.",
   "· Never reuse line numbers or file contents taken from a marker or a pack — re-read before editing.",
+  "· Old steps appear as ledger rows (`#12 · bash · npm test · exit 1 · 3.1K tok · recall …`): that is the index of what was tried, not the content.",
+  "· Prefer parallel tool calls where possible: every sequential step resends the whole request.",
   "· This is why a long session keeps working instead of overflowing: same facts, smaller working set.",
 ].join("\n");
 
@@ -150,6 +152,21 @@ const defaults = {
   // in the hard-budget phase, even small parts are worth paging once the
   // alternative is sending them verbatim; the marker costs ~35 tokens.
   requestElideMinTokens: 200,
+  // Layer 3 — collapse old tool steps into deterministic ledger rows
+  // (#step · tool · target · exit · size · recall). No model call, no drift;
+  // the newest `requestLedgerKeepRecent` results stay byte-for-byte.
+  requestLedger: true,
+  requestLedgerKeepRecent: 5,
+  requestLedgerKeepTokens: 8_000,
+  requestLedgerMinTokens: 60,
+  // A huge historical user message (pasted transcript, injected checkpoint,
+  // log dump) is bulk, not an instruction. Condense it to opening + constraint
+  // lines + closing, with a recall handle. The live user message is untouched.
+  requestCompressUserBulk: true,
+  requestUserBulkMinTokens: 32_000,
+  requestUserKeepTokens: 4_000,
+  requestUserHeadChars: 4_000,
+  requestUserTailChars: 1_000,
   // elide old image/file attachments (re-attach if the model needs them).
   requestElideAttachments: true,
   // blank out old reasoning text — never for signed/encrypted reasoning.
@@ -667,6 +684,15 @@ export default {
             }
           } else if (stats.skipped) {
             log(`request left untouched: ${fmt(stats.before)} tok (${stats.skipped})`);
+            const big = [];
+            for (const m of messages) {
+              for (const p of m?.content ?? []) {
+                const raw = p?.result?.value ?? p?.text ?? p?.state?.output ?? p?.input ?? "";
+                big.push({ role: m.role ?? m.type, type: p?.type, tok: estTokens(typeof raw === "string" ? raw : JSON.stringify(raw)) });
+              }
+            }
+            big.sort((a, b) => b.tok - a.tok);
+            log(`skip diagnostics: ${big.slice(0, 4).map((p) => `${p.role}/${p.type}=${fmt(p.tok)}`).join(" ")}`);
           }
           maybeRequestCompaction(ctx, event, stats, opts);
         } catch (e) {

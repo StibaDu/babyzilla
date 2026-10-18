@@ -1,3 +1,5 @@
 node_modules/
 .DS_Store
 *.log
+graphify-out/
+test/real-shape.mjs

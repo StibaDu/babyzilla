@@ -2,6 +2,32 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.7.0] — 2026-10-18
+
+### Added
+
+- **Layer 3: deterministic turn ledger.** Old tool steps no longer become
+  anonymous "elided" markers. Each one collapses to a row built from the call
+  itself — `#12 · bash · npm test · exit 1 · 3.1K tok · recall 8c1f…` — so the
+  transcript stays an index of what was already tried. No model call, no drift:
+  tool, target, exit status and size all come from the call. The newest
+  `requestLedgerKeepTokens` (8K) / `requestLedgerKeepRecent` (5) results stay
+  byte-for-byte.
+- **Bulk historical user context.** A *historical* user message above
+  `requestUserBulkMinTokens` (32K) is condensed to its opening, the lines that
+  read like constraints, and its closing, plus a recall handle. The **live**
+  user message is never touched. This is what harness checkpoints and pasted
+  transcripts are made of; in practice it was 92% of the request.
+- Options: `requestLedger`, `requestLedgerKeepRecent`,
+  `requestLedgerKeepTokens`, `requestLedgerMinTokens`,
+  `requestCompressUserBulk`, `requestUserBulkMinTokens`,
+  `requestUserKeepTokens`, `requestUserHeadChars`, `requestUserTailChars`.
+
+### Changed
+
+- `requestMinSavingsPct` default 12: a rewrite that saves less is rolled back,
+  so the prompt stays cache-stable instead of churning.
+
 ## [0.6.0] — 2026-10-18
 
 ### Added

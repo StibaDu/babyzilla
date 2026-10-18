@@ -21,6 +21,13 @@ hot-reload on config change):
         "requestProtectTurns": true,
         "requestTurnProtectTokens": 40000,
         "requestMinSavingsPct": 12,
+        "requestLedger": true,
+        "requestLedgerKeepTokens": 8000,
+        "requestLedgerKeepRecent": 5,
+        "requestLedgerMinTokens": 60,
+        "requestCompressUserBulk": true,
+        "requestUserBulkMinTokens": 32000,
+        "requestUserKeepTokens": 4000,
         "requestContract": true,
         "distillBudgetTokens": 0,
         "toolResultCompression": true,
@@ -59,6 +66,13 @@ once.)
 | `requestHardProtect` | `1` | If the protected tail alone exceeds the budget, compress it oldest-first but always keep these final N messages. |
 | `requestPartMinTokens` | `800` | Parts below this size are not worth rewriting. |
 | `requestElideMinTokens` | `200` | In the hard-budget phase, parts are paged down to a pointer once they exceed this size; the page is recoverable via `babyzilla recall`. Lower means closer to the budget, higher means fewer, larger pages. |
+| `requestLedger` | `true` | Layer 3. Old tool steps collapse to one deterministic row built from the call itself (`#12 · bash · npm test · exit 1 · 3.1K tok · recall …`). No model call, no drift; the transcript stays an index of what was tried. |
+| `requestLedgerKeepTokens` | `8000` | Newest tool results (by tokens) that are never turned into rows. Token-based on purpose: 20 huge reads are still 250K tokens. |
+| `requestLedgerKeepRecent` | `5` | Count floor for the same protection, so a few small results always stay verbatim. |
+| `requestLedgerMinTokens` | `60` | Results below this size are left alone. |
+| `requestCompressUserBulk` | `true` | Condense a *historical* user message above `requestUserBulkMinTokens`: keep its opening, constraint lines and closing, page the rest. The live user message is never touched. |
+| `requestUserBulkMinTokens` | `32000` | Threshold for the above. Real instructions are far smaller; harness checkpoints and pasted logs are far larger. |
+| `requestUserKeepTokens` | `4000` | Budget for lines that read like constraints (`never`, `always`, `must`, `only`, …) kept verbatim from a condensed user message. |
 | `requestElideAttachments` | `true` | Replace old image/file parts with a one-line placeholder (re-attach if needed). |
 | `requestElideReasoning` | `true` | Blank old reasoning text. Signed/encrypted reasoning blocks are never touched. |
 | `toolResultCompression` | `true` | Layer 2b — compress large `read` / `grep` / `glob` results **at the source**, before they are persisted and resent on every later turn. Keeps the head, the tail, and every structural or diagnostic line; line numbers stay intact so exact ranges remain readable. |

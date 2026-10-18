@@ -17,6 +17,8 @@ hot-reload on config change):
         "requestBudgetTokens": 45000,
         "requestTargetRatio": 0.1,
         "requestMinBudgetTokens": 12000,
+        "requestMaxPromptRatio": 0.5,
+        "distillBudgetTokens": 0,
         "toolResultCompression": true,
         "toolResultProtectRecent": 1,
         "proactiveCompactRatio": 0.35,
@@ -38,12 +40,14 @@ once.)
 | --- | --- | --- |
 | `toolCompression` | `true` | Layer 2 — rewrite shell commands through the `lowfat` binary before execution (`lowfat` by zdk, bundled integration). Needs the binary; without it the layer is skipped. |
 | `requestCompression` | `true` | Layer 1b — enforce a hard per-request token budget via OpenCode's `session.hook("context")`. This runs on **every** request, including models whose 1M-token window means native compaction never fires (Kimi K3). Disable only if you want to see the raw history. |
-| `requestBudgetTokens` | `45000` | Hard max estimated tokens for the outgoing message list (system prompt and tool definitions excluded). Above it, old tool output/text/reasoning/attachments are compressed; if still over, the oldest parts become one-line pointers. Lower = more savings, less raw history. |
+| `requestBudgetTokens` | `45000` | Hard max estimated tokens for the outgoing message list (system prompt and tool definitions excluded). Clamped to `requestMaxPromptRatio × model context window`, so a small local model never receives more than it can hold. Lower = more savings, less raw history. |
 | `requestTargetRatio` | `0.1` | Aim to keep this fraction of the incoming context (0 = disabled). A 160K-token request is cut to ~16K (90% smaller); the hard cap wins for 1M-token windows. Set to `0` to only enforce `requestBudgetTokens`. |
 | `requestMinBudgetTokens` | `12000` | Floor for the ratio target — never compress a request below this just because the ratio says so. |
 | `requestMinTokens` | `20000` | Never apply Layer 1b below this estimated size, even if the budget is smaller. |
+| `requestMaxPromptRatio` | `0.5` | Ceiling on one request as a fraction of the model's context window. The window comes from OpenCode's model metadata, so an 8K local model gets ~4K of messages while a 1M model keeps the 45K cap. System prompt and tool schemas are not counted, hence the headroom. |
+| `distillBudgetTokens` | `0` | Transcript tokens fed to the distiller. `0` derives it from the model window (40%, capped at 48K); set a number when `distillModel` points at a small-window model. |
 | `requestProtectRecent` | `6` | Newest N messages always sent verbatim. |
-| `requestHardProtect` | `2` | If the protected tail alone exceeds the budget, compress it oldest-first but always keep these final N messages. |
+| `requestHardProtect` | `1` | If the protected tail alone exceeds the budget, compress it oldest-first but always keep these final N messages. |
 | `requestPartMinTokens` | `800` | Parts below this size are not worth rewriting. |
 | `requestElideAttachments` | `true` | Replace old image/file parts with a one-line placeholder (re-attach if needed). |
 | `requestElideReasoning` | `true` | Blank old reasoning text. Signed/encrypted reasoning blocks are never touched. |

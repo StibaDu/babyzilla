@@ -80,3 +80,12 @@ test("context hook caps a 1M-token Kimi K3 session by >90% and keeps the last re
   assert.match(lastResult.result.value, /^1:   step\(0\);/);
   assert.doesNotMatch(lastResult.result.value, /older tool output elided/);
 });
+
+test("context hook fits an 8K local model", async () => {
+  const { handlers } = await loadPlugin();
+  const bulk = numbered(2000);
+  const messages = [{ id: "u0", role: "user", content: [{ type: "text", text: "task" }] }];
+  for (let i = 0; i < 8; i++) messages.push({ id: `m${i}`, role: "assistant", content: [{ type: "tool-result", id: `c${i}`, name: "read", result: { type: "text", value: bulk } }] });
+  await handlers.get("context")({ sessionID: "ses_small", messages, model: { id: "local-8k", limit: { context: 8192 } } });
+  assert.ok(estimateMessagesTokens(messages) <= 4096);
+});

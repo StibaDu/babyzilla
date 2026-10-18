@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import {
   fmt, slug, dirSlug, trimTo,
   reduceForDistill, distillationPrompt, parseModules, moduleFileFor, buildSummary,
-  DISTILL_INSTRUCTIONS, USER_BUDGET_TOKENS,
+  DISTILL_INSTRUCTIONS, USER_BUDGET_TOKENS, distillInputBudget,
   TOOL_RESULT_HEAD_CHARS, TOOL_RESULT_TAIL_CHARS,
 } from "../lib/distill.mjs";
 import { estTokens } from "../lib/text.mjs";
@@ -224,4 +224,12 @@ test("buildSummary omits sections it has no modules for", () => {
     { rawTokens: 100, packTokens: 10, savedPct: 90 });
   assert.doesNotMatch(out, /## DECISIONS/);
   assert.doesNotMatch(out, /## MODULES ON DISK/);
+});
+
+test("distillInputBudget follows the distiller window and caps at 48K", () => {
+  assert.equal(distillInputBudget({ windowTokens: 8000 }), 3200);
+  assert.equal(distillInputBudget({ windowTokens: 1_048_576 }), USER_BUDGET_TOKENS);
+  assert.equal(distillInputBudget({ windowTokens: 0 }), USER_BUDGET_TOKENS);
+  assert.equal(distillInputBudget({ windowTokens: 8000, explicit: 9000 }), 9000);
+  assert.equal(distillInputBudget({}), USER_BUDGET_TOKENS);
 });

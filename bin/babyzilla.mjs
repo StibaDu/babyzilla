@@ -463,7 +463,10 @@ export function renderPrune(root = packRoot(), olderThan, dryRun) {
  */
 export function retrieve(ref, { cwd = process.cwd(), maxLines = 400, context = 0 } = {}) {
   if (!ref) throw new Error("usage: babyzilla retrieve <path>[:<start>[-<end>]] [--context N] [--max-lines N]");
-  let spec = String(ref).replace(/^file:\/\//, "");
+  const raw = String(ref);
+  let spec = raw.replace(/^file:\/\//, "");
+  // file:///C:/... leaves a leading slash that path.resolve would mangle on Windows.
+  if (process.platform === "win32" && /^\/[A-Za-z]:[\\/]/.test(spec)) spec = spec.slice(1);
   let start = null;
   let end = null;
   const m = /^(.*?):(\d+)(?:-(\d+))?$/.exec(spec);

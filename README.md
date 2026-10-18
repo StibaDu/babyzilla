@@ -120,8 +120,10 @@ per-project library that outlives individual sessions.
 - OpenCode **v2**, any model configured (distillation uses the session's
   model by default; pin a cheaper one with `distillModel`). Works regardless of
   window size: models with 1M-token windows (Kimi K3) are capped per request by
-  Layer 1b instead of waiting for compaction. This includes **OpenCode's free
-  tier** — session-less distillation calls are rejected there, so BabyZilla
+  Layer 1b instead of waiting for compaction, while small local models (8K-32K)
+  get a budget and a distillation input that fit their window. Token estimates
+  count CJK/emoji at roughly one token per character. This includes
+  **OpenCode's free tier** — session-less distillation calls are rejected there, so BabyZilla
   falls back to the session-scoped call automatically (see `distillVia` in
   `docs/OPTIONS.md`).
 - **macOS, Linux and Windows.** Layers 1 and 1c are pure OpenCode hooks; the

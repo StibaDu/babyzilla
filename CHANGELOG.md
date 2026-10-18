@@ -2,6 +2,30 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.5.2] — 2026-10-18
+
+### Fixed
+
+- **Any model, any window.** Layer 1b clamps its budget to the model's own
+  context window (`requestMaxPromptRatio`, default 0.5). An 8K/32K local model
+  no longer gets a 45K message budget it cannot hold. Distillation input scales
+  with the window (40%, capped at 48K) instead of a fixed 48K that small models
+  cannot accept; `distillBudgetTokens` overrides it.
+- **Non-ASCII token estimates.** `estTokens` counts CJK/Cyrillic/emoji at ~1
+  token per character instead of 4 chars per token, so Chinese/Japanese sessions
+  no longer slip past the budget by 3-4x.
+- **Tool/message shapes.** Persisted tool parts (`state.output`) are counted,
+  compressed and elided like the API shape (`state.content`); source-level tool
+  compression accepts both. System/developer turns are never rewritten.
+  Attachments drop their provider fields (`url`, `mime`, `source`).
+- **Signed reasoning.** Reasoning whose signature lives in `metadata` is
+  preserved instead of blanked.
+- **`babyzilla cost`.** Falls back to the `session` table on OpenCode versions
+  without `session_v2`, honors `XDG_DATA_HOME`/`LOCALAPPDATA`, and explains
+  itself when no usage table exists.
+- **Windows paths.** Attachment URIs use `pathToFileURL`, and
+  `retrieve file:///C:/…` no longer mangles the drive path.
+
 ## [0.5.1] — 2026-10-18
 
 ### Fixed

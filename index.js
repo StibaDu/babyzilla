@@ -25,12 +25,13 @@ import { exec as execCb, execFile as execFileCb } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { estTokens, compressToolText, compressToolResult, routeDistill, selectCompressibleParts, compactMessagesForRequest } from "./lib/text.mjs";
 import {
   fmt, dirSlug,
-  TOOL_RESULT_HEAD_CHARS, TOOL_RESULT_TAIL_CHARS, USER_BUDGET_TOKENS,
-  reduceForDistill, DISTILL_INSTRUCTIONS, distillationPrompt,
+  TOOL_RESULT_HEAD_CHARS, TOOL_RESULT_TAIL_CHARS,
+  reduceForDistill, distillInputBudget, DISTILL_INSTRUCTIONS, distillationPrompt,
   parseModules, moduleFileFor, buildSummary,
 } from "./lib/distill.mjs";
 import { libraryIndex } from "./lib/library.mjs";
@@ -105,6 +106,12 @@ const defaults = {
   requestMinBudgetTokens: 10_000,
   // below this, leave the request alone even if the budget is smaller.
   requestMinTokens: 20_000,
+  // never let one request exceed this fraction of the model's context window
+  // (system prompt and tool schemas are not counted, so leave headroom).
+  requestMaxPromptRatio: 0.5,
+  // transcript tokens fed to the distiller; 0 = derive from the model window
+  // (40% of it, capped at 48K). Set explicitly for a pinned small distiller.
+  distillBudgetTokens: 0,
   // newest N messages are always sent verbatim.
   requestProtectRecent: 6,
   // even when the protected tail alone exceeds the budget, the final N
@@ -268,6 +275,18 @@ function normalizeModel(m) {
   const providerID = m.providerID;
   const id = m.id ?? m.modelID;
   return providerID && id ? { providerID, id } : null;
+}
+
+// Best-effort lookup of another model's window (used when `distillModel` is
+// pinned). Hosts without a catalog API simply return 0 and the caller falls
+// back to the session model's window.
+function modelWindow(ctx, model) {
+  try {
+    const rec = ctx?.catalog?.model?.get?.(model.providerID, model.id);
+    return Number(rec?.limit?.context ?? rec?.limit?.input) || 0;
+  } catch {
+    return 0;
+  }
 }
 
 // Route distillation text generation.
@@ -462,11 +481,8 @@ async function compressOlderToolResults(ctx, sessionID, opts) {
   const targets = selectCompressibleParts(messages, opts.toolResultProtectRecent ?? 1, COMPRESSIBLE_TOOLS);
   let n = 0;
   for (const part of targets) {
-    n += compressToolResult(
-      { tool: part.name, result: { content: part.state.content } },
-      opts,
-      (tool, before, after) => log(`tool result compressed: ${tool} ${fmt(before)}→${fmt(after)} tok`),
-    );
+    n += compressToolResult(part, opts, (tool, before, after) =>
+      log(`tool result compressed: ${tool} ${fmt(before)}→${fmt(after)} tok`));
   }
   return n;
 }
@@ -560,7 +576,10 @@ export default {
         try {
           const messages = event?.messages;
           if (!Array.isArray(messages) || !messages.length) return;
-          const stats = compactMessagesForRequest(messages, opts);
+          const stats = compactMessagesForRequest(messages, {
+            ...opts,
+            modelContext: Number(event?.model?.limit?.context ?? event?.model?.limit?.input) || undefined,
+          });
           if (stats.saved > 0) {
             log(`request compacted: ${fmt(stats.before)} → ${fmt(stats.after)} tok (${stats.savedPct}% smaller, ${stats.parts} parts, model=${event?.model?.id ?? "?"})`);
             void recordRequestStats(event?.sessionID, stats);
@@ -619,7 +638,15 @@ export default {
             log("compaction: transcript below minRawTokens — letting native compaction run");
             return;
           }
-          const reduced = reduceForDistill(extracted.text, USER_BUDGET_TOKENS);
+          const pinned = normalizeModel(opts.distillModel);
+          const distillWindow =
+            (pinned && modelWindow(ctx, pinned)) ||
+            Number(event?.model?.limit?.context ?? event?.model?.limit?.input) ||
+            0;
+          const reduced = reduceForDistill(extracted.text, distillInputBudget({
+            windowTokens: distillWindow,
+            explicit: opts.distillBudgetTokens,
+          }));
 
           const prevIdx = await readIndex(event.sessionID);
           const prevPack = prevIdx && (await readModules(prevIdx));
@@ -753,7 +780,7 @@ export default {
               log(`prompt hook: skipping missing module file ${m.file} (${p})`);
               continue;
             }
-            prompt.files.push({ uri: `file://${p}` });
+            prompt.files.push({ uri: pathToFileURL(p).href });
           }
           if (picked.length) {
             log(`prompt hook: attached ${picked.map((m) => m.file).join(", ")} by trigger match`);

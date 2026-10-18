@@ -12,6 +12,13 @@ test("estTokens rounds up at 4 chars/token and treats empty as zero", () => {
   assert.equal(estTokens("abcde"), 2);
 });
 
+test("estTokens counts non-ASCII text at ~1 token per character", () => {
+  // 8 CJK chars ≈ 8 tokens, not 2.
+  assert.equal(estTokens("\u4f60\u597d\u4e16\u754c\u4f60\u597d\u4e16\u754c"), 8);
+  // Mixed text keeps the ASCII part at 4 chars/token.
+  assert.equal(estTokens("abcd\u4f60\u597d"), 3);
+});
+
 // ── compressToolText ────────────────────────────────────────────────────────
 
 const numbered = (n) => Array.from({ length: n }, (_, i) => `${i + 1}:   step(${i});`).join("\n");
@@ -347,3 +354,53 @@ test("compactMessagesForRequest also handles the OpenCode API tool shape", () =>
   assert.match(apiPart.state.content[0].text, /ContextPack/);
 });
 
+
+test("compactMessagesForRequest clamps the budget to a small model window", () => {
+  const messages = [llmUser("task")];
+  for (let i = 0; i < 8; i++) {
+    messages.push(llmAssistant({ type: "tool-result", id: `c${i}`, name: "read", result: { type: "text", value: numberedText(4000) } }));
+  }
+  messages.push(llmUser("latest"));
+  const stats = compactMessagesForRequest(messages, {
+    requestBudgetTokens: 45_000, requestMinTokens: 20_000, requestTargetRatio: 0,
+    requestProtectRecent: 1, modelContext: 8000, requestMaxPromptRatio: 0.5,
+  });
+  assert.ok(stats.before > 4000);
+  assert.ok(stats.after <= 4000, `after=${stats.after} must fit half of an 8K window`);
+});
+
+test("compactMessagesForRequest handles persisted tool parts (state.output)", () => {
+  const persisted = { type: "tool", tool: "bash", state: { status: "completed", input: {}, output: numberedText(3000) } };
+  const messages = [llmUser("task"), { type: "assistant", content: [persisted] }, llmUser("latest")];
+  const stats = compactMessagesForRequest(messages, {
+    requestBudgetTokens: 1000, requestMinTokens: 100, requestProtectRecent: 1,
+    toolResultHeadLines: 5, toolResultTailLines: 2, requestPartMinTokens: 100,
+  });
+  assert.ok(stats.saved > 0);
+  assert.match(persisted.state.output, /ContextPack/);
+});
+
+test("selectCompressibleParts accepts both tool shapes and role-based messages", () => {
+  const apiPart = { type: "tool", name: "read", state: { content: [{ type: "text", text: "a" }] } };
+  const persisted = { type: "tool", tool: "bash", state: { status: "completed", output: "b" } };
+  const parts = selectCompressibleParts([
+    { role: "assistant", content: [apiPart, persisted] },
+  ], 0);
+  assert.deepEqual(parts, [apiPart, persisted]);
+});
+
+test("compactMessagesForRequest compresses string-content messages", () => {
+  const long = Array.from({ length: 4000 }, (_, i) => `line ${i}`).join("\n");
+  const messages = [
+    { id: "u", role: "user", content: "task" },
+    { id: "a", role: "assistant", content: long },
+    { id: "t", role: "tool", content: long },
+    { id: "u2", role: "user", content: "now" },
+  ];
+  const stats = compactMessagesForRequest(messages, {
+    requestBudgetTokens: 1000, requestTargetRatio: 0, requestMinTokens: 100,
+    requestProtectRecent: 1, requestPartMinTokens: 100,
+  });
+  assert.ok(stats.saved > 0);
+  assert.ok(messages[1].content.length < long.length);
+});

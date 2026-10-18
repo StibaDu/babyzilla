@@ -31,15 +31,15 @@ test("priceRow exposes a named shape", () => {
   assert.equal(priceRow("nope"), null);
 });
 
-function tempDb(rows) {
+function tempDb(rows, table = "session_v2") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "babyzilla-cost-"));
   const dbPath = path.join(dir, "opencode.db");
   const db = new DatabaseSync(dbPath);
-  db.exec(`create table session_v2 (
+  db.exec(`create table ${table} (
     id text primary key, parent_id text, agent text, model text, cost real,
     tokens_input integer, tokens_output integer, tokens_reasoning integer,
     tokens_cache_read integer, tokens_cache_write integer, time_updated integer)`);
-  const insert = db.prepare(`insert into session_v2 values (?,?,?,?,?,?,?,?,?,?,?)`);
+  const insert = db.prepare(`insert into ${table} values (?,?,?,?,?,?,?,?,?,?,?)`);
   for (const r of rows) {
     insert.run(
       r.id, r.parent_id ?? null, r.agent ?? null, JSON.stringify(r.model ?? null),
@@ -79,6 +79,15 @@ test("sessionCosts groups usage, sorts by cost and filters by prefix", { skip: !
     const one = sessionCosts({ dbPath, filter: "ses_bbb" });
     assert.equal(one.length, 1);
     assert.equal(one[0].agent, "plan");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("sessionCosts falls back to the session table on older databases", { skip: !DatabaseSync && "node:sqlite needs Node >= 22.5" }, () => {
+  const { dir, dbPath } = tempDb([{ id: "ses_old", model: { id: "glm-5.2" }, input: 100, output: 50 }], "session");
+  try {
+    assert.equal(sessionCosts({ dbPath })[0].sessionID, "ses_old");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

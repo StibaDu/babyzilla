@@ -10,10 +10,14 @@ failing step.
 - Time: ~5 minutes. Cost: one small model call in Step 3 (uses the model your
   human already configured in OpenCode).
 - Requirement: **OpenCode v2.x** and **Node ≥ 18**.
-- What you will install: **one OpenCode plugin with two compression layers**
-  (Layer 1: session compaction via AI-distilled ContextPack modules; Layer 2:
-  shell-command pre-compression via the bundled lowfat integration, which
-  needs a ~3 MB binary) + optionally a small CLI. All data stays in
+- What you will install: **one OpenCode plugin with five compression layers**
+  (Layer 1: session compaction via AI-distilled ContextPack modules; Layer 1b:
+  a hard per-request token budget, which also covers huge-window models like
+  Kimi K3; Layer 1c: proactive compaction so sessions do not grow to the
+  model's full window before Layer 1 runs; Layer 2: shell-command
+  pre-compression via the bundled lowfat integration, which needs a ~3 MB
+  binary; Layer 2b: source-level tool-result compression) + optionally a small
+  CLI. All data stays in
   `~/.opencode/contextpacks/` on this machine.
 
 ---

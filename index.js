@@ -6,6 +6,7 @@
 // in OpenCode's database is never touched — packs are additive.
 //
 // Integration points (OpenCode >= 2.0.16):
+//   ctx.session.hook("context")     -> per-request token budget (Layer 1b)
 //   ctx.tool.hook("execute.after")  -> per-session usage journal (stats source)
 //   ctx.session.hook("compaction")  -> distill & swap the compaction summary
 //   ctx.session.hook("prompt")      -> trigger-keyword module auto-loading
@@ -25,7 +26,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { estTokens, compressToolText, compressToolResult, routeDistill, selectCompressibleParts } from "./lib/text.mjs";
+import { estTokens, compressToolText, compressToolResult, routeDistill, selectCompressibleParts, compactMessagesForRequest } from "./lib/text.mjs";
 import {
   fmt, dirSlug,
   TOOL_RESULT_HEAD_CHARS, TOOL_RESULT_TAIL_CHARS, USER_BUDGET_TOKENS,
@@ -45,6 +46,9 @@ const COMPRESSIBLE_TOOLS = new Set(["read", "grep", "glob", "list"]);
 // re-registered hook after a config reload) must not distill the same session
 // concurrently; a conservative TTL covers abnormal aborts.
 const compactionInFlight = new Map();
+// sessions for which BabyZilla already requested a proactive compaction, so a
+// 1M-token model does not get a /compact every single step.
+const proactiveRequested = new Map();
 // Tool results are the bulk of a session. Pre-trim them so the distiller call
 // fits comfortably even when the session just overflowed its context window.
 log("contextpack module loaded, data dir:", ROOT);
@@ -81,6 +85,46 @@ const defaults = {
   // keep this many of the most recent tool results verbatim — the agent is
   // working from them, so compressing them causes re-reads.
   toolResultProtectRecent: 1,
+  // Layer 1b: hard per-request budget. Unlike Layer 1 (which waits for
+  // OpenCode's compaction), this runs on every outgoing request, so models
+  // with huge windows (Kimi K3: 1M tokens) are covered too. Once the message
+  // list exceeds `requestBudgetTokens`, older tool output, assistant prose,
+  // reasoning and attachments are compressed in place; if that is not enough,
+  // the oldest parts are reduced to one-line pointers. Recent messages and all
+  // user turns stay verbatim.
+  requestCompression: true,
+  // max estimated tokens for the message list of one request (not counting
+  // the system prompt or tool definitions).
+  requestBudgetTokens: 45_000,
+  // aim for this fraction of the incoming context (0 = disabled). With 0.08 a
+  // 160K request is cut to ~13K (>90% smaller); the hard cap above still
+  // applies to 1M-token windows, and the floor below prevents over-compression.
+  requestTargetRatio: 0.08,
+  // never shrink a request below this, even when the ratio says so.
+  requestMinBudgetTokens: 10_000,
+  // below this, leave the request alone even if the budget is smaller.
+  requestMinTokens: 20_000,
+  // newest N messages are always sent verbatim.
+  requestProtectRecent: 6,
+  // even when the protected tail alone exceeds the budget, the final N
+  // messages are shielded from elision (they may still be head+tail
+  // compressed). 0 = shield none; user turns are always protected.
+  requestHardProtect: 1,
+  // parts below this size are not worth rewriting.
+  requestPartMinTokens: 800,
+  // elide old image/file attachments (re-attach if the model needs them).
+  requestElideAttachments: true,
+  // blank out old reasoning text — never for signed/encrypted reasoning.
+  requestElideReasoning: true,
+  // Layer 1c: ask OpenCode to compact when the model's own auto-compaction
+  // would not fire for a very long time (e.g. 1M-token Kimi K3).
+  proactiveCompaction: true,
+  // fraction of the model's context window that triggers it.
+  proactiveCompactRatio: 0.35,
+  // absolute floor so small-window models are untouched.
+  proactiveCompactMinTokens: 120_000,
+  // minimum gap between two proactive compactions for the same session.
+  proactiveCompactCooldownMs: 10 * 60_000,
 };
 
 function log(...args) {
@@ -252,6 +296,31 @@ async function distillText(ctx, { sessionID, model, prompt, preferSession, allow
     allowFallback,
     onError: (route, e) => log(`distillation call failed (${route}), retrying via the other route:`, e?.message ?? e),
   });
+}
+
+// Ask OpenCode for a real compaction once the context is a fraction of the
+// model's window. On 1M-token models OpenCode's own threshold is so high that
+// it effectively never fires; this keeps sessions bounded and gives Layer 1 a
+// chance to replace the summary with a pack.
+function maybeRequestCompaction(ctx, event, stats, opts) {
+  try {
+    if (opts.proactiveCompaction === false) return;
+    if (typeof ctx.session?.compact !== "function") return;
+    const sessionID = event?.sessionID;
+    if (!sessionID || !stats?.before) return;
+    if ((compactionInFlight.get(sessionID) ?? 0) > Date.now()) return;
+    const limit = Number(event?.model?.limit?.context) || 0;
+    const ratio = opts.proactiveCompactRatio ?? 0.35;
+    const threshold = Math.max(opts.proactiveCompactMinTokens ?? 120_000, Math.round(limit * ratio));
+    if (stats.before < threshold) return;
+    const now = Date.now();
+    if (now - (proactiveRequested.get(sessionID) ?? 0) < (opts.proactiveCompactCooldownMs ?? 600_000)) return;
+    proactiveRequested.set(sessionID, now);
+    log(`proactive compaction requested: ${fmt(stats.before)} tok ≥ ${fmt(threshold)} (model=${event?.model?.id ?? "?"})`);
+    void Promise.resolve(ctx.session.compact({ sessionID, delivery: "queue" })).catch((e) => log("proactive compaction failed:", e?.message ?? e));
+  } catch (e) {
+    log("proactive compaction skipped:", e?.message ?? e);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -471,6 +540,31 @@ export default {
       }
     }
 
+    // ---- per-request context budget (works without compaction) ------------
+    // OpenCode v2 runs `context` hooks for every primary request, handing over
+    // the exact `messages` array. Mutating it here is honoured by the runtime
+    // (the built-in plan-mode plugin uses the same mechanism). This is what
+    // makes BabyZilla effective on huge-window models like Kimi K3 (1M), where
+    // native compaction — and therefore Layer 1 — may never fire.
+    if (typeof ctx.session?.hook === "function" && opts.requestCompression !== false) {
+      await ctx.session.hook("context", async (event) => {
+        try {
+          const messages = event?.messages;
+          if (!Array.isArray(messages) || !messages.length) return;
+          const stats = compactMessagesForRequest(messages, opts);
+          if (stats.saved > 0) {
+            log(`request compacted: ${fmt(stats.before)} → ${fmt(stats.after)} tok (${stats.savedPct}% smaller, ${stats.parts} parts, model=${event?.model?.id ?? "?"})`);
+            void recordRequestStats(event?.sessionID, stats);
+          }
+          maybeRequestCompaction(ctx, event, stats, opts);
+        } catch (e) {
+          // Never break a request: any partial rewrite is text-only, so the
+          // messages remain structurally valid and the request still runs.
+          log("request compression skipped:", e?.message ?? e);
+        }
+      });
+    }
+
     // ---- compaction replacement ------------------------------------------
     if (typeof ctx.session?.hook === "function") {
       await ctx.session.hook("compaction", async (event) => {
@@ -488,12 +582,29 @@ export default {
           compactionInFlight.set(event.sessionID, Date.now() + 120_000);
           owned = true;
 
-          log(`compaction fired: session=${event?.sessionID} model=${safeStr(event?.model)?.slice(0, 80)} msgs=${(event?.messages ?? []).length}`);
+          log(`compaction fired: session=${event?.sessionID} reason=${event?.reason ?? "?"} model=${safeStr(event?.model)?.slice(0, 80)} msgs=${(event?.messages ?? []).length}`);
           const model = normalizeModel(opts.distillModel) ?? normalizeModel(event?.model);
           if (!model) throw new Error("no model available for distillation");
 
-          const extracted = transcriptText(event?.messages);
-          const rawTokens = estTokens(extracted.text);
+          let extracted = transcriptText(event?.messages);
+          let rawTokens = estTokens(extracted.text);
+          // Some manual/free-tier compactions pass a single synthetic message
+          // (the compaction instruction) instead of the transcript. Pull the
+          // live session context in that case so distillation has real input.
+          if (rawTokens < opts.minRawTokens && typeof ctx.session?.context === "function") {
+            try {
+              const live = await ctx.session.context({ sessionID: event.sessionID });
+              const alt = transcriptText(live);
+              const altTokens = estTokens(alt.text);
+              if (altTokens > rawTokens) {
+                log(`compaction: event had only ${fmt(rawTokens)} tok; using live context (${fmt(altTokens)} tok)`);
+                extracted = alt;
+                rawTokens = altTokens;
+              }
+            } catch (e) {
+              log("compaction: live-context fallback failed:", e?.message ?? e);
+            }
+          }
           log(`compaction: ${fmt(rawTokens)} raw tokens`);
           if (rawTokens < opts.minRawTokens) {
             log("compaction: transcript below minRawTokens — letting native compaction run");
@@ -509,7 +620,7 @@ export default {
           for (let attempt = 1; attempt <= 2 && !modules; attempt++) {
             const retryNote = attempt > 1 ? "\n\nIMPORTANT: your previous reply was not parseable. Output ONLY newline-delimited JSON objects per line, exactly as instructed. No thinking, no fences." : "";
             const mode = opts.distillVia ?? "auto";
-            const preferSession = mode === "session";
+            const preferSession = mode === "session" || (mode === "auto" && model?.providerID === "opencode");
             const allowFallback = mode !== "text";
             const out = { text: await distillText(ctx, { sessionID: event.sessionID, model, prompt: DISTILL_INSTRUCTIONS + "\n\n" + prompt + retryNote, preferSession, allowFallback }) };
             try {
@@ -667,7 +778,20 @@ export default {
           execute: async ({ sessionID }) => {
             try {
               const idx = await readIndex(sessionID);
+              const req = await readRequestStats(sessionID);
               if (!idx) {
+                if (req?.requests) {
+                  await ctx.session.synthetic({
+                    sessionID,
+                    text: [
+                      "[ContextPack] no pack yet (compaction has not run), but Layer 1b is active:",
+                      `· request budget: ${req.requests} requests, ~${fmt(req.before)} → ~${fmt(req.after)} tok (${req.savedPct}% smaller)`,
+                      `· last request: ~${fmt(req.last?.before ?? 0)} → ~${fmt(req.last?.after ?? 0)} tok (${req.last?.savedPct ?? 0}% smaller)`,
+                      `· pack modules will appear here after the next compaction; files live under ${ROOT}/sessions/${sessionID}/`,
+                    ].join("\n"),
+                  });
+                  return;
+                }
                 await ctx.session.synthetic({ sessionID, text: "[ContextPack] No pack for this session yet. It will be created at the next compaction (automatic when the context runs full); you can also read existing packs under " + ROOT + "/sessions/<sessionID>/." });
                 return;
               }
@@ -677,9 +801,14 @@ export default {
                 `· distill model: ${idx.model?.providerID ?? "?"}/${idx.model?.id ?? "?"} at ${idx.created}`,
                 `· stats: raw ~${fmt(idx.rawTranscriptTokens)} tok → pack ~${fmt(idx.stats.packTokens)} tok (${idx.stats.savedPct}% smaller)`,
                 `· journal: ${journal.entries} tool results captured (~${fmt(journal.tokens)} raw tokens observed)`,
+              ];
+              if (req?.requests) {
+                lines.push(`· request budget: ${req.requests} requests, ~${fmt(req.before)} → ~${fmt(req.after)} tok (${req.savedPct}% smaller; last ~${fmt(req.last?.before ?? 0)} → ~${fmt(req.last?.after ?? 0)})`);
+              }
+              lines.push(
                 "· modules:",
                 ...idx.modules.map((m) => `${m.hot ? "  ● hot" : "  ○ cold"} ${m.file}  ~${fmt(m.tokens)} tok  triggers: ${m.triggers.join(", ") || "—"}`),
-              ];
+              );
               await ctx.session.synthetic({ sessionID, text: lines.join("\n") });
             } catch (e) {
               await ctx.session.synthetic({ sessionID, text: `[ContextPack] inspector failed: ${e?.message ?? e}` });
@@ -714,4 +843,33 @@ async function readJournalStats(sessionID) {
     for (const l of lines) { try { tokens += JSON.parse(l).tokens ?? 0; } catch { /* skip */ } }
     return { entries: lines.length, tokens };
   } catch { return { entries: 0, tokens: 0 }; }
+}
+
+// Layer 1b savings, accumulated per session so `babyzilla stats` and
+// `/contextpack` can show that requests are being capped even when native
+// compaction never runs (Kimi K3 and other 1M-token models).
+function requestStatsPath(sessionID) {
+  return path.join(ROOT, "sessions", sessionID, "request-stats.json");
+}
+
+async function readRequestStats(sessionID) {
+  return readJson(requestStatsPath(sessionID));
+}
+
+async function recordRequestStats(sessionID, stats) {
+  if (!sessionID || !stats?.saved) return;
+  try {
+    const file = requestStatsPath(sessionID);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const prev = await readJson(file);
+    const before = (prev?.before ?? 0) + stats.before;
+    const after = (prev?.after ?? 0) + stats.after;
+    await fs.writeFile(file, JSON.stringify({
+      requests: (prev?.requests ?? 0) + 1,
+      before,
+      after,
+      savedPct: before ? Math.round((1 - after / before) * 100) : 0,
+      last: { before: stats.before, after: stats.after, savedPct: stats.savedPct, at: Date.now() },
+    }, null, 2));
+  } catch { /* stats must never affect a request */ }
 }

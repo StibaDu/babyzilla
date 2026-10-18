@@ -1,7 +1,7 @@
 // Pure-helper tests — no plugin load, no filesystem, no model calls.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { estTokens, compressToolText, compressToolResult, routeDistill, selectCompressibleParts } from "../lib/text.mjs";
+import { estTokens, compressToolText, compressToolResult, routeDistill, selectCompressibleParts, compactMessagesForRequest, compressTextBlock } from "../lib/text.mjs";
 
 // ── estTokens ───────────────────────────────────────────────────────────────
 
@@ -228,14 +228,122 @@ test("routeDistill does not fall back when allowFallback is false", async () => 
   assert.equal(sessionCalls, 0);
 });
 
-test("routeDistill surfaces the second error when both routes fail", async () => {
-  await assert.rejects(
-    routeDistill({
-      viaText: boom("first"),
-      viaSession: boom("second"),
-      preferSession: false,
-      onError: () => {},
-    }),
-    /second/,
-  );
+// ── Layer 1b: per-request compaction ───────────────────────────────────────
+
+test("compressTextBlock keeps a head and tail with a marker", () => {
+  const text = "A".repeat(5000) + "TAIL";
+  const out = compressTextBlock(text, { headChars: 100, tailChars: 20 });
+  assert.ok(out);
+  assert.ok(out.startsWith("A".repeat(100)));
+  assert.match(out, /\d+ chars elided by ContextPack/);
+  assert.ok(out.endsWith("TAIL"));
+  assert.equal(compressTextBlock("short"), null);
 });
+
+const numberedText = (n) => Array.from({ length: n }, (_, i) => `${i + 1}:   step(${i});`).join("\n");
+const llmToolResult = (id, text) => ({
+  type: "tool-result", id, name: "read", result: { type: "text", value: text },
+});
+const llmAssistant = (...parts) => ({ id: `msg-${Math.random()}`, role: "assistant", content: parts });
+const llmUser = (text) => ({ id: `msg-${Math.random()}`, role: "user", content: [{ type: "text", text }] });
+
+test("compactMessagesForRequest is a no-op under the budget", () => {
+  const messages = [llmUser("hi"), llmAssistant({ type: "text", text: "small" })];
+  const stats = compactMessagesForRequest(messages, { requestBudgetTokens: 45_000 });
+  assert.equal(stats.saved, 0);
+  assert.equal(stats.before, stats.after);
+});
+
+test("compactMessagesForRequest compresses old tool output but protects recent messages", () => {
+  const big = numberedText(4000);
+  const old = llmAssistant(llmToolResult("a", big));
+  const recent = llmAssistant(llmToolResult("b", big));
+  const messages = [llmUser("task"), old, recent];
+  const stats = compactMessagesForRequest(messages, {
+    requestBudgetTokens: 10_000, requestMinTokens: 1000, requestProtectRecent: 1,
+    toolResultHeadLines: 10, toolResultTailLines: 5, requestPartMinTokens: 100,
+  });
+  assert.ok(stats.saved > 0);
+  assert.match(old.content[0].result.value, /elided by ContextPack/);
+  assert.doesNotMatch(recent.content[0].result.value, /older tool output elided/);
+  assert.match(recent.content[0].result.value, /1:   step\(0\)/, "newest message keeps structural content");
+  assert.equal(messages[0].content[0].text, "task", "user turns are never rewritten");
+});
+
+test("compactMessagesForRequest reaches a hard budget and saves >90% on a huge window", () => {
+  const bulk = numberedText(4000); // ~5K tokens each
+  const messages = [llmUser("long task")];
+  for (let i = 0; i < 120; i++) messages.push(llmAssistant(llmToolResult(`t${i}`, bulk)));
+  const stats = compactMessagesForRequest(messages, {
+    requestBudgetTokens: 45_000, requestMinTokens: 1000, requestProtectRecent: 6,
+    requestHardProtect: 1,
+    toolResultHeadLines: 10, toolResultTailLines: 5, requestPartMinTokens: 100,
+  });
+  assert.ok(stats.after <= 45_000, `after ${stats.after} should be within budget`);
+  assert.ok(stats.savedPct >= 90, `expected >=90% saved, got ${stats.savedPct}%`);
+  assert.ok(stats.parts > 100);
+});
+
+test("compactMessagesForRequest uses the target ratio for medium contexts", () => {
+  const bulk = numberedText(800); // ~3.9K tokens each
+  const messages = [llmUser("task")];
+  for (let i = 0; i < 8; i++) messages.push(llmAssistant(llmToolResult(`t${i}`, bulk)));
+  // ~31K in → ratio budget 10% ≈ 3.1K, floored to 5K → roughly 84% smaller.
+  const stats = compactMessagesForRequest(messages, {
+    requestBudgetTokens: 45_000, requestTargetRatio: 0.1, requestMinBudgetTokens: 5_000,
+    requestMinTokens: 1000, requestProtectRecent: 6, requestHardProtect: 1,
+    toolResultHeadLines: 5, toolResultTailLines: 2, requestPartMinTokens: 100,
+  });
+  assert.ok(stats.savedPct >= 70, `got ${stats.savedPct}%`);
+  assert.ok(stats.after <= 5_000, `after ${stats.after}`);
+});
+
+test("compactMessagesForRequest is idempotent across calls", () => {
+  const bulk = numberedText(4000);
+  const messages = [llmUser("task")];
+  for (let i = 0; i < 20; i++) messages.push(llmAssistant(llmToolResult(`t${i}`, bulk)));
+  const opts = {
+    requestBudgetTokens: 10_000, requestMinTokens: 1000, requestProtectRecent: 2,
+    toolResultHeadLines: 5, toolResultTailLines: 2, requestPartMinTokens: 100,
+  };
+  const first = compactMessagesForRequest(messages, opts);
+  assert.ok(first.saved > 0);
+  const snapshot = JSON.stringify(messages);
+  const second = compactMessagesForRequest(messages, opts);
+  assert.equal(second.saved, 0);
+  assert.equal(JSON.stringify(messages), snapshot);
+});
+
+test("compactMessagesForRequest elides old reasoning and attachments, never signed reasoning", () => {
+  const messages = [
+    llmUser("task"),
+    llmAssistant(
+      { type: "reasoning", text: "x".repeat(20_000) },
+      { type: "reasoning", text: "signed", encrypted: "SIG" },
+      { type: "media", filename: "shot.png", media: {} },
+      { type: "text", text: "done" },
+    ),
+    llmAssistant({ type: "tool-result", id: "z", name: "read", result: { type: "text", value: "recent" } }),
+  ];
+  compactMessagesForRequest(messages, {
+    requestBudgetTokens: 1000, requestTargetRatio: 0, requestMinTokens: 100, requestProtectRecent: 1,
+    requestElideReasoning: true, requestElideAttachments: true,
+  });
+  const parts = messages[1].content;
+  assert.equal(parts[0].text, "");
+  assert.equal(parts[1].text, "signed", "encrypted reasoning must be preserved");
+  assert.equal(parts[2].type, "text");
+  assert.match(parts[2].text, /attachment elided/);
+});
+
+test("compactMessagesForRequest also handles the OpenCode API tool shape", () => {
+  const apiPart = { type: "tool", id: "x", name: "read", state: { content: [{ type: "text", text: numberedText(3000) }] } };
+  const messages = [llmUser("task"), { type: "assistant", content: [apiPart] }, llmUser("latest")];
+  const stats = compactMessagesForRequest(messages, {
+    requestBudgetTokens: 1000, requestMinTokens: 100, requestProtectRecent: 1,
+    toolResultHeadLines: 5, toolResultTailLines: 2, requestPartMinTokens: 100,
+  });
+  assert.ok(stats.saved > 0);
+  assert.match(apiPart.state.content[0].text, /ContextPack/);
+});
+

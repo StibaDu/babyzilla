@@ -1,16 +1,52 @@
 # How BabyZilla works
 
-OpenCode v2 gives plugins a hook on compaction. BabyZilla registers three
-hooks and one command, and owns zero OpenCode state — everything lives in
-`~/.opencode/contextpacks/`.
+OpenCode v2 gives plugins a hook on compaction and another on every outgoing
+request. BabyZilla registers four hooks and one command, and owns zero
+OpenCode state — everything lives in `~/.opencode/contextpacks/`.
 
-## The three hooks
+## The hooks
+
+### 0. `session.hook("context")` — hard per-request budget (Layer 1b)
+
+Layer 1 only runs when OpenCode decides to compact. A model with a 1M-token
+window (Kimi K3) may never reach that point, so without this layer the plugin
+would have *zero effect* on exactly the long sessions where it matters most.
+
+The `context` hook receives the exact `messages` array about to be sent.
+BabyZilla:
+
+1. Estimates the message tokens (`chars / 4`).
+2. If the list exceeds the budget — `requestTargetRatio` (10%) of the incoming
+   context, floored at `requestMinBudgetTokens` (12K) and capped at
+   `requestBudgetTokens` (45K) — compresses, in place, old tool results
+   (`result.value` / `output.value` / `state.content`), old assistant text, old
+   reasoning (never signed/encrypted) and old image/file attachments.
+3. If the request is still over budget, the oldest parts are replaced with
+   one-line `read(offset, limit)` / `babyzilla retrieve` pointers.
+4. The newest `requestProtectRecent` messages, the final
+   `requestHardProtect` messages, and every user turn stay verbatim. If the
+   protected tail is itself over budget, the window is widened oldest-first,
+   never touching the final exchange.
+
+Every rewrite is idempotent (parts carrying `[ContextPack]` are skipped), and
+a failure leaves the messages structurally valid. Measured on a 1.13M-token
+Kimi-K3-shaped session: **1,129.6K → 44.9K tokens (96% smaller)**.
+
+The same hook also keeps sessions from growing unbounded: once a request
+exceeds `max(proactiveCompactMinTokens, proactiveCompactRatio × model window)`,
+BabyZilla calls `ctx.session.compact({ sessionID })` itself (Layer 1c). Without
+it, OpenCode waits for ~90% of the window — 900K+ on Kimi K3 — before Layer 1
+ever gets a chance to run. Triggers are rate-limited per session
+(`proactiveCompactCooldownMs`, 10 min) so a compaction that frees little cannot
+loop.
 
 ### 1. `session.hook("compaction")` — replace the summary
 
 When OpenCode compacts a session (automatic when the context fills, or manual
 `/compact`), the hook receives the full transcript as provider-normalized
-messages. BabyZilla then:
+messages. Manual and free-tier compactions sometimes pass a single synthetic
+message instead; BabyZilla then falls back to `ctx.session.context()` so the
+distiller sees the real transcript. It then:
 
 1. Estimates raw tokens (`text.length / 4`). Under `minRawTokens` (4000) it
    yields — native compaction is better than a big pack for small sessions.

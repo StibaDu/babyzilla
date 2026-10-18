@@ -2,6 +2,50 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.4.0] — 2026-10-18
+
+### Added
+
+- **Layer 1b — hard per-request budget** via OpenCode v2's
+  `session.hook("context")`. BabyZilla previously only acted at compaction, so
+  models with huge windows (Kimi K3: 1M tokens) could run entire sessions
+  without the plugin ever firing. The new hook runs before every request:
+  once the budget is exceeded it compresses old tool results, assistant prose,
+  reasoning and attachments in place, then reduces the oldest parts to
+  one-line pointers. It targets `requestTargetRatio` (10% of the incoming
+  context, floored at 12K) and caps at `requestBudgetTokens` (45K). Measured
+  on a 1.13M-token Kimi-K3 session: **1,129.6K → 44.9K tokens (96% smaller)**;
+  a 160K request lands at ~16K (90%).
+- Per-request savings are accumulated in `request-stats.json` per session and
+  surfaced by `babyzilla stats`, `babyzilla show`, and `/contextpack` — so
+  Layer 1b is measurable even when no compaction ever runs.
+- New options: `requestCompression`, `requestBudgetTokens`,
+  `requestTargetRatio`, `requestMinBudgetTokens`, `requestMinTokens`,
+  `requestProtectRecent`, `requestHardProtect`, `requestPartMinTokens`,
+  `requestElideAttachments`, `requestElideReasoning`.
+- **Layer 1c — proactive compaction.** OpenCode's own compaction only fires
+  near the model's context limit, which for a 1M-token model (Kimi K3) means a
+  session can grow to hundreds of thousands of tokens before BabyZilla ever
+  gets to replace the summary. When a request reaches
+  `max(proactiveCompactMinTokens, proactiveCompactRatio × context window)`,
+  BabyZilla now calls `session.compact()` itself (rate-limited per session), so
+  the pack kicks in early. New options: `proactiveCompaction`,
+  `proactiveCompactRatio`, `proactiveCompactMinTokens`,
+  `proactiveCompactCooldownMs`.
+- Manual/free-tier compactions that hand the hook a single synthetic message
+  now fall back to the live session context, so distillation sees the real
+  transcript instead of one blob (and no longer skips as "below minRawTokens").
+- `test/plugin-context.test.mjs` — loads the real plugin and asserts >90%
+  reduction on a 1M-token-shaped message list, and that a 1M-token request
+  triggers a proactive compaction.
+
+### Changed
+
+- Docs now describe the four layers (1, 1b, 2, 2b) and when each one fires.
+- `distillVia: "auto"` now starts with the session-scoped call for the
+  `opencode` provider (free tier), avoiding a guaranteed failed request and
+  the resulting native-compaction fallback.
+
 ## [0.3.2] — 2026-10-18
 
 ### Fixed

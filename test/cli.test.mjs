@@ -9,7 +9,7 @@ import {
   loadPacks, loadPack, renderStats, renderPack, statsJson,
   scanRefs, parseRefToken, isUncertainPath, resolveFirst,
   parseDuration, prunePlan, libraryStats, renderVerify, savingsPct,
-  retrieve,
+  retrieve, aggregateRequestStats,
 } from "../bin/babyzilla.mjs";
 
 // ── fixture helpers ─────────────────────────────────────────────────────────
@@ -99,6 +99,24 @@ test("statsJson contains per-session rows with savedPct", () => {
 
 test("savingsPct handles zero raw", () => {
   assert.equal(savingsPct({ rawTokens: 0, packTokens: 0 }), 0);
+});
+
+test("aggregateRequestStats sums Layer 1b counters and renderStats shows them", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bz-t6b-"));
+  fakePack(tmp, "ses_req", "2026-10-18T10:00:00.000Z", 1000, 100);
+  fs.writeFileSync(
+    path.join(tmp, "sessions", "ses_req", "request-stats.json"),
+    JSON.stringify({ requests: 7, before: 700_000, after: 80_000, savedPct: 89, last: { before: 100_000, after: 11_000, savedPct: 89 } }),
+  );
+  const req = aggregateRequestStats(tmp);
+  assert.equal(req.requests, 7);
+  assert.equal(req.sessions, 1);
+  assert.equal(req.savedPct, 88.6);
+  const out = renderStats(tmp);
+  assert.match(out, /Layer 1b/);
+  assert.match(out, /7/);
+  assert.equal(statsJson(tmp).requests.requests, 7);
+  assert.equal(loadPack(path.join(tmp, "sessions", "ses_req")).requestStats.requests, 7);
 });
 
 // ── pointer scanning ────────────────────────────────────────────────────────

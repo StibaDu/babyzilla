@@ -67,6 +67,7 @@ export function loadPack(dir) {
     projectDir: typeof idx.projectDir === "string" && idx.projectDir ? idx.projectDir : null,
     rawTokens, packTokens: asNum(idx.stats?.packTokens),
     modules, journalEntries, journalTokens,
+    requestStats: readRequestStats(dir),
   };
 }
 
@@ -82,6 +83,29 @@ function readJournal(dir) {
     catch { /* tolerate a torn final line */ }
   }
   return [entries, tokens];
+}
+
+/** Layer 1b counters written by the plugin on every capped request. */
+function readRequestStats(dir) {
+  try {
+    const r = JSON.parse(fs.readFileSync(path.join(dir, "request-stats.json"), "utf8"));
+    const requests = asNum(r.requests);
+    if (!requests) return null;
+    return { requests, before: asNum(r.before), after: asNum(r.after), savedPct: asNum(r.savedPct) };
+  } catch { return null; }
+}
+
+export function aggregateRequestStats(root = packRoot()) {
+  let dirents = [];
+  try { dirents = fs.readdirSync(sessionsRoot(root), { withFileTypes: true }); } catch { /* none */ }
+  let sessions = 0, requests = 0, before = 0, after = 0;
+  for (const d of dirents) {
+    if (!d.isDirectory()) continue;
+    const r = readRequestStats(path.join(sessionsRoot(root), d.name));
+    if (!r) continue;
+    sessions++; requests += r.requests; before += r.before; after += r.after;
+  }
+  return { sessions, requests, before, after, savedPct: before ? Math.round10((1 - after / before) * 100, 1) : 0 };
 }
 
 /** All session packs under root, newest first (created RFC3339 sorts lexically). */
@@ -129,6 +153,9 @@ export function renderPack(p) {
   s.push("");
   s.push(`  ${c(DIM)}distilled${c(RESET)} ${c(BOLD)}${p.created}${c(RESET)} ${c(DIM)}with${c(RESET)} ${c(BOLD)}${p.model}${c(RESET)}`);
   s.push(`  ${c(DIM)}journal${c(RESET)}  ${c(BOLD)}${p.journalEntries}${c(RESET)} ${c(DIM)}tool results, ~${fmtTokens(p.journalTokens)} raw tok observed${c(RESET)}`);
+  if (p.requestStats?.requests) {
+    s.push(`  ${c(DIM)}requests${c(RESET)} ${c(BOLD)}${p.requestStats.requests}${c(RESET)} ${c(DIM)}capped · ~${fmtTokens(p.requestStats.before)} → ~${fmtTokens(p.requestStats.after)} tok (${c(GREEN)}${c(BOLD)}${p.requestStats.savedPct}%${c(RESET)} ${c(DIM)}smaller, Layer 1b)${c(RESET)}`);
+  }
   s.push("");
   s.push(`  ${c(BOLD)}modules${c(RESET)}`);
   s.push(line());
@@ -161,7 +188,8 @@ export function statsPayload(root = packRoot()) {
 
 export function renderStats(root = packRoot()) {
   const packs = loadPacks(root);
-  if (!packs.length) {
+  const req = aggregateRequestStats(root);
+  if (!packs.length && !req.requests) {
     return `  ${c(DIM)}No context packs. They are written by BabyZilla at compaction.${c(RESET)}\n`;
   }
   const s = [];
@@ -176,6 +204,10 @@ export function renderStats(root = packRoot()) {
   if (libProjects > 0) head += `  ${c(DIM)}· library${c(RESET)} ${c(BOLD)}${libProjects}${c(RESET)} ${c(DIM)}projects / ${libModules} modules${c(RESET)}`;
   s.push(head);
   s.push(`  ${c(DIM)}raw${c(RESET)}     ${c(BOLD)}${fmtTokens(raw)}${c(RESET)} ${c(DIM)}tok → context${c(RESET)} ${c(BOLD)}${fmtTokens(pack)}${c(RESET)} ${c(DIM)}tok  (${col}${c(BOLD)}${pct.toFixed(1)}%${c(RESET)} ${c(DIM)}smaller${c(RESET)})`);
+  if (req.requests) {
+    const rcol = savingsColor(req.savedPct);
+    s.push(`  ${c(DIM)}requests${c(RESET)} ${c(BOLD)}${req.requests}${c(RESET)} ${c(DIM)}capped across ${req.sessions} sessions · ~${fmtTokens(req.before)} → ~${fmtTokens(req.after)} tok (${rcol}${c(BOLD)}${req.savedPct.toFixed(1)}%${c(RESET)} ${c(DIM)}smaller, Layer 1b)${c(RESET)}`);
+  }
   s.push("");
   const maxRaw = Math.max(...packs.map((p) => p.rawTokens), 1);
   for (const p of packs.slice(0, 10)) {
@@ -200,6 +232,7 @@ export function statsJson(root = packRoot()) {
     rawTokens: packs.reduce((n, p) => n + p.rawTokens, 0),
     packTokens: packs.reduce((n, p) => n + p.packTokens, 0),
     savedPct: Math.round10(aggregatePct(packs), 1),
+    requests: aggregateRequestStats(root),
     library: { projects: libProjects, modules: libModules },
     perSession: packs.map((p) => ({
       sessionID: p.sessionId, created: p.created,

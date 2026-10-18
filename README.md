@@ -2,12 +2,27 @@
 
 [![tests](https://github.com/StibaDu/babyzilla/actions/workflows/test.yml/badge.svg)](https://github.com/StibaDu/babyzilla/actions/workflows/test.yml)
 
-**70–99% context compression for [OpenCode](https://opencode.ai) v2 — in three layers, one install.**
+**70–99% context compression for [OpenCode](https://opencode.ai) v2 — in five layers, one install.**
 
 - **Layer 1 — Session compaction** (ContextPack): OpenCode's compaction
   summary is replaced by AI-distilled **context modules** — state, decisions,
   code pointers, failure histories — dropping tool-output bulk while keeping
   exact, re-fetchable facts.
+- **Layer 1b — Per-request budget**: before *every* request the outgoing
+  message list is capped — target 10% of the incoming context
+  (`requestTargetRatio`), floored at 12K and hard-capped at 45K
+  (`requestBudgetTokens`). Old tool output, assistant prose, reasoning and
+  attachments are compressed in place; if that is not enough, the oldest parts
+  become one-line pointers. Recent turns and all user messages stay verbatim.
+  This is what makes BabyZilla work on huge-window models such as **Kimi K3
+  (1M tokens)**, where native compaction may never fire. Savings are recorded
+  per session and shown by `babyzilla stats` and `/contextpack`.
+- **Layer 1c — Proactive compaction**: OpenCode's own compaction only fires
+  near the model's context limit, so a 1M-token session can grow unbounded
+  before Layer 1 ever runs. Once the context passes
+  `max(proactiveCompactMinTokens, proactiveCompactRatio × window)` BabyZilla
+  asks OpenCode to compact (rate-limited per session), so the pack kicks in at
+  ~35% of the window instead of ~90%. Disable with `proactiveCompaction: false`.
 - **Layer 2 — Command compression** (lowfat, bundled and adapted from
   [zdk/lowfat](https://github.com/zdk/lowfat), Apache-2.0): shell commands are
   rewritten *before execution* (`git status`, `ls -la`, `docker …` →
@@ -17,7 +32,7 @@
   on every later turn. Head, tail, structural and error lines are kept; line
   numbers stay intact.
 
-All three run automatically. Layer 2 needs the `lowfat` binary (~3 MB release
+All five run automatically. Layer 2 needs the `lowfat` binary (~3 MB release
 download, no Rust toolchain); without it BabyZilla stays fully functional
 minus that layer.
 
@@ -51,23 +66,31 @@ babyzilla retrieve src/app.js:120-160   # exact span, numbered
 
 ## How it works
 
-1. **Layer 2, before every tool call**: the plugin hooks shell execution and,
+1. **Layer 1b, before every request**: OpenCode v2's `session.hook("context")`
+   hands the plugin the exact `messages` array it is about to send. Above
+   `requestBudgetTokens` (45K by default) BabyZilla compresses old tool output,
+   assistant prose, reasoning and attachments in place, then elides the oldest
+   bulk to one-line `read(offset, limit)` / `babyzilla retrieve` pointers if
+   the budget is still exceeded. The target is 10% of the incoming context
+   (`requestTargetRatio`), with a 12K floor. The newest messages and every user
+   turn stay verbatim. No compaction required — so 1M-token models are covered.
+2. **Layer 2, before every tool call**: the plugin hooks shell execution and,
    when the `lowfat` binary is present, rewrites the command through
    `lowfat rewrite` — output enters the context already compressed.
-2. **Layer 2b, after each `read` / `grep` / `glob`**: large results are
+3. **Layer 2b, after each `read` / `grep` / `glob`**: large results are
    compacted at the source. The most recent result stays verbatim
    (`toolResultProtectRecent`), so the agent keeps the content it is actively
    working from; older ones are reduced to head + tail + structure.
-3. **Layer 1, at compaction**: BabyZilla hooks OpenCode's `compaction` hook,
+4. **Layer 1, at compaction**: BabyZilla hooks OpenCode's `compaction` hook,
    receives the full transcript, and calls your configured model to distill it
    into JSONL modules: a state module (*hot*, always inlined), a decisions
    module (*hot*), and topic/code/errors modules (*cold*).
-4. **On later prompts** cold modules auto-attach when the prompt matches
+5. **On later prompts** cold modules auto-attach when the prompt matches
    their trigger words (max 2 modules, 6K-token budget) — so long-session
    context stays available *without staying in the window*.
-5. **Tool results** are journaled (kind + token estimate + 1200-char head) so
+6. **Tool results** are journaled (kind + token estimate + 1200-char head) so
    savings are measurable and future sessions can reuse them.
-6. **Anything fails → nothing happens.** OpenCode's native compaction runs.
+7. **Anything fails → nothing happens.** OpenCode's native compaction runs.
    BabyZilla never modifies or deletes session history.
 
 See [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) for the full picture and
@@ -94,10 +117,12 @@ per-project library that outlives individual sessions.
 ## Requirements & privacy
 
 - OpenCode **v2**, any model configured (distillation uses the session's
-  model by default; pin a cheaper one with `distillModel`). This includes
-  **OpenCode's free tier** — session-less distillation calls are rejected
-  there, so BabyZilla falls back to the session-scoped call automatically
-  (see `distillVia` in `docs/OPTIONS.md`).
+  model by default; pin a cheaper one with `distillModel`). Works regardless of
+  window size: models with 1M-token windows (Kimi K3) are capped per request by
+  Layer 1b instead of waiting for compaction. This includes **OpenCode's free
+  tier** — session-less distillation calls are rejected there, so BabyZilla
+  falls back to the session-scoped call automatically (see `distillVia` in
+  `docs/OPTIONS.md`).
 - Distillation sends transcript text to your configured model provider.
   Journals, module files, and stats stay on disk in
   `~/.opencode/contextpacks/` — delete anytime (`babyzilla prune` or

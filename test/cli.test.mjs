@@ -294,7 +294,10 @@ test("retrieve rejects a missing ref or file", () => {
   assert.throws(() => retrieve("/definitely/not/here:1"), /ENOENT/);
 });
 
-test("the CLI runs when reached through a symlink on PATH", () => {
+test("the CLI runs when reached through a symlink on PATH", (t) => {
+  // Windows needs developer mode/admin for symlinks and has no shebang exec;
+  // the PATH install there is the npm shim, so this case does not apply.
+  if (process.platform === "win32") return t.skip("POSIX symlink semantics");
   // `~/.local/bin/babyzilla -> bin/babyzilla.mjs` is the normal install. The
   // main guard must realpath argv[1], otherwise the process exits silently.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bz-link-"));

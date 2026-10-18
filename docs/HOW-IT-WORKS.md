@@ -16,17 +16,24 @@ The `context` hook receives the exact `messages` array about to be sent.
 BabyZilla:
 
 1. Estimates the message tokens (`chars / 4`).
-2. If the list exceeds the budget — `requestTargetRatio` (10%) of the incoming
+2. If the list exceeds the budget — `requestTargetRatio` (8%) of the incoming
    context, floored at `requestMinBudgetTokens` (12K) and capped at
    `requestBudgetTokens` (45K) — compresses, in place, old tool results
    (`result.value` / `output.value` / `state.content`), old assistant text, old
    reasoning (never signed/encrypted) and old image/file attachments.
 3. If the request is still over budget, the oldest parts are replaced with
-   one-line `read(offset, limit)` / `babyzilla retrieve` pointers.
-4. The newest `requestProtectRecent` messages, the final
-   `requestHardProtect` messages, and every user turn stay verbatim. If the
-   protected tail is itself over budget, the window is widened oldest-first,
-   never touching the final exchange.
+   one-line pointers. Every pointer carries a `babyzilla recall <hash>` handle:
+   the exact bytes are in the page store (`~/.opencode/contextpacks/pages/`),
+   so paging is reversible for **every** tool, including shell output that
+   cannot be re-read from a file.
+4. The newest `requestProtectRecent` messages, the newest
+   `requestTurnProtectTokens` of the current user turn, the newest result per
+   file/command, and every user turn stay verbatim. The protected working set
+   is only structurally compressed (head + tail + structural lines) when the
+   budget cannot otherwise be met — never blanked or reduced to pointers.
+5. A rewrite that would save less than `requestMinSavingsPct` (12%) is rolled
+   back, so near-no-op passes do not churn the prompt prefix or the model's
+   view of the transcript.
 
 Every rewrite is idempotent (parts carrying `[ContextPack]` are skipped), and
 a failure leaves the messages structurally valid. Measured on a 1.13M-token

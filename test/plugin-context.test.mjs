@@ -47,6 +47,9 @@ test("context hook asks OpenCode to compact proactively on a 1M-token model", as
       ],
     });
   }
+  // A real request starts a turn with the user's message; proactive compaction
+  // is deferred to that boundary (never mid-tool-loop).
+  messages.push({ id: "u1", role: "user", content: [{ type: "text", text: "continue" }] });
   await handlers.get("context")({
     sessionID: "ses_proactive",
     messages,

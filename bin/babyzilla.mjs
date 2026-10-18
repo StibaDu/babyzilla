@@ -7,7 +7,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { sessionCosts, totals } from "../lib/cost.mjs";
+import { sessionCosts, totals, defaultDbPath, openDb, hasTable } from "../lib/cost.mjs";
+import { readPage, prunePages } from "../lib/pages.mjs";
 
 // ── colors & formatting ─────────────────────────────────────────────────────
 
@@ -440,6 +441,10 @@ export function renderPrune(root = packRoot(), olderThan, dryRun) {
     }
   }
   s.push("");
+  if (!dryRun) {
+    const pages = prunePages(root, secs, now);
+    if (pages) s.push(`  ${c(GREEN)}removed${c(RESET)} ${pages} page${pages === 1 ? "" : "s"} (elided-output store)`);
+  }
   s.push(`  ${c(DIM)}${dryRun ? `${removed.length} old, ${kept.length} kept (dry run — pass without --dry-run to delete)` : `removed ${removed.length}, ${kept.length} kept (OpenCode sessions untouched)`}${c(RESET)}`);
   s.push("");
   return s.join("\n") + "\n";
@@ -496,6 +501,151 @@ export function retrieve(ref, { cwd = process.cwd(), maxLines = 400, context = 0
   return out.join("\n") + "\n";
 }
 
+// ── recall ──────────────────────────────────────────────────────────────────
+//
+// The request compactor replaces bulk tool output with a one-line pointer, but
+// never deletes it: the raw text is still in the OpenCode database (the plugin
+// only mutates the outgoing request). This command resolves a tool-call id from
+// a marker back to that exact text — for every tool, not just file reads.
+//
+//   recall("call_abc")                 → the result, first `maxLines` lines
+//   recall("call_abc:120-180")         → lines 120..180
+//   recall("prt_…") / recall("msg_…")  → look up by part or message id
+export function recall(ref, { dbPath = defaultDbPath(), maxLines = 200 } = {}) {
+  if (!ref) throw new Error("usage: babyzilla recall <call-id|part-id|message-id>[:<start>[-<end>]] [--max-lines N]");
+  const raw = String(ref);
+  let id = raw;
+  let start = null;
+  let end = null;
+  const m = /^(.*?):(\d+)(?:-(\d+))?$/.exec(raw);
+  if (m) {
+    id = m[1];
+    start = Number(m[2]);
+    end = m[3] ? Number(m[3]) : start;
+  }
+  // A content hash from the page store is checked first: it works even when the
+  // tool result never reached the database (or the DB was rotated).
+  const page = readPage(packRoot(), id);
+  if (page !== null) {
+    const lines = page.split("\n");
+    if (lines.length && lines[lines.length - 1] === "") lines.pop();
+    let a;
+    let b;
+    if (start === null) {
+      a = 1;
+      b = Math.min(lines.length, Math.max(1, maxLines));
+    } else {
+      a = Math.max(1, start);
+      b = Math.min(lines.length, Math.max(end, start));
+      if (b - a + 1 > maxLines) b = a + maxLines - 1;
+    }
+    const out = [`Recall page ${id} (${lines.length} lines, showing ${a}-${b})`];
+    for (let i = a; i <= b; i++) out.push(`${i}: ${lines[i - 1]}`);
+    if (b < lines.length) {
+      out.push(`[... ${lines.length - b} more lines — pass :${b + 1}-${Math.min(lines.length, b + maxLines)} for the next span ...]`);
+    }
+    return out.join("\n") + "\n";
+  }
+
+  if (!fs.existsSync(dbPath)) throw new Error(`no OpenCode database at ${dbPath}`);
+  const db = openDb(dbPath);
+  try {
+    if (!hasTable(db, "part")) throw new Error(`no part table in ${dbPath} — this OpenCode version is not supported`);
+    // A message id resolves to every part of that message: the request shape
+    // does not preserve the database callID, but message ids are stable.
+    let row = null;
+    let text = "";
+    let tool = "?";
+    let sessionID = null;
+    if (/^msg[_-]/.test(id)) {
+      const rows = db
+        .prepare(
+          `select id, message_id, session_id, data
+             from part
+            where message_id = ?
+            order by time_created asc`,
+        )
+        .all(id);
+      if (!rows.length) throw new Error(`no message matches ${id}`);
+      sessionID = rows[0].session_id;
+      const chunks = [];
+      for (const r of rows) {
+        let d = null;
+        try { d = JSON.parse(r.data); } catch { d = null; }
+        const t = partText(d);
+        if (!t) continue;
+        const label = d?.tool ?? d?.name ?? d?.type ?? "part";
+        chunks.push(`── ${label} (${r.id}) ──\n${t}`);
+      }
+      text = chunks.join("\n\n");
+      tool = "message";
+    } else {
+      row = db
+        .prepare(
+          `select id, message_id, session_id, data
+             from part
+            where json_extract(data,'$.callID') = ?
+               or id = ?
+            order by time_created desc
+            limit 1`,
+        )
+        .get(id, id);
+      if (!row) throw new Error(`no part matches ${id}`);
+      let data = null;
+      try { data = JSON.parse(row.data); } catch { data = null; }
+      text = partText(data);
+      tool = data?.tool ?? data?.name ?? data?.type ?? "?";
+      sessionID = row.session_id;
+    }
+    if (!text) throw new Error(`part ${id} has no readable text`);
+
+    const lines = text.split("\n");
+    if (lines.length && lines[lines.length - 1] === "") lines.pop();
+    let a;
+    let b;
+    if (start === null) {
+      a = 1;
+      b = Math.min(lines.length, Math.max(1, maxLines));
+    } else {
+      a = Math.max(1, start);
+      b = Math.min(lines.length, Math.max(end, start));
+      if (b - a + 1 > maxLines) b = a + maxLines - 1;
+    }
+    const out = [
+      `Recall ${id} (${tool}, session ${sessionID}, lines ${a}-${b} of ${lines.length})`,
+    ];
+    for (let i = a; i <= b; i++) out.push(`${i}: ${lines[i - 1]}`);
+    if (b < lines.length) {
+      out.push(`[... ${lines.length - b} more lines — pass :${b + 1}-${Math.min(lines.length, b + maxLines)} for the next span ...]`);
+    }
+    return out.join("\n") + "\n";
+  } finally {
+    db.close();
+  }
+}
+
+/** The human-readable text of a stored part, across OpenCode shapes. */
+function partText(data) {
+  if (!data || typeof data !== "object") return "";
+  const state = data.state ?? {};
+  if (typeof state.output === "string" && state.output) return state.output;
+  if (typeof state.error === "string" && state.error) return state.error;
+  for (const holder of [state.content, data.result?.content, data.result?.value, data.content]) {
+    if (typeof holder === "string" && holder) return holder;
+    if (!Array.isArray(holder)) continue;
+    const text = holder
+      .map((c) => (typeof c === "string" ? c : typeof c?.text === "string" ? c.text : ""))
+      .filter(Boolean)
+      .join("\n");
+    if (text) return text;
+  }
+  if (typeof data.text === "string") return data.text;
+  if (data.state?.input && typeof data.state.input === "object") {
+    return JSON.stringify(data.state.input, null, 2);
+  }
+  return "";
+}
+
 const HELP = `babyzilla ${"— inspect ContextPack session data"}
 
 Usage:
@@ -504,6 +654,8 @@ Usage:
   babyzilla cost [sessionID] [--limit N] [--json]
                                     provider-side spend from the OpenCode database
   babyzilla verify [sessionID]      check path:line pointers still resolve
+  babyzilla recall <call-id|part-id|message-id>[:<start>[-<end>]] [--max-lines N]
+                                    print the original text behind an elision marker
   babyzilla retrieve <path>[:<start>[-<end>]] [--context N] [--max-lines N]
                                     print an exact, numbered line range
   babyzilla prune [--older-than 2w] [--dry-run]
@@ -511,7 +663,7 @@ Usage:
 
 Environment:
   BABYZILLA_ROOT=<dir>              data root (default ~/.opencode/contextpacks)
-  OPENCODE_DB=<path>                OpenCode database for babyzilla cost
+  OPENCODE_DB=<path>                OpenCode database for babyzilla cost/recall
 `;
 
 function main() {
@@ -530,6 +682,13 @@ function main() {
         break;
       }
       case "verify": out(renderVerify(rest[0] || undefined)); break;
+      case "recall": {
+        const ref = rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined;
+        const maxLines = rest.includes("--max-lines") ? Number(rest[rest.indexOf("--max-lines") + 1]) : 200;
+        const dbPath = rest.includes("--db") ? rest[rest.indexOf("--db") + 1] : undefined;
+        out(recall(ref, { maxLines, ...(dbPath ? { dbPath } : {}) }));
+        break;
+      }
       case "retrieve": {
         const ref = rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined;
         const maxLines = rest.includes("--max-lines") ? Number(rest[rest.indexOf("--max-lines") + 1]) : 400;

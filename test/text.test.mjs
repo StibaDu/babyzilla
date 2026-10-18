@@ -337,7 +337,8 @@ test("compactMessagesForRequest elides old reasoning and attachments, never sign
     requestElideReasoning: true, requestElideAttachments: true,
   });
   const parts = messages[1].content;
-  assert.equal(parts[0].text, "");
+  // Paged-out reasoning is announced once, then blanked to save tokens.
+  assert.match(parts[0].text, /reasoning elided|^$/);
   assert.equal(parts[1].text, "signed", "encrypted reasoning must be preserved");
   assert.equal(parts[2].type, "text");
   assert.match(parts[2].text, /attachment elided/);
@@ -403,4 +404,92 @@ test("compactMessagesForRequest compresses string-content messages", () => {
   });
   assert.ok(stats.saved > 0);
   assert.ok(messages[1].content.length < long.length);
+});
+
+// ── recovery handles, savings gate and turn protection ──────────────────────
+
+test("elision markers carry a recall handle for the exact original text", () => {
+  const bulk = numberedText(4000);
+  const old = { id: "msg_old", role: "assistant", content: [
+    { type: "tool-result", id: "call_abc", name: "read", result: { type: "text", value: bulk } },
+  ] };
+  const messages = [
+    llmUser("task"),
+    old,
+    llmAssistant({ type: "tool-result", id: "call_new", name: "read", result: { type: "text", value: bulk } }),
+  ];
+  compactMessagesForRequest(messages, {
+    requestBudgetTokens: 1000, requestTargetRatio: 0, requestMinTokens: 100,
+    requestProtectRecent: 1, requestPartMinTokens: 100, requestProtectTurns: false,
+  });
+  assert.match(old.content[0].result.value, /babyzilla recall msg_old/);
+});
+
+test("a rewrite that saves less than requestMinSavingsPct is rolled back", () => {
+  const bulk = numberedText(4000);
+  const messages = [llmUser("task")];
+  for (let i = 0; i < 10; i++) messages.push(llmAssistant({ type: "tool-result", id: `c${i}`, name: "read", result: { type: "text", value: bulk } }));
+  const before = JSON.stringify(messages);
+  // The achievable saving (~20%) is below a 60% gate, so the rewrite must be
+  // rolled back rather than shipped as a cache-invalidating no-op.
+  const stats = compactMessagesForRequest(messages, {
+    requestBudgetTokens: 100_000, requestTargetRatio: 0, requestMinTokens: 100,
+    requestProtectRecent: 6, requestPartMinTokens: 100, requestMinSavingsPct: 60,
+  });
+  assert.equal(stats.saved, 0);
+  assert.equal(stats.skipped, "below-min-savings");
+  assert.equal(JSON.stringify(messages), before, "rolled-back messages are byte-identical");
+});
+
+test("the current turn's output is not elided to pointers", () => {
+  const bulk = numberedText(4000);
+  const messages = [llmUser("task")];
+  for (let i = 0; i < 6; i++) messages.push(llmAssistant({ type: "tool-result", id: `c${i}`, name: "read", result: { type: "text", value: bulk } }));
+  compactMessagesForRequest(messages, {
+    requestBudgetTokens: 1000, requestTargetRatio: 0, requestMinTokens: 100,
+    requestProtectTurns: true, requestTurnProtectTokens: 1_000_000,
+    requestProtectRecent: 1, requestPartMinTokens: 100, requestMinSavingsPct: 0,
+  });
+  for (const m of messages.slice(1)) {
+    assert.doesNotMatch(m.content[0].result.value, /older tool output elided/);
+  }
+});
+
+test("selectCompressibleParts can protect the whole current turn", () => {
+  const messages = [
+    { type: "user", text: "hi" },
+    assistant(toolPart("a", "A"), toolPart("b", "B")),
+  ];
+  assert.deepEqual(selectCompressibleParts(messages, 0, null, { protectTurn: true }), []);
+  assert.deepEqual(selectCompressibleParts(messages, 0, null, { protectTurn: false }).map((p) => p.id), ["a", "b"]);
+});
+
+test("selectCompressibleParts compresses superseded duplicates first", () => {
+  const readA = (id, at, file = "/tmp/x.js") => ({
+    type: "tool", id, name: "read",
+    state: { input: { filePath: file }, content: [{ type: "text", text: `body ${at}` }] },
+  });
+  const messages = [assistant(readA("old", 1), readA("new", 2), readA("other", 3, "/tmp/y.js"))];
+  const picked = selectCompressibleParts(messages, 1, null, { dedupe: true });
+  assert.deepEqual(picked.map((p) => p.id), ["old"]);
+});
+
+test("elided text is paged and the marker carries its recall handle", () => {
+  const pages = new Map();
+  const pageRef = (text) => {
+    const h = `h${pages.size + 1}`;
+    pages.set(h, text);
+    return h;
+  };
+  const bulk = numberedText(4000);
+  const old = llmAssistant({ type: "tool-result", id: "a", name: "bash", result: { type: "text", value: bulk } });
+  const messages = [llmUser("task"), old, llmAssistant({ type: "text", text: "done" })];
+  compactMessagesForRequest(messages, {
+    requestBudgetTokens: 2000, requestTargetRatio: 0, requestMinTokens: 100,
+    requestProtectRecent: 1, requestProtectTurns: false, requestPartMinTokens: 100,
+    requestMinSavingsPct: 0, pageRef,
+  });
+  const handle = /babyzilla recall (h\d+)/.exec(old.content[0].result.value)?.[1];
+  assert.ok(handle, "marker names a recall handle");
+  assert.equal(pages.get(handle), bulk, "page stores the exact original text");
 });

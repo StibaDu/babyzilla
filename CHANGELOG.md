@@ -2,6 +2,47 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.6.0] — 2026-10-18
+
+### Added
+
+- **`babyzilla recall <hash>[:start-end]`** — paging is now reversible. Every
+  elided block is written to a content-addressed page store
+  (`~/.opencode/contextpacks/pages/`) before it is replaced, and the marker
+  carries the handle. Works for **every** tool, including shell/grep output
+  that cannot be re-read from a file. Falls back to the OpenCode database
+  (`callID` / part id / message id) for older sessions.
+- **Recovery contract.** The first time a request is paged, the model is told
+  once what happened, what is preserved, and how to recall exact text — instead
+  of discovering redactions marker by marker.
+
+### Fixed
+
+- **The working set is protected by tokens, not message count.** A single
+  agentic turn can contain hundreds of tool results; protecting "the last 6
+  messages" elided files the agent was still editing. The newest
+  `requestTurnProtectTokens` (40K) of the current turn now stay verbatim, and
+  the protected set is only structurally compressed when the budget requires
+  it — never blanked or reduced to pointers.
+- **No more re-read loops.** The newest result per file/command is never
+  source-compressed, small results (< `toolResultMinTokens`, now 4000) are left
+  alone, and source compression is deferred to the next user turn.
+- **Near-no-op rewrites are rolled back.** A pass that saves less than
+  `requestMinSavingsPct` (12%) restores the original messages, so the prompt
+  prefix and the model's view stay stable (47/1147 passes previously saved
+  <10%).
+- **Proactive compaction waits for a turn boundary** — it no longer fires
+  between a tool call and its result.
+- **Reasoning removal is announced** (`[ContextPack] older reasoning elided`)
+  instead of silently blanking it.
+
+### Changed
+
+- `requestTargetRatio` default is now documented as `0.08` (code default since
+  v0.5.2).
+- `toolResultProtectRecent` default `1` → `3`.
+- `babyzilla prune` also prunes the page store.
+
 ## [0.5.2] — 2026-10-18
 
 ### Fixed

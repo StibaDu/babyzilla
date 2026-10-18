@@ -28,6 +28,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { estTokens, compressToolText, compressToolResult, routeDistill, selectCompressibleParts, compactMessagesForRequest } from "./lib/text.mjs";
+import { writePage, pageHash } from "./lib/pages.mjs";
 import {
   fmt, dirSlug,
   TOOL_RESULT_HEAD_CHARS, TOOL_RESULT_TAIL_CHARS,
@@ -51,6 +52,19 @@ const compactionInFlight = new Map();
 // sessions for which BabyZilla already requested a proactive compaction, so a
 // 1M-token model does not get a /compact every single step.
 const proactiveRequested = new Map();
+// Sessions that already got the one-time compression contract note.
+const contractSent = new Set();
+
+// What the model is told when paging first happens. The point is to make the
+// rules predictable: the agent should plan around compression, not discover it.
+const CONTRACT_NOTE = [
+  "[ContextPack] Compression contract for this session:",
+  "· Older tool output is paged out of the prompt, never deleted. A `[ContextPack]` marker carries a `babyzilla recall <id>` handle that prints the exact original text (add `:start-end` for a span).",
+  "· The current user turn and the newest messages are sent verbatim; the newest result per file/command is kept.",
+  "· Never reuse line numbers or file contents taken from a marker or a pack — re-read before editing.",
+  "· This is why a long session keeps working instead of overflowing: same facts, smaller working set.",
+].join("\n");
+
 // Tool results are the bulk of a session. Pre-trim them so the distiller call
 // fits comfortably even when the session just overflowed its context window.
 log("contextpack module loaded, data dir:", ROOT);
@@ -81,12 +95,17 @@ const defaults = {
   // before they are persisted and resent on every later turn. This is the
   // per-request gap Headroom had in the head-to-head.
   toolResultCompression: true,
-  toolResultMinTokens: 1200,
+  // A read of a 60-line file costs ~1K tokens; compressing that saves nothing
+  // and costs a re-read. Only bulk results are worth rewriting.
+  toolResultMinTokens: 4000,
   toolResultHeadLines: 40,
   toolResultTailLines: 20,
   // keep this many of the most recent tool results verbatim — the agent is
   // working from them, so compressing them causes re-reads.
-  toolResultProtectRecent: 1,
+  toolResultProtectRecent: 3,
+  // never compress results from the current user turn (they become eligible on
+  // the next turn); keeps the agent's working set intact mid-task.
+  toolResultProtectTurn: true,
   // Layer 1b: hard per-request budget. Unlike Layer 1 (which waits for
   // OpenCode's compaction), this runs on every outgoing request, so models
   // with huge windows (Kimi K3: 1M tokens) are covered too. Once the message
@@ -114,19 +133,35 @@ const defaults = {
   distillBudgetTokens: 0,
   // newest N messages are always sent verbatim.
   requestProtectRecent: 6,
+  // protect the newest N tokens of the current user turn as well. A turn can
+  // contain hundreds of tool results; a message count of 6 covers only a few.
+  // Capped by the request budget, so small windows still compress.
+  requestProtectTurns: true,
+  requestTurnProtectTokens: 40_000,
+  // skip a rewrite that saves less than this share of the request: a few
+  // percent is not worth a cache miss or a changed view for the agent.
+  requestMinSavingsPct: 12,
   // even when the protected tail alone exceeds the budget, the final N
   // messages are shielded from elision (they may still be head+tail
   // compressed). 0 = shield none; user turns are always protected.
   requestHardProtect: 1,
   // parts below this size are not worth rewriting.
   requestPartMinTokens: 800,
+  // in the hard-budget phase, even small parts are worth paging once the
+  // alternative is sending them verbatim; the marker costs ~35 tokens.
+  requestElideMinTokens: 200,
   // elide old image/file attachments (re-attach if the model needs them).
   requestElideAttachments: true,
   // blank out old reasoning text — never for signed/encrypted reasoning.
   requestElideReasoning: true,
+  // tell the model, once per session, how paging works and how to recover text.
+  requestContract: true,
   // Layer 1c: ask OpenCode to compact when the model's own auto-compaction
   // would not fire for a very long time (e.g. 1M-token Kimi K3).
   proactiveCompaction: true,
+  // only compact at a turn boundary: compacting mid-task replaces the working
+  // set the agent is still using.
+  proactiveCompactAtTurnBoundary: true,
   // fraction of the model's context window that triggers it.
   proactiveCompactRatio: 0.35,
   // absolute floor so small-window models are untouched.
@@ -328,6 +363,12 @@ function maybeRequestCompaction(ctx, event, stats, opts) {
     if (typeof ctx.session?.compact !== "function") return;
     const sessionID = event?.sessionID;
     if (!sessionID || !stats?.before) return;
+    // Compacting mid-tool-loop wipes the working set the agent is still using.
+    // Wait for a turn boundary (the request that starts with a user message).
+    if (opts.proactiveCompactAtTurnBoundary !== false) {
+      const last = Array.isArray(event?.messages) ? event.messages.at(-1) : null;
+      if (last && last.role !== "user" && last.type !== "user") return;
+    }
     if ((compactionInFlight.get(sessionID) ?? 0) > Date.now()) return;
     const limit = Number(event?.model?.limit?.context) || 0;
     const ratio = opts.proactiveCompactRatio ?? 0.35;
@@ -472,17 +513,38 @@ async function resolveLowfatBinary() {
   return null;
 }
 
+// Extract the model-visible text of a tool part, whatever shape it has.
+function textOfPart(part) {
+  const st = part?.state ?? {};
+  if (typeof st.output === "string" && st.output) return st.output;
+  const content = Array.isArray(st.content) ? st.content
+    : Array.isArray(part?.result?.content) ? part.result.content
+    : null;
+  if (content) {
+    const text = content.map((c) => (typeof c?.text === "string" ? c.text : "")).join("");
+    if (text) return text;
+  }
+  if (typeof part?.result?.value === "string") return part.result.value;
+  return "";
+}
+
 // Compress tool results from the live session context, protecting the most
 // recent one(s). Runs on every tool completion, so it must stay cheap and
 // idempotent: parts that already carry the ContextPack footer are skipped.
 async function compressOlderToolResults(ctx, sessionID, opts) {
   if (typeof ctx.session?.context !== "function" || !sessionID) return 0;
   const messages = await ctx.session.context({ sessionID });
-  const targets = selectCompressibleParts(messages, opts.toolResultProtectRecent ?? 1, COMPRESSIBLE_TOOLS);
+  const targets = selectCompressibleParts(messages, opts.toolResultProtectRecent ?? 3, COMPRESSIBLE_TOOLS, {
+    protectTurn: opts.toolResultProtectTurn !== false,
+    dedupe: true,
+  });
+  // The request shape carries no message ids, so the recall handle is a
+  // content hash of the exact original text, written to the page store.
   let n = 0;
   for (const part of targets) {
+    const ref = writePage(ROOT, textOfPart(part), { sessionID });
     n += compressToolResult(part, opts, (tool, before, after) =>
-      log(`tool result compressed: ${tool} ${fmt(before)}→${fmt(after)} tok`));
+      log(`tool result compressed: ${tool} ${fmt(before)}→${fmt(after)} tok`), ref);
   }
   return n;
 }
@@ -579,10 +641,32 @@ export default {
           const stats = compactMessagesForRequest(messages, {
             ...opts,
             modelContext: Number(event?.model?.limit?.context ?? event?.model?.limit?.input) || undefined,
+            // Persist the exact bytes of anything paged out, so the marker's
+            // `babyzilla recall <hash>` handle is always true.
+            pageRef: (text) => writePage(ROOT, text, { sessionID: event?.sessionID }),
           });
           if (stats.saved > 0) {
             log(`request compacted: ${fmt(stats.before)} → ${fmt(stats.after)} tok (${stats.savedPct}% smaller, ${stats.parts} parts, model=${event?.model?.id ?? "?"})`);
+            if (stats.before > 200_000) {
+              const byRole = {};
+              for (const m of messages) {
+                const r = m?.role ?? m?.type ?? "?";
+                byRole[r] = (byRole[r] ?? 0) + estTokens(JSON.stringify(m?.content ?? m?.text ?? ""));
+              }
+              log(`after split: ${Object.entries(byRole).map(([k, v]) => `${k}=${fmt(v)}`).join(" ")}`);
+            }
             void recordRequestStats(event?.sessionID, stats);
+            // Explain the deal once per session, so the agent can plan around
+            // paging instead of discovering it marker by marker.
+            if (opts.requestContract !== false && event?.sessionID && !contractSent.has(event.sessionID)) {
+              contractSent.add(event.sessionID);
+              if (typeof ctx.session?.synthetic === "function") {
+                void Promise.resolve(ctx.session.synthetic({ sessionID: event.sessionID, text: CONTRACT_NOTE }))
+                  .catch((e) => log("contract note skipped:", e?.message ?? e));
+              }
+            }
+          } else if (stats.skipped) {
+            log(`request left untouched: ${fmt(stats.before)} tok (${stats.skipped})`);
           }
           maybeRequestCompaction(ctx, event, stats, opts);
         } catch (e) {

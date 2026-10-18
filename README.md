@@ -62,6 +62,7 @@ Optional companion CLI (zero deps, needs Node ≥ 18):
 npm i -g git+https://github.com/StibaDu/babyzilla.git
 babyzilla stats    # savings across all packs; also: show / verify / prune
 babyzilla cost     # provider-side spend from OpenCode's usage records
+babyzilla recall call_abc123:120-180    # exact original behind an elision marker
 babyzilla retrieve src/app.js:120-160   # exact span, numbered
 ```
 
@@ -71,17 +72,23 @@ babyzilla retrieve src/app.js:120-160   # exact span, numbered
    hands the plugin the exact `messages` array it is about to send. Above
    `requestBudgetTokens` (45K by default) BabyZilla compresses old tool output,
    assistant prose, reasoning and attachments in place, then elides the oldest
-   bulk to one-line `read(offset, limit)` / `babyzilla retrieve` pointers if
-   the budget is still exceeded. The target is 10% of the incoming context
-   (`requestTargetRatio`), with a 12K floor. The newest messages and every user
-   turn stay verbatim. No compaction required — so 1M-token models are covered.
+   bulk to one-line pointers if the budget is still exceeded. Every pointer is
+   reversible: it names a `babyzilla recall <id>` handle that prints the exact
+   original text from the content-addressed page store (falling back to the
+   session database). Works for `shell`, `grep`, `read` — everything. The
+   target is 8% of the incoming context
+   (`requestTargetRatio`), with a 12K floor. The current user turn, the newest
+   messages and the newest result per file stay verbatim. A rewrite that would
+   save less than 12% (`requestMinSavingsPct`) is skipped instead of churning
+   the prompt cache. No compaction required — so 1M-token models are covered.
 2. **Layer 2, before every tool call**: the plugin hooks shell execution and,
    when the `lowfat` binary is present, rewrites the command through
    `lowfat rewrite` — output enters the context already compressed.
 3. **Layer 2b, after each `read` / `grep` / `glob`**: large results are
-   compacted at the source. The most recent result stays verbatim
-   (`toolResultProtectRecent`), so the agent keeps the content it is actively
-   working from; older ones are reduced to head + tail + structure.
+   compacted at the source. The most recent results stay verbatim
+   (`toolResultProtectRecent`), the current turn is untouched, and older
+   duplicates of the same file/command are compressed first; the rest keep
+   head + tail + structure with the exact text one `babyzilla recall` away.
 4. **Layer 1, at compaction**: BabyZilla hooks OpenCode's `compaction` hook,
    receives the full transcript, and calls your configured model to distill it
    into JSONL modules: a state module (*hot*, always inlined), a decisions

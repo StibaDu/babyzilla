@@ -64,6 +64,13 @@ const defaults = {
   // layer 2: rewrite shell commands through the `lowfat` binary before
   // execution, so tool output enters the context pre-compressed.
   toolCompression: true,
+  // layer 2b: compress large tool results (read/grep/glob) at the source,
+  // before they are persisted and resent on every later turn. This is the
+  // per-request gap Headroom had in the head-to-head.
+  toolResultCompression: true,
+  toolResultMinTokens: 1200,
+  toolResultHeadLines: 40,
+  toolResultTailLines: 20,
 };
 
 function log(...args) {
@@ -77,6 +84,65 @@ function safeStr(v) { try { return JSON.stringify(v); } catch { return "[unseria
 function estTokens(s) {
   if (!s) return 0;
   return Math.ceil(String(s).length / 4);
+}
+
+// ---------------------------------------------------------------------------
+// Tool-result compression (read / grep / glob)
+//
+// Tool results are the bulk of a session and are resent on every later turn.
+// Headroom compressed them on the wire; we compress them at the source. The
+// rewrite keeps a head, a tail, and every structural or diagnostic line, and
+// leaves line numbers intact so the agent can re-read an exact range.
+// ---------------------------------------------------------------------------
+
+const STRUCT_LINE_RE = /^\s*(?:\d+:\s*)?(?:export|import|from\b|class\b|def\b|async def|function\b|async function|interface\b|type\b|struct\b|impl\b|enum\b|mod\b|module\b|namespace\b|package\b|use\b|fn\b|func\b|const\b|let\b|var\b|public\b|private\b|protected\b|static\b|@|#include|##|###|####)/;
+const DIAG_LINE_RE = /(?:\b(?:ERROR|FATAL|CRITICAL|WARN(?:ING)?|Exception|Traceback|panic|segfault|failed|failure)\b|\bERR[-_]?\d|\b[A-Z]{2,}[-_]\d{2,})/i;
+const TODO_LINE_RE = /\b(?:TODO|FIXME|XXX|HACK)\b/;
+
+function compressToolText(text, { headLines, tailLines }) {
+  if (typeof text !== "string" || !text) return null;
+  const lines = text.split("\n");
+  if (lines.length < headLines + tailLines + 20) return null;
+  const keep = new Set();
+  for (let i = 0; i < Math.min(headLines, lines.length); i++) keep.add(i);
+  for (let i = Math.max(0, lines.length - tailLines); i < lines.length; i++) keep.add(i);
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (STRUCT_LINE_RE.test(l) || DIAG_LINE_RE.test(l) || TODO_LINE_RE.test(l)) keep.add(i);
+  }
+  const out = [];
+  let omitted = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (keep.has(i)) {
+      if (omitted) {
+        out.push(`[... ${omitted} line${omitted === 1 ? "" : "s"} elided by ContextPack — not truncation ...]`);
+        omitted = 0;
+      }
+      out.push(lines[i]);
+    } else omitted++;
+  }
+  if (omitted) out.push(`[... ${omitted} lines elided by ContextPack — not truncation ...]`);
+  // Only rewrite when it actually saves meaningful space.
+  if (out.length >= lines.length * 0.85) return null;
+  return out.join("\n");
+}
+
+function compressToolResult(event, opts) {
+  const parts = Array.isArray(event?.result?.content) ? event.result.content : null;
+  if (!parts) return;
+  for (const part of parts) {
+    if (!part || typeof part.text !== "string") continue;
+    const before = estTokens(part.text);
+    if (before < opts.toolResultMinTokens) continue;
+    const compressed = compressToolText(part.text, {
+      headLines: opts.toolResultHeadLines,
+      tailLines: opts.toolResultTailLines,
+    });
+    if (!compressed) continue;
+    const after = estTokens(compressed);
+    part.text = `${compressed}\n\n[ContextPack] ${fmt(before)} → ${fmt(after)} tokens (${Math.max(0, Math.round((1 - after / before) * 100))}% smaller). Elided spans can be read verbatim with offset/limit.`;
+    log(`tool result compressed: ${event?.tool ?? "?"} ${fmt(before)}→${fmt(after)} tok`);
+  }
 }
 
 function slug(s) {
@@ -526,6 +592,15 @@ export default {
             head: (out || err || "").slice(0, 1200),
           }).catch(() => {});
         } catch { /* journal must never affect execution */ }
+        // compress large tool results before the model ever sees them
+        if (opts.toolResultCompression) {
+          try {
+            const toolName = String(event?.tool ?? event?.toolName ?? event?.name ?? "").toLowerCase();
+            if (toolName === "read" || toolName === "grep" || toolName === "glob" || toolName === "list") {
+              compressToolResult(event, opts);
+            }
+          } catch (e) { log("tool result compression skipped:", e?.message ?? e); }
+        }
       });
     } else {
       log("tool.hook unavailable — journal capture disabled");

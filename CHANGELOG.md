@@ -2,6 +2,19 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.7.2] — 2026-10-22
+
+### Fixed
+
+- **A "yes" could land with no question in sight.** Under budget pressure the
+  assistant's own reply — the message that ends with "Want me to …?" — was
+  replaced by a bare pointer marker, so the very next turn had nothing to
+  answer. Replies are now compressed head+tail like any text (the closing
+  question survives) and are never reduced to a pointer, and `requestHardProtect`
+  defaults to 2 so the question stays in the protected window.
+- The test that guarded assistant messages passed a stale option name
+  (`requestBudget`, not `requestBudgetTokens`), so it never exercised a budget.
+
 ## [0.7.1] — 2026-10-18
 
 ### Fixed

@@ -146,7 +146,7 @@ const defaults = {
   // even when the protected tail alone exceeds the budget, the final N
   // messages are shielded from elision (they may still be head+tail
   // compressed). 0 = shield none; user turns are always protected.
-  requestHardProtect: 1,
+  requestHardProtect: 2,
   // parts below this size are not worth rewriting.
   requestPartMinTokens: 800,
   // in the hard-budget phase, even small parts are worth paging once the

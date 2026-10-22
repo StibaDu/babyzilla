@@ -63,7 +63,7 @@ once.)
 | `requestTurnProtectTokens` | `40000` | How many tokens of the current turn stay verbatim (capped by the request budget, so small windows still compress). |
 | `requestMinSavingsPct` | `12` | Skip a rewrite that saves less than this share of the request. A 2% pass still invalidates the provider's prompt cache and changes what the agent sees; below this threshold nothing is rewritten. |
 | `requestContract` | `true` | Send the one-time compression contract note (what is paged, what stays verbatim, how `babyzilla recall` works) when a session first compresses. |
-| `requestHardProtect` | `1` | If the protected tail alone exceeds the budget, compress it oldest-first but always keep these final N messages. |
+| `requestHardProtect` | `2` | If the protected tail alone exceeds the budget, compress it oldest-first but always keep these final N messages. |
 | `requestPartMinTokens` | `800` | Parts below this size are not worth rewriting. |
 | `requestElideMinTokens` | `200` | In the hard-budget phase, parts are paged down to a pointer once they exceed this size; the page is recoverable via `babyzilla recall`. Lower means closer to the budget, higher means fewer, larger pages. |
 | `requestLedger` | `true` | Layer 3. Old tool steps collapse to one deterministic row built from the call itself (`#12 · bash · npm test · exit 1 · 3.1K tok · recall …`). No model call, no drift; the transcript stays an index of what was tried. |

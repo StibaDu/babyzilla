@@ -390,7 +390,7 @@ test("selectCompressibleParts accepts both tool shapes and role-based messages",
   assert.deepEqual(parts, [apiPart, persisted]);
 });
 
-test("compactMessagesForRequest compresses string-content messages", () => {
+test("string content compresses, except the assistant reply", () => {
   const long = Array.from({ length: 4000 }, (_, i) => `line ${i}`).join("\n");
   const messages = [
     { id: "u", role: "user", content: "task" },
@@ -403,7 +403,8 @@ test("compactMessagesForRequest compresses string-content messages", () => {
     requestProtectRecent: 1, requestPartMinTokens: 100,
   });
   assert.ok(stats.saved > 0);
-  assert.ok(messages[1].content.length < long.length);
+  assert.ok(messages[1].content.includes("line 3999"), "reply tail kept");
+  assert.ok(messages[2].content.length < long.length, "tool text still compresses");
 });
 
 // ── recovery handles, savings gate and turn protection ──────────────────────
@@ -620,4 +621,71 @@ test("ledger rows never advertise a recall handle that cannot resolve", () => {
   const text = messages.filter((m) => m.role === "tool").map((m) => m.content[0].result.value).join("\n");
   assert.match(text, /#\d+ · read · \/tmp\/f\d\.js/);
   assert.doesNotMatch(text, /recall i\d/);
+});
+
+test("an assistant reply is never rewritten, even under budget pressure", () => {
+  // The reply ends with the question the next user turn answers.
+  const question = "Want me to add crawlable links to the landing pages and deploy?";
+  const long = "Analysis of the landing pages. ".repeat(400);
+  const messages = [
+    { role: "user", content: "do people actually use the site?" },
+    { role: "assistant", content: [{ type: "text", text: `${long}\n\n${question}` }] },
+    { role: "user", content: "yes" },
+  ];
+  const opts = {
+    requestBudgetTokens: 1_200,
+    requestMinTokens: 100,
+    requestProtectRecent: 0,
+    requestHardProtect: 2,
+    requestMinSavingsPct: 0,
+    requestLedger: false,
+  };
+  compactMessagesForRequest(messages, opts);
+  assert.ok(messages[1].content[0].text.length < long.length);
+  assert.ok(messages[1].content[0].text.includes(question));
+});
+
+test("a tool result in an assistant message still compresses", () => {
+  const tool = "  10: const a = 1;\n".repeat(300);
+  const messages = [
+    { role: "user", content: "read it" },
+    {
+      role: "assistant",
+      content: [
+        { type: "text", text: "Reading the file now to see how it works." },
+        { type: "tool", name: "read", state: { status: "completed", input: { filePath: "a.mjs" }, output: tool } },
+      ],
+    },
+    { role: "user", content: "and now?" },
+  ];
+  const opts = {
+    requestBudgetTokens: 1_200,
+    requestMinTokens: 100,
+    requestProtectRecent: 0,
+    requestHardProtect: 1,
+    requestMinSavingsPct: 0,
+    requestLedger: false,
+  };
+  compactMessagesForRequest(messages, opts);
+  assert.equal(messages[1].content[0].text, "Reading the file now to see how it works.");
+  assert.ok(messages[1].content[1].state.output.length < tool.length);
+});
+
+test("the question in the assistant reply survives the next request", () => {
+  const long = "analysis paragraph. ".repeat(400);
+  const q = "Want me to add crawlable links and deploy?";
+  const messages = [
+    { role: "user", content: "is anyone visiting?" },
+    { role: "assistant", content: [{ type: "text", text: long + "\n\n" + q }] },
+    { role: "user", content: "yes" },
+  ];
+  compactMessagesForRequest(messages, {
+    requestBudgetTokens: 500,
+    requestMinTokens: 100,
+    requestProtectRecent: 0,
+    requestHardProtect: 1,
+    requestMinSavingsPct: 0,
+    requestLedger: false,
+  });
+  assert.ok(messages[1].content[0].text.includes(q), "the question must survive");
 });

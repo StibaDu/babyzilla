@@ -33,6 +33,13 @@ node --version
 **If OpenCode is v1.x: STOP** — report to your human that BabyZilla requires
 OpenCode v2 and do not continue.
 
+> **Do not install anything else.** BabyZilla is one plugin. It needs no MCP
+> servers, no Cloudflare or other account, no database, no proxy and no extra
+> model key — it compresses OpenCode's own event stream and calls the model your
+> human already configured. The one optional external binary is `lowfat` in
+> Step 2b; skip it if it fails and everything else still works. If you find
+> yourself adding servers or config keys, stop and report.
+
 ```sh
 opencode api get /api/info > /dev/null 2>&1 && echo "service OK"
 ```

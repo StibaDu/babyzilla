@@ -19,6 +19,40 @@ estimates and not from a replay harness.
 Both arms ran in the same OpenCode install, with the same MCP servers and the
 same model. Only the compression stack differs.
 
+## What the workload carried
+
+The install used for both arms was **heavy**, and the numbers should be read
+with that in mind:
+
+- several thousand MCP tool definitions are advertised to the model on every
+  request (a large `cloudflare` + `rea` + bindings surface). Neither arm
+  compresses these — tool definitions sit outside the message budget — so both
+  paid that overhead identically; it is context, not something these results
+  measure, and
+- the workload reads real source files with no read budget, so single tool
+  results run to hundreds of lines.
+
+That is the shape of session where compression pays the most, because most of
+the *messages* are bulk: file bodies, shell output, prior tool results.
+Headroom and BabyZilla are both competing to remove that same bulk, which is
+why the comparison is fair — but it is *not* a statement about your install.
+
+A heavy tool surface is also **not required**: BabyZilla hooks OpenCode's event
+stream and compresses whatever it sees, and nothing here needs an MCP server, a
+specific provider, or any account. A stock install with the built-in tools
+carries less message bulk, so there is less to remove:
+
+- sessions that never hit compaction save through **Layer 1b** only — the
+  per-request budget, `requestTargetRatio: 0.08`, i.e. a request is aimed at
+  8% of its own incoming size, with a **12K floor** below which nothing is
+  touched and a **45K cap** that wins on million-token windows; a rewrite that
+  would save less than `requestMinSavingsPct: 12` of the request is skipped
+  on purpose, so small requests are left alone rather than churned;
+- sessions that stay small save nothing at all, which is the correct outcome.
+
+The honest way to check your own install is `babyzilla stats` after a real
+session (raw tokens in, tokens sent, per layer), not this table.
+
 ## Results
 
 | Round | Workload | BabyZilla | Headroom | Winner |

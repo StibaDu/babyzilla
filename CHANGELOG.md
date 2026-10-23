@@ -2,6 +2,25 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.7.3] — 2026-10-23
+
+### Added
+
+- **The last exchange can no longer be lost.** Every pack now starts with
+  `00-anchors.md`: the newest user request, the one before it, and the reply
+  they answered — copied verbatim from the messages, never written by the
+  model. A distiller cannot drop what it was not asked to produce. Disable with
+  `distillAnchors: false`.
+- **Dropped coverage is filled back in.** Before a pack is written it is scored
+  against the transcript it replaces; pointer and fact coverage the distiller
+  missed is appended as a short module (`00-recovered.md`). Disable with
+  `distillRecovered: false`.
+- **`babyzilla eval [session]`** scores any existing pack the same way offline
+  and lists what is missing, so a distiller change can be measured instead of
+  guessed. Bounded by `evalMaxChars` (400K chars), above which the scan is
+  skipped because a multi-MB history costs more to score than it saves. See
+  [`examples/pack-eval.md`](examples/pack-eval.md).
+
 ## [0.7.2] — 2026-10-22
 
 ### Fixed

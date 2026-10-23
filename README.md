@@ -57,6 +57,29 @@ minus that layer.
 | 18.4K | 0.3K | 98% |
 | 8.2K | 0.6K | 93% |
 
+That column is a **compression ratio**: how much of the older transcript leaves
+the prompt at the moment Layer 1 compacts. It is not a claim about every
+request — a short session that never reaches compaction saves through Layer 1b
+and Layer 2 instead, and saves less in absolute terms because it carries less
+to begin with. The benchmarks were run on a heavy session; see
+[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md#what-the-workload-carried) for what
+that means on a light install.
+
+## Do you need it?
+
+Ask one question: **does a long session of yours get slow, expensive, or
+context-starved?**
+
+| Your sessions | Expected effect |
+| --- | --- |
+| short Q&A, a few files, under ~15K tokens | **none.** Layer 1b has a 12K floor and skips rewrites that save under 12%. Installing costs you nothing but changes nothing. |
+| long agentic runs, many reads and shell commands, 30K–200K tokens | **the normal case.** Older tool output and prose compress per request; compaction swaps the transcript for a pack. |
+| huge tool surface (thousands of MCP tools) | schemas are billed on every request and BabyZilla does **not** touch them — it compresses messages only. Helpful, but that bulk needs a different fix (e.g. code mode). |
+| a small local model (8K–32K window) | **most valuable.** You get a budget that fits the window and a distillation input that fits too, instead of failures at half the conversation. |
+
+Nothing in that table requires any particular tool set, provider, or account —
+just OpenCode v2 and a model you already use.
+
 ## Install
 
 Give this one sentence to your AI agent:
@@ -80,6 +103,32 @@ babyzilla recall 8c1f0b7a9d2e4c15   # exact original behind a paging marker / le
 babyzilla recall 8c1f0b7a9d2e4c15:120-180   # just those lines
 babyzilla retrieve src/app.js:120-160   # exact span, numbered
 ```
+
+## How do I know it's working?
+
+You do not have to trust a benchmark table — the plugin logs its own numbers.
+
+1. **It loaded.** After the first turn in a new session,
+   `~/.opencode/contextpacks/debug.log` should exist and mention the plugin
+   version. If it doesn't, the plugin did not load (see `AGENT-INSTALL.md`
+   Step 4 for the exact checks).
+2. **It compressed something.** Work normally for a while, then:
+
+   ```sh
+   babyzilla stats
+   ```
+
+   Each pack row shows raw tokens in, tokens actually sent, and per-layer
+   counts. A session under ~12K tokens may legitimately show zero: nothing
+   crossed the floor.
+3. **Nothing was lost.** Any marker or ledger row carries a handle:
+   `babyzilla recall <handle>` returns the exact original text. If you ever
+   cannot recover something, that is a bug — please open an issue with the
+   handle.
+
+A realistic first-week result on a light install is a modest per-request saving
+and one compaction you barely noticed. The 98% figures are the ceiling for
+transcript-heavy sessions, not the expected median.
 
 ## How it works
 
@@ -175,6 +224,12 @@ per-project library that outlives individual sessions.
   optional lowfat integration probes PATH with `where` on Windows and its
   absence only disables Layer 2. Node ≥ 18 for the CLI; `babyzilla cost` needs
   Node ≥ 22.5 (`node:sqlite`) and fails with a clear message otherwise.
+- **No tool servers, no extra accounts.** BabyZilla reads OpenCode's own event
+  stream, so it does not care which tools you have — a stock install with the
+  built-in `read`/`grep`/`shell` tools is the normal case. There is nothing to
+  connect: no MCP servers, no Cloudflare (or any other) account, no vector
+  database, no embeddings, no proxy, no daemon. The one network call it makes
+  is the distillation request to the model provider you already configured.
 - Distillation sends transcript text to your configured model provider.
   Journals, module files, and stats stay on disk in
   `~/.opencode/contextpacks/` — delete anytime (`babyzilla prune` or

@@ -9,11 +9,12 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { sessionCosts, totals, defaultDbPath, openDb, hasTable } from "../lib/cost.mjs";
 import { readPage, prunePages } from "../lib/pages.mjs";
+import { extractProbes, scorePack, missingFactsModule } from "../lib/eval.mjs";
 
 // ── colors & formatting ─────────────────────────────────────────────────────
 
 const BOLD = "\x1b[1m", DIM = "\x1b[2m", RESET = "\x1b[0m";
-const GREEN = "\x1b[32m", CYAN = "\x1b[36m", YELLOW = "\x1b[33m";
+const GREEN = "\x1b[32m", CYAN = "\x1b[36m", YELLOW = "\x1b[33m", RED = "\x1b[31m";
 const NO_COLOR = !process.stdout.isTTY || !!process.env.NO_COLOR;
 const c = (code) => (NO_COLOR ? "" : code);
 
@@ -180,6 +181,73 @@ export function show(sessionId, root = packRoot()) {
     if (!pack) throw new Error(`no session packs under ${sessionsRoot(root)}`);
   }
   return renderPack(pack);
+}
+
+// ── eval ────────────────────────────────────────────────────────────────────
+
+/** The session's prose, as the distiller first saw it. */
+export function sessionTranscript(sessionId, { dbPath = defaultDbPath() } = {}) {
+  if (!fs.existsSync(dbPath)) return "";
+  const db = openDb(dbPath);
+  try {
+    if (!hasTable(db, "part") || !hasTable(db, "message")) return "";
+    const roles = new Map();
+    for (const r of db.prepare("select id, json_extract(data,'$.role') as role from message where session_id = ?").all(sessionId)) {
+      roles.set(r.id, r.role || "user");
+    }
+    const rows = db.prepare(
+      `select message_id, data from part
+        where session_id = ? and json_extract(data,'$.type') = 'text'
+        order by time_created asc, id asc`,
+    ).all(sessionId);
+    const out = [];
+    let cur = null;
+    for (const r of rows) {
+      let d; try { d = JSON.parse(r.data); } catch { continue; }
+      const t = typeof d.text === "string" ? d.text.trim() : "";
+      if (!t) continue;
+      if (cur !== r.message_id) {
+        out.push(`### ${String(roles.get(r.message_id) || "user").toUpperCase()}`);
+        cur = r.message_id;
+      }
+      out.push(t);
+    }
+    return out.join("\n\n");
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
+  }
+}
+
+function moduleText(dir, m) {
+  const p = m.path && fs.existsSync(m.path) ? m.path : path.join(dir, m.file || "");
+  try { return fs.readFileSync(p, "utf8"); } catch { return ""; }
+}
+
+/** Score the newest pack (or one session's) against the transcript it replaced. */
+export function evalPack(sessionId, { root = packRoot(), dbPath = defaultDbPath() } = {}) {
+  const dir = sessionId ? path.join(sessionsRoot(root), sessionId) : loadPacks(root)[0]?.dir;
+  if (!dir) throw new Error(`no session packs under ${sessionsRoot(root)}`);
+  const pack = loadPack(dir);
+  if (!pack) throw new Error(`no pack index in ${dir}`);
+  const packText = pack.modules.map((m) => `## ${m.kind || m.file}\n${moduleText(dir, m)}`.trim()).join("\n\n");
+  const transcript = sessionTranscript(pack.sessionId, { dbPath });
+  if (!transcript) throw new Error(`no transcript for ${pack.sessionId} in ${dbPath}`);
+  const probes = extractProbes(transcript);
+  const score = scorePack({ packText, probes, rawTokens: pack.rawTokens });
+  const recovered = missingFactsModule(packText, transcript);
+  return { sessionId: pack.sessionId, score, recovered, packText, pack };
+}
+
+export function renderEval(r) {
+  const s = [];
+  const col = r.score.score >= 70 ? GREEN : r.score.score >= 40 ? YELLOW : RED;
+  s.push(`  ${c(BOLD)}pack eval${c(RESET)} ${c(DIM)}${r.sessionId}${c(RESET)}`);
+  s.push(`  ${col}score ${r.score.score}/100${c(RESET)} · facts ${r.score.facts} (${Math.round(r.score.factRecall * 100)}%) · pointers ${r.score.pointers} (${Math.round(r.score.pointerRecall * 100)}%)`);
+  s.push(`  last exchange ${r.score.questionKept ? "kept" : c(RED) + "LOST" + c(RESET)} · ${r.score.tokens} tok (${Math.round(r.score.ratio * 100)}% of ${r.pack.rawTokens})`);
+  if (r.score.missingPointers.length) s.push(`  ${c(DIM)}missing pointers: ${r.score.missingPointers.join(", ")}${c(RESET)}`);
+  if (r.score.missingFacts.length) s.push(`  ${c(DIM)}missing facts:${c(RESET)} ${r.score.missingFacts.map((f) => `"${f.slice(0, 60)}"`).join(" · ")}`);
+  if (r.recovered) s.push(`  ${c(YELLOW)}would append${c(RESET)} ${r.recovered.name}.md (${r.recovered.tokens} tok, ${r.recovered.content.split("\n").length} lines)`);
+  return s.join("\n") + "\n";
 }
 
 // ── stats ───────────────────────────────────────────────────────────────────
@@ -658,6 +726,8 @@ Usage:
                                     print the original text behind an elision marker
   babyzilla retrieve <path>[:<start>[-<end>]] [--context N] [--max-lines N]
                                     print an exact, numbered line range
+  babyzilla eval [<session-id>] [--json] [--db <path>]
+                                    score a pack against the transcript it replaced
   babyzilla prune [--older-than 2w] [--dry-run]
                                     remove old session packs (sessions untouched)
 
@@ -682,6 +752,13 @@ function main() {
         break;
       }
       case "verify": out(renderVerify(rest[0] || undefined)); break;
+      case "eval": {
+        const sid = rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined;
+        const dbPath = rest.includes("--db") ? rest[rest.indexOf("--db") + 1] : undefined;
+        const r = evalPack(sid, dbPath ? { dbPath } : {});
+        out(rest.includes("--json") ? JSON.stringify({ sessionId: r.sessionId, ...r.score }, null, 2) + "\n" : renderEval(r));
+        break;
+      }
       case "recall": {
         const ref = rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined;
         const maxLines = rest.includes("--max-lines") ? Number(rest[rest.indexOf("--max-lines") + 1]) : 200;

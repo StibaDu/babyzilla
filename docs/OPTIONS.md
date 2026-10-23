@@ -29,6 +29,9 @@ hot-reload on config change):
         "requestUserBulkMinTokens": 32000,
         "requestUserKeepTokens": 4000,
         "requestContract": true,
+        "distillAnchors": true,
+        "distillRecovered": true,
+        "evalMaxChars": 400000,
         "distillBudgetTokens": 0,
         "toolResultCompression": true,
         "toolResultProtectRecent": 3,
@@ -62,6 +65,9 @@ once.)
 | `requestProtectTurns` | `true` | Also protect the current user turn's working set: an agentic turn can contain hundreds of tool results, so a message count of 6 covers only a few. |
 | `requestTurnProtectTokens` | `40000` | How many tokens of the current turn stay verbatim (capped by the request budget, so small windows still compress). |
 | `requestMinSavingsPct` | `12` | Skip a rewrite that saves less than this share of the request. A 2% pass still invalidates the provider's prompt cache and changes what the agent sees; below this threshold nothing is rewritten. |
+| `distillAnchors` | `true` | Always keep the last user request and the reply it answers verbatim in the pack, as `00-anchors.md`. Built from the messages, never by the model, so a compaction cannot drop the question the next turn answers. Set to `false` to let the distiller decide. |
+| `distillRecovered` | `true` | After the pack is assembled, compare it against the transcript and append a short `00-recovered.md` for facts and `path:line` pointers the distiller left out. Costs one scan of the transcript (skipped above `evalMaxChars`). |
+| `evalMaxChars` | `400000` | Longest transcript scanned for `distillRecovered`. Above this the scan is skipped: a multi-MB history costs more to score than the recovered module saves. |
 | `requestContract` | `true` | Send the one-time compression contract note (what is paged, what stays verbatim, how `babyzilla recall` works) when a session first compresses. |
 | `requestHardProtect` | `2` | If the protected tail alone exceeds the budget, compress it oldest-first but always keep these final N messages. |
 | `requestPartMinTokens` | `800` | Parts below this size are not worth rewriting. |

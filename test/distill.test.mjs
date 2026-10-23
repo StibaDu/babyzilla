@@ -219,6 +219,23 @@ test("buildSummary renders state, decisions, and cold module pointers", () => {
   assert.match(out, /triggers: hook, api/);
 });
 
+test("moduleFileFor gives anchor and recovered stable, sorted filenames", () => {
+  assert.equal(moduleFileFor({ kind: "anchor", name: "last" }), "00-anchors.md");
+  assert.equal(moduleFileFor({ kind: "state", name: "recovered" }), "00-recovered.md");
+});
+
+test("buildSummary leads with the anchor, then state", () => {
+  const modules = [
+    { kind: "state", name: "00-state", content: "CURRENT", triggers: [] },
+    { kind: "anchor", name: "last", content: "### The request\nwant me to ship it?", triggers: [] },
+  ];
+  const out = buildSummary({ modules, files: {} }, { rawTokens: 100, packTokens: 10, savedPct: 90 });
+  assert.match(out, /## YOUR LAST EXCHANGE[\s\S]*want me to ship it\?/);
+  assert.ok(out.indexOf("YOUR LAST EXCHANGE") < out.indexOf("CURRENT STATE"));
+  // The anchor is never a cold pointer: it is small and always relevant.
+  assert.doesNotMatch(out, /MODULES ON DISK[\s\S]*00-anchors/);
+});
+
 test("buildSummary omits sections it has no modules for", () => {
   const out = buildSummary({ modules: [{ kind: "state", name: "00-state", content: "S", triggers: [] }], files: {} },
     { rawTokens: 100, packTokens: 10, savedPct: 90 });

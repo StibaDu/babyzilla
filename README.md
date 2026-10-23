@@ -123,7 +123,10 @@ except Layer 1.
 7. **Layer 1, at compaction**: BabyZilla hooks OpenCode's `compaction` hook,
    receives the full transcript, and calls your configured model to distill it
    into JSONL modules: a state module (*hot*, always inlined), a decisions
-   module (*hot*), and topic/code/errors modules (*cold*).
+   module (*hot*), and topic/code/errors modules (*cold*). Two modules are
+   never written by the model: `00-anchors.md`, the last question and the reply
+   it answers kept verbatim, and `00-recovered.md`, the facts and `path:line`
+   pointers the model dropped but the transcript still had.
 8. **On later prompts** cold modules auto-attach when the prompt matches
    their trigger words (max 2 modules, 6K-token budget) — so long-session
    context stays available *without staying in the window*.
@@ -154,6 +157,8 @@ per-project library that outlives individual sessions.
   Layer 2b, before/after, with measured token counts.
 - [`examples/real-pack/`](examples/real-pack/) — a real pack produced for a
   3-hour session (98.4% smaller than the incoming transcript).
+- [`examples/pack-eval.md`](examples/pack-eval.md) — `babyzilla eval`: score a
+  pack against the transcript it replaced, on a real session.
 
 ## Requirements & privacy
 

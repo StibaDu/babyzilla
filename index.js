@@ -36,6 +36,8 @@ import {
   parseModules, moduleFileFor, buildSummary,
 } from "./lib/distill.mjs";
 import { libraryIndex } from "./lib/library.mjs";
+import { anchorModule, ANCHOR_KIND } from "./lib/anchor.mjs";
+import { selectPack, scorePack, renderModules, missingFactsModule } from "./lib/eval.mjs";
 
 const execAsync = promisify(execCb);
 const execFileAsync = promisify(execFileCb);
@@ -119,6 +121,14 @@ const defaults = {
   // max estimated tokens for the message list of one request (not counting
   // the system prompt or tool definitions).
   requestBudgetTokens: 45_000,
+  // Largest transcript worth scanning for the facts a pack left out. Above
+  // this the scan is skipped: a multi-MB history costs more to score than the
+  // recovered module saves.
+  evalMaxChars: 400_000,
+  // Keep the last request and the reply it answers verbatim in every pack, and
+  // append what the distiller dropped. Both are cheap; both are on by default.
+  distillAnchors: true,
+  distillRecovered: true,
   // aim for this fraction of the incoming context (0 = disabled). With 0.08 a
   // 160K request is cut to ~13K (>90% smaller); the hard cap above still
   // applies to 1M-token windows, and the floor below prevents over-compression.
@@ -725,6 +735,7 @@ export default {
           if (!model) throw new Error("no model available for distillation");
 
           let extracted = transcriptText(event?.messages);
+          let sourceMessages = Array.isArray(event?.messages) ? event.messages : [];
           let rawTokens = estTokens(extracted.text);
           // Some manual/free-tier compactions pass a single synthetic message
           // (the compaction instruction) instead of the transcript. Pull the
@@ -737,6 +748,7 @@ export default {
               if (altTokens > rawTokens) {
                 log(`compaction: event had only ${fmt(rawTokens)} tok; using live context (${fmt(altTokens)} tok)`);
                 extracted = alt;
+                sourceMessages = live;
                 rawTokens = altTokens;
               }
             } catch (e) {
@@ -790,10 +802,34 @@ export default {
             uniq.push(m);
           }
 
+          // The question being answered must survive the swap. This module is
+          // built from the messages, not by the model, so it cannot go missing.
+          const anchor = opts.distillAnchors === false ? null : anchorModule(sourceMessages);
+          const body = uniq.filter((m) => m.kind !== ANCHOR_KIND);
+          const anchored = anchor ? [anchor, ...body] : body;
+          // Rank candidate packs only when the transcript is small enough that
+          // scoring is cheap; on a huge transcript the anchor is still added,
+          // it just is not compared against a losing alternative.
+          let chosen = anchored;
+          let picked = null;
+          let missing = null;
+          if (extracted.text.length <= (opts.evalMaxChars ?? 400_000)) {
+            picked = selectPack(
+              [{ name: "model", modules: body }, { name: "anchored", modules: anchored }],
+              { transcript: extracted.text, rawTokens },
+            );
+            chosen = picked.winner?.modules ?? anchored;
+            // A fact the session already proved (a hash, a version string) is
+            // the one thing a summary must not soften into prose.
+            missing = opts.distillRecovered === false ? null : missingFactsModule(renderModules(chosen), extracted.text);
+            if (missing) chosen = [...chosen, missing];
+          }
+          log(`pack: ${picked ? `${picked.winner?.name} ${picked.winner?.score}/100` : "anchor-only"}${missing ? " + facts" : ""} (${fmt(estTokens(renderModules(chosen)))} tok, ${chosen.length} modules)`);
+
           const d = await packDir(event.sessionID);
           await fs.mkdir(d, { recursive: true });
           const files = {};
-          for (const m of uniq) {
+          for (const m of chosen) {
             const file = moduleFileFor(m);
             await fs.writeFile(path.join(d, file), m.content);
             files[m.name] = path.join(d, file);
@@ -809,7 +845,7 @@ export default {
             } catch (e) { log("session info lookup skipped:", e?.message); }
           }
 
-          const packTokens = uniq.reduce((n, m) => n + estTokens(m.content), 0);
+          const packTokens = chosen.reduce((n, m) => n + estTokens(m.content), 0);
           const summaryStats = { rawTokens, packTokens, savedPct: Math.max(0, Math.round((1 - packTokens / rawTokens) * 100)) };
 
           await fs.writeFile(path.join(d, "index.json"), JSON.stringify({
@@ -819,10 +855,10 @@ export default {
             projectDir,
             stats: summaryStats,
             rawTranscriptTokens: rawTokens,
-            modules: uniq.map((m) => ({
+            modules: chosen.map((m) => ({
               name: m.name, kind: m.kind, file: moduleFileFor(m), path: files[m.name],
               tokens: estTokens(m.content), triggers: m.triggers,
-              hot: m.kind === "state" || m.kind === "decisions",
+              hot: m.kind === "state" || m.kind === "decisions" || m.kind === ANCHOR_KIND || m.name === "recovered",
             })),
           }, null, 2));
 

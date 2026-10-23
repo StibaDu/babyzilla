@@ -2,6 +2,40 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.7.4] — 2026-10-23
+
+### Fixed
+
+- **The anchor now reaches the summary it was protecting.** v0.7.3 wrote
+  `00-anchors.md` and listed it in the pack index, but rendered the visible
+  compaction summary from the *pre-assembled* module list — so the newest
+  exchange was on disk yet missing from the context the next reply actually
+  saw. Promotion to the library used the same stale list.
+- **Best-of-N can no longer pick the anchorless pack.** When the model-only
+  candidate tied the anchored one (and it ties whenever fuzzy `askOk` already
+  passes), the size tie-break chose it and silently dropped the anchor. The
+  anchor is now a guarantee, not a candidate: re-attached after ranking when
+  the winner lacks it.
+- **The reply's tail survives the anchor's own budget.** `trimExchange` limits
+  each half to a shared 1800 chars, but the summary renderer capped the
+  *assembled* anchor at 3200 head-truncated chars — long exchanges lost the
+  closing question. The summary cap is now derived from the anchor's bound,
+  and the reply mathematically keeps the larger half (990 vs 810).
+- **`kind-name` collisions stopped corrupting pack listings.** A `tool` and an
+  `errors` module sharing a slug overwrote each other's entry in the files
+  map (and `index.json` points at the file that is actually on disk now).
+- **Recovery runs against the final pack.** `missingFactsModule` previously
+  scored the winner before the anchor was re-attached, so recovery could
+  re-add lines the anchor verbatim already holds.
+
+### Added
+
+- **The compaction hook is under test.** A new integration suite loads the
+  real plugin with a canned distiller and asserts on what leaves the hook —
+  verbatim tails in the summary, module files on disk, metadata counts. The
+  139 green tests that kicked this off never touched the wiring; now the
+  wiring itself is the assert.
+
 ## [0.7.3] — 2026-10-23
 
 ### Added

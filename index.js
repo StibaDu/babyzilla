@@ -37,7 +37,8 @@ import {
 } from "./lib/distill.mjs";
 import { libraryIndex } from "./lib/library.mjs";
 import { anchorModule, ANCHOR_KIND } from "./lib/anchor.mjs";
-import { selectPack, scorePack, renderModules, missingFactsModule } from "./lib/eval.mjs";
+import { renderModules } from "./lib/eval.mjs";
+import { assemblePack } from "./lib/pack.mjs";
 
 const execAsync = promisify(execCb);
 const execFileAsync = promisify(execFileCb);
@@ -791,39 +792,16 @@ export default {
 
           if (!modules.some((m) => m.kind === "state")) throw new Error("distiller produced no state module");
 
-          // de-dupe: last state wins; unique names
-          const seen = new Set();
-          const uniq = [];
-          for (const m of modules) {
-            if (m.kind === "state") m.name = "00-state";
-            const key = `${m.kind}/${m.name}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            uniq.push(m);
-          }
+          // Assemble the final pack: de-dupe, guarantee the anchor,
+          // best-of-N ranking, recovery — one pure seam, one place to test.
+          const { chosen, picked, missing } = assemblePack({
+            parsed: modules,
+            sourceMessages,
+            transcript: extracted.text,
+            rawTokens,
+            opts,
+          });
 
-          // The question being answered must survive the swap. This module is
-          // built from the messages, not by the model, so it cannot go missing.
-          const anchor = opts.distillAnchors === false ? null : anchorModule(sourceMessages);
-          const body = uniq.filter((m) => m.kind !== ANCHOR_KIND);
-          const anchored = anchor ? [anchor, ...body] : body;
-          // Rank candidate packs only when the transcript is small enough that
-          // scoring is cheap; on a huge transcript the anchor is still added,
-          // it just is not compared against a losing alternative.
-          let chosen = anchored;
-          let picked = null;
-          let missing = null;
-          if (extracted.text.length <= (opts.evalMaxChars ?? 400_000)) {
-            picked = selectPack(
-              [{ name: "model", modules: body }, { name: "anchored", modules: anchored }],
-              { transcript: extracted.text, rawTokens },
-            );
-            chosen = picked.winner?.modules ?? anchored;
-            // A fact the session already proved (a hash, a version string) is
-            // the one thing a summary must not soften into prose.
-            missing = opts.distillRecovered === false ? null : missingFactsModule(renderModules(chosen), extracted.text);
-            if (missing) chosen = [...chosen, missing];
-          }
           log(`pack: ${picked ? `${picked.winner?.name} ${picked.winner?.score}/100` : "anchor-only"}${missing ? " + facts" : ""} (${fmt(estTokens(renderModules(chosen)))} tok, ${chosen.length} modules)`);
 
           const d = await packDir(event.sessionID);
@@ -832,7 +810,7 @@ export default {
           for (const m of chosen) {
             const file = moduleFileFor(m);
             await fs.writeFile(path.join(d, file), m.content);
-            files[m.name] = path.join(d, file);
+            files[moduleFileFor(m)] = path.join(d, file);
           }
 
           // project dir: needed verifiably by `lowfat pack verify` (relative
@@ -856,7 +834,7 @@ export default {
             stats: summaryStats,
             rawTranscriptTokens: rawTokens,
             modules: chosen.map((m) => ({
-              name: m.name, kind: m.kind, file: moduleFileFor(m), path: files[m.name],
+              name: m.name, kind: m.kind, file: moduleFileFor(m), path: files[moduleFileFor(m)],
               tokens: estTokens(m.content), triggers: m.triggers,
               hot: m.kind === "state" || m.kind === "decisions" || m.kind === ANCHOR_KIND || m.name === "recovered",
             })),
@@ -865,13 +843,13 @@ export default {
           // cross-session library promotion (tool knowledge outlives sessions)
           if (opts.library && projectDir) {
             try {
-              await promoteToLibrary(event.sessionID, uniq, projectDir);
+              await promoteToLibrary(event.sessionID, chosen, projectDir);
             } catch (e) { log("library promotion skipped:", e?.message); }
           }
 
           event.result = {
-            summary: buildSummary({ modules: uniq, files }, summaryStats),
-            metadata: { contextpack: { ...summaryStats, files: uniq.length, model } },
+            summary: buildSummary({ modules: chosen, files }, summaryStats),
+            metadata: { contextpack: { ...summaryStats, files: chosen.length, model } },
           };
           log(`compaction swapped: raw ${fmt(rawTokens)} tok → pack ${fmt(packTokens)} tok (${summaryStats.savedPct}% smaller)`);
         } catch (e) {

@@ -209,7 +209,8 @@ test("buildSummary renders state, decisions, and cold module pointers", () => {
     { kind: "decisions", name: "design", content: "DECIDED", triggers: [] },
     { kind: "code", name: "hooks", content: "CODE", triggers: ["hook", "api"] },
   ];
-  const files = { "00-state": "/p/00-state.md", design: "/p/decisions-design.md", hooks: "/p/code-hooks.md" };
+  // files is keyed by the filename on disk: kinds share names.
+  const files = { "00-state.md": "/p/00-state.md", "decisions-design.md": "/p/decisions-design.md", "code-hooks.md": "/p/code-hooks.md" };
   const out = buildSummary({ modules, files }, { rawTokens: 10_000, packTokens: 1_000, savedPct: 90 });
   assert.match(out, /compressed 90%/);
   assert.match(out, /raw ~10\.0K tokens → pack ~1\.0K tokens, 3 modules/);

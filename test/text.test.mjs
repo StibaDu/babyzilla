@@ -689,3 +689,33 @@ test("the question in the assistant reply survives the next request", () => {
   });
   assert.ok(messages[1].content[0].text.includes(q), "the question must survive");
 });
+
+// ── selectCompressibleParts: eager page-out by size ─────────────────────────
+
+const tp = (tool, chars) => ({
+  type: "tool", callID: `c_${tool}_${chars}`, tool,
+  state: { status: "completed", output: "x".repeat(chars) },
+});
+const eagerMsg = (...parts) => ({ role: "assistant", content: parts });
+
+test("eager gate: any tool over eagerMinTokens becomes compressible", () => {
+  const a = tp("read", 40_000), b = tp("shell", 50_000);
+  const one = selectCompressibleParts([eagerMsg(a, b)], 1, null, { eagerMinTokens: 8_000 });
+  assert.deepEqual(one, [a]); // newest result stays verbatim…
+  const all = selectCompressibleParts([eagerMsg(a, b)], 0, null, { eagerMinTokens: 8_000 });
+  assert.deepEqual(all, [a, b]); // window 0: both, regardless of tool name
+});
+
+test("eager gate: results under the threshold stay inline", () => {
+  // 8-9K chars ≈ 2-2.3K estimated tokens: under the 8K gate by design.
+  const out = selectCompressibleParts([eagerMsg(tp("shell", 8_000), tp("execute", 9_000))], 0, null, { eagerMinTokens: 8_000 });
+  assert.deepEqual(out, []); // routine outputs stay verbatim…
+});
+
+test("eager gate: only the protected-newest window is a victim", () => {
+  const older = tp("read", 40_000), newest = tp("shell", 50_000);
+  const out = selectCompressibleParts([eagerMsg(older, newest)], 1, null, { eagerMinTokens: 8_000 });
+  assert.deepEqual(out, [older]); // newest stays verbatim in both modes
+  const legacy = selectCompressibleParts([eagerMsg(older, newest)], 1, new Set(["read"]), { eagerMinTokens: 0 });
+  assert.deepEqual(legacy, [older]); // allowlist still applies; eager adds nothing for it
+});

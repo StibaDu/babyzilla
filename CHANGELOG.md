@@ -2,6 +2,19 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.7.5] — 2026-10-24
+
+### Added
+
+- **Eager paging for any big tool result, by size — not by tool name.** Through the journal
+  audit (48 sessions, ~19.9M journaled tool tokens): the top decile of `read` entries
+  carries 73% of read tokens, one read entry was 1.55M tokens, and the largest MCP dump
+  173K — while `shell`/`execute` is 20.7%. Layer 2b now compresses *any* single tool
+  result over `toolResultEagerMinTokens` (default 8000 est. tokens, ~1.2× a routine read)
+  at the source, paged via `babyzilla recall` (never deleted); the fixed
+  read/grep/glob/list allowlist still applies when configured, and results under the
+  threshold stay inline for free. Coverage without a name-list to maintain.
+
 ## [0.7.4] — 2026-10-23
 
 ### Fixed

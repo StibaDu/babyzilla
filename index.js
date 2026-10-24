@@ -103,6 +103,13 @@ const defaults = {
   // A read of a 60-line file costs ~1K tokens; compressing that saves nothing
   // and costs a re-read. Only bulk results are worth rewriting.
   toolResultMinTokens: 4000,
+  // eager gate for tools OUTSIDE the allowlist: any tool result estimated at
+  // this many tokens or more is paged out, whichever tool produced it. The
+  // audit of 48 real sessions showed 20.7% of journaled tool tokens come from
+  // shell/execute and MCP dumps — classes the name-allowlist never covered.
+  // null disables; 8000 catches the ugly tail (p90 reads are 61K) without
+  // paging routine output (median shell result ≈ 590 tokens).
+  toolResultEagerTokens: 8000,
   toolResultHeadLines: 40,
   toolResultTailLines: 20,
   // keep this many of the most recent tool results verbatim — the agent is
@@ -565,13 +572,20 @@ async function compressOlderToolResults(ctx, sessionID, opts) {
   const targets = selectCompressibleParts(messages, opts.toolResultProtectRecent ?? 3, COMPRESSIBLE_TOOLS, {
     protectTurn: opts.toolResultProtectTurn !== false,
     dedupe: true,
+    eagerMinTokens: opts.toolResultEagerTokens ?? null,
   });
   // The request shape carries no message ids, so the recall handle is a
   // content hash of the exact original text, written to the page store.
   let n = 0;
   for (const part of targets) {
+    // Allowlisted tools keep their own (lower) threshold; everything else is
+    // held to the eager gate it was selected by.
+    const name = String(part.name ?? part.tool ?? "").toLowerCase();
+    const min = COMPRESSIBLE_TOOLS.has(name)
+      ? (opts.toolResultMinTokens ?? 4000)
+      : (opts.toolResultEagerTokens ?? opts.toolResultMinTokens ?? 4000);
     const ref = writePage(ROOT, textOfPart(part), { sessionID });
-    n += compressToolResult(part, opts, (tool, before, after) =>
+    n += compressToolResult(part, { ...opts, toolResultMinTokens: min }, (tool, before, after) =>
       log(`tool result compressed: ${tool} ${fmt(before)}→${fmt(after)} tok`), ref);
   }
   return n;

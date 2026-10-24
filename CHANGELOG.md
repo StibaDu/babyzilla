@@ -2,6 +2,24 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.7.6] — 2026-10-24
+
+### Added
+
+- **Carry-in: warm session starts (opt-in `carryIn`).** On a session's first prompt,
+  the plugin attaches the project library's hot modules (`state`, `decisions`)
+  trigger-free — any wording of the first message opens the project warm instead of
+  rebuilding file/search context from scratch. Attachments are labeled `[carry-in]`
+  ("previous sessions — background only"), fire at most once per session (a
+  `.carryin` stamp under `sessions/<sid>/`), and respect `maxAttach` /
+  `attachBudgetTokens`. The re-audit (997K tok this session; in-session compression
+  at ceiling: 8K+ results are 0.5% of calls but were 16% of raw tokens and are now
+  paged; the 2–8K tail is not worth chasing) made session-start rebuild the last
+  first-order lever. `promoteToLibrary` widened from tool/errors only to
+  state/decisions/tool/errors (hot flag preserved on state/decisions), so the hot
+  core actually reaches the library. `BABYZILLA_ROOT` env override now honored by
+  the plugin core too, for sandboxed tests.
+
 ## [0.7.5] — 2026-10-24
 
 ### Added

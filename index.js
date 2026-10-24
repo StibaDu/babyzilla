@@ -9,7 +9,8 @@
 //   ctx.session.hook("context")     -> per-request token budget (Layer 1b)
 //   ctx.tool.hook("execute.after")  -> per-session usage journal (stats source)
 //   ctx.session.hook("compaction")  -> distill & swap the compaction summary
-//   ctx.session.hook("prompt")      -> trigger-keyword module auto-loading
+//   ctx.session.hook("prompt")      -> module auto-loading (trigger keywords,
+//                                      plus opt-in carry-in on the first prompt)
 //   ctx.command.transform           -> /contextpack inspector command
 //   ctx.generate.text               -> distillation call (no session context)
 //
@@ -43,11 +44,22 @@ import { assemblePack } from "./lib/pack.mjs";
 const execAsync = promisify(execCb);
 const execFileAsync = promisify(execFileCb);
 
-const ROOT = path.join(os.homedir(), ".opencode", "contextpacks");
+// Same override the bin honors, so tests and tooling can sandbox the data dir.
+const ROOT = process.env.BABYZILLA_ROOT || path.join(os.homedir(), ".opencode", "contextpacks");
 const JOURNAL_LIMIT_ENTRIES = 2000;
 // Tools whose results are safe to compress at the source. Shell output is
 // already handled by lowfat, so re-compressing it would only lose structure.
 const COMPRESSIBLE_TOOLS = new Set(["read", "grep", "glob", "list"]);
+// Module kinds that are still useful to a later session of the same project
+// (see promoteToLibrary). Anchors are per-session turn snapshots and
+// `recovered` holds the last exchange's rescued facts — both are stale by
+// the time the next session opens, so they stay out. state/decisions keep
+// their hot flag on promotion and become the carry-in set for new sessions;
+// tool/errors stay cold and attach by keyword as before.
+const CARRY_KINDS = new Set(["state", "decisions", "tool", "errors"]);
+// Among the promoted kinds, these two are the hot core a new session carries
+// in on its first prompt (trigger-free). tool/errors stay cold.
+const CARRY_CORE = new Set(["state", "decisions"]);
 // Compaction re-entrancy: sid → expiry ms. Two queued compaction events (or a
 // re-registered hook after a config reload) must not distill the same session
 // concurrently; a conservative TTL covers abnormal aborts.
@@ -91,6 +103,12 @@ const defaults = {
   attachBudgetTokens: 6000,
   // promote tool-* modules of a project into the cross-session library.
   library: true,
+  // opt-in: on the first prompt of a new session, carry modules over from the
+  // project's own distillation history instead of starting cold. Applies
+  // carryKindAllowlist to what may cross a session boundary and shares the
+  // attach budget with cold modules, never exceeding it. Turn OFF to keep the
+  // old behavior where only keyword matches from the library could attach.
+  carryIn: false,
   // below this many estimated transcript tokens, native compaction is fine.
   minRawTokens: 4000,
   // layer 2: rewrite shell commands through the `lowfat` binary before
@@ -490,18 +508,29 @@ async function promoteToLibrary(sessionID, modules, projectDir) {
 
   // Only promote when there is actually something to promote — an empty
   // library row would skew `lowfat pack stats` project counts.
-  const tools = modules.filter((m) => m.kind === "tool" || m.kind === "errors");
-  if (!tools.length) return;
+  const isCarry = (m) => CARRY_KINDS.has(m.kind) && m.name !== "recovered";
+  const carry = modules.filter(isCarry);
+  if (!carry.length) return;
 
   const lib = path.join(ROOT, "library", dirSlug(projectDir));
   await fs.mkdir(lib, { recursive: true });
   const existing = await readJson(path.join(lib, "index.json")) ?? { modules: [] };
   if (!Array.isArray(existing.modules)) existing.modules = [];
-  for (const m of tools) {
+  for (const m of carry) {
     const file = `lib-${m.name}.md`;
     await fs.writeFile(path.join(lib, file), m.content);
     const prev = existing.modules.find((x) => x.name === m.name);
-    const entry = { name: m.name, kind: m.kind, file, tokens: estTokens(m.content), triggers: m.triggers, hot: false };
+    // state/decisions stay hot: the carry-in layer attaches them on the next
+    // session's first prompt without a keyword match. Everything else is
+    // cold — trigger-matched only, exactly like the pre-0.7.6 library.
+    const entry = {
+      name: m.name,
+      kind: m.kind,
+      file,
+      tokens: estTokens(m.content),
+      triggers: m.triggers,
+      hot: CARRY_CORE.has(m.kind) && !!m.hot,
+    };
     if (prev) Object.assign(prev, entry); else existing.modules.push(entry);
   }
   existing.projectDir = projectDir;
@@ -885,23 +914,45 @@ export default {
           }
           prompt.files ??= [];
           if (!Array.isArray(prompt.files)) return;
+          let projectDir = null;
+          try {
+            const info = await ctx.client.app.info();
+            projectDir = info?.directory ?? info?.location?.directory ?? info?.project?.directory ?? null;
+          } catch {}
           let idx = await readIndex(sid);
-          if (!idx && opts.library) {
-            // no session pack yet — try the project's library pack
-            try {
-              if (typeof ctx.session?.get === "function") {
-                const info = await ctx.session.get({ sessionID: sid });
-                const dir = info?.directory ?? info?.location?.directory ?? info?.project?.directory;
-                if (dir) idx = await libraryIndex(dir, ROOT);
-              }
-            } catch { /* library lookup optional */ }
+          // Library fallback + carry-in: on a session's first prompt we attach
+          // the project library's hot modules trigger-free (any wording opens
+          // warm — that is the point). A stamp file marks the session so the
+          // carry fires once; every later prompt goes through keyword match.
+          let carried = null;
+          if (!idx?.modules?.length && opts.carryIn && projectDir && sid) {
+            const stamp = path.join(ROOT, "sessions", sid, ".carryin");
+            const [lib, stamped] = await Promise.all([
+              libraryIndex(projectDir, ROOT).catch(() => null),
+              fs.access(stamp).then(() => true, () => false),
+            ]);
+            const hot = (lib?.modules ?? []).filter((m) => m.hot && CARRY_CORE.has(m.kind));
+            if (hot.length && !stamped) {
+              carried = hot;
+              idx = { projectDir, modules: hot };
+              await fs.mkdir(path.join(ROOT, "sessions", sid), { recursive: true });
+              await fs.writeFile(stamp, new Date().toISOString() + "\n");
+              log(`prompt hook: carry-in ${hot.length} hot module(s) from library ${dirSlug(projectDir)}`);
+            }
           }
-          if (!idx?.modules?.length) {
-            log(`prompt hook: no modules to attach (session=${sid.slice(0, 14)}…, pack=${idx ? "empty" : "none"})`);
-            return;
+          if (!idx?.modules?.length && !carried && opts.library && projectDir) {
+            // v0.7.5 behavior: keyword-matched attach from the project library
+            // (also covers prompt 2+ of a carry-in session before distill).
+            idx = await libraryIndex(projectDir, ROOT).catch(() => null);
+            if (!idx?.modules?.length) {
+              log(`prompt hook: no modules to attach (session=${sid.slice(0, 14)}…, pack=${idx ? "empty" : "none"})`);
+              return;
+            }
           }
 
-          const matched = matchModules(idx, text);
+          // Carried context skips the keyword gate entirely — the whole point
+          // is that any first prompt (even "ok go") opens the project warm.
+          const matched = carried ? idx.modules : matchModules(idx, text);
           log(`prompt hook: session=${sid.slice(0, 14)}… candidates=${matched.length}${idx.projectDir ? ` (library for ${idx.projectDir.slice(0, 30)})` : ""}`);
           let budget = opts.attachBudgetTokens;
           const picked = [];
@@ -921,15 +972,20 @@ export default {
             prompt.files.push({ uri: pathToFileURL(p).href });
           }
           if (picked.length) {
-            log(`prompt hook: attached ${picked.map((m) => m.file).join(", ")} by trigger match`);
+            log(`prompt hook: attached ${picked.map((m) => m.file).join(", ")}${carried ? " (carry-in)" : " by trigger match"}`);
             // Module prose often carries line counts captured when the pack was
             // made; those drift as files change. Tell the model explicitly.
+            // Carried modules additionally get a scope label so the model
+            // never mistakes a previous session's state for this one's.
             if (typeof ctx.session?.synthetic === "function") {
               const captured = idx.updated ?? idx.created;
+              const label = carried
+                ? " [carry-in] These modules describe the project's previous sessions — background only. Decisions and state reflect the last session, not this one."
+                : "";
               try {
                 await ctx.session.synthetic({
                   sessionID: sid,
-                  text: `[ContextPack] attached ${picked.length} module(s) captured ${captured ?? "earlier"}. Line counts and file sizes inside them may be stale — verify exact content with the read tool (offset/limit) or \`babyzilla retrieve <path>:<start>-<end>\` before relying on numbers.`,
+                  text: `[ContextPack] attached ${picked.length} module(s) captured ${captured ?? "earlier"}.${label} Line counts and file sizes inside them may be stale — verify exact content with the read tool (offset/limit) or \`babyzilla retrieve <path>:<start>-<end>\` before relying on numbers.`,
                 });
                 log("prompt hook: freshness note sent");
               } catch (e) { log("attach freshness note skipped:", e?.message ?? e); }

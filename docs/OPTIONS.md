@@ -42,6 +42,7 @@ hot-reload on config change):
         "maxAttach": 2,
         "attachBudgetTokens": 6000,
         "library": true,
+        "carryIn": true,
         "minRawTokens": 4000
       }
     }
@@ -93,7 +94,8 @@ once.)
 | `distillVia` | `"auto"` | How the distillation call is routed. `"auto"` tries the session-less call first and falls back to the session-scoped call when a provider rejects it; when the model's provider is `opencode` (free tier) it starts with the session-scoped call, since the session-less route is always rejected there. `"session"` tries the session-scoped call first. `"text"` keeps the strict legacy behaviour (session-less only, no fallback). |
 | `maxAttach` | `2` | Max cold modules auto-attached to one prompt. Raise to 3–4 if you often jump between topics. |
 | `attachBudgetTokens` | `6000` | Total estimated-token budget for auto-attached modules per prompt. |
-| `library` | `true` | Promote tool/errors modules to the cross-session project library. |
+| `library` | `true` | Promote carry kinds (state, decisions, tool, errors) to the cross-session project library. |
+| `carryIn` | `false` | Opt-in. On a session's first prompt, attach the project library's hot modules (state, decisions) trigger-free, labeled `[carry-in]`, once per session. |
 | `minRawTokens` | `4000` | Below this, skip custom distillation and let native compaction run. |
 | `proactiveCompaction` | `true` | Layer 1c — ask OpenCode to compact when the context reaches `max(proactiveCompactMinTokens, proactiveCompactRatio × model context window)`. On 1M-token models OpenCode's own threshold is so high that it effectively never fires, so sessions grow unbounded. Set to `false` to let OpenCode decide. |
 | `proactiveCompactAtTurnBoundary` | `true` | Only request a proactive compaction when the request starts with a user message. Compacting mid-tool-loop replaces the working set the agent is still using. |

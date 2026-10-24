@@ -34,10 +34,12 @@
   [zdk/lowfat](https://github.com/zdk/lowfat), Apache-2.0): shell commands are
   rewritten *before execution* (`git status`, `ls -la`, `docker …` →
   token-compact forms), so tool output enters the context pre-compressed.
-- **Layer 2b — Tool-result compression**: large `read` / `grep` / `glob`
-  results are compacted *at the source*, before they are persisted and resent
-  on every later turn. Head, tail, structural and error lines are kept; line
-  numbers stay intact.
+- **Layer 2b — Tool-result compression**: any large tool result is compacted
+  *at the source*, before it is persisted and resent on every later turn.
+  Everything over `toolResultEagerMinTokens` (default 8K, ~1.2× a routine
+  read) is paged by size — no tool-name allowlist to maintain — and results
+  under the threshold stay inline for free. Head, tail, structural and error
+  lines are kept; line numbers stay intact.
 - **Layer 3 — Deterministic ledger + recall**: what Layer 1b has to drop does
   not become an anonymous "elided" marker. Every old tool step collapses to
   one row built from the call itself — `#12 · bash · npm test · exit 1 ·
@@ -49,6 +51,14 @@
 All six run automatically. Layer 2 needs the `lowfat` binary (~3 MB release
 download, no Rust toolchain); without it BabyZilla stays fully functional
 minus that layer.
+
+**Warm starts (opt-in).** With `carryIn: true` a *new* session opens warm: its
+first prompt attaches the project library's hot modules (`state`, `decisions`)
+trigger-free — any wording of the first message works — labeled `[carry-in]`,
+fired at most once per session, within the same `maxAttach` /
+`attachBudgetTokens` budget as normal attachments. The next session inherits
+"where we left off" instead of rebuilding it. Off by default; see
+[`docs/OPTIONS.md`](docs/OPTIONS.md).
 
 | Transcript at compaction | Pack | Savings |
 | --- | --- | --- |
@@ -97,7 +107,7 @@ Optional companion CLI (zero deps, needs Node ≥ 18):
 
 ```sh
 npm i -g git+https://github.com/StibaDu/babyzilla.git
-babyzilla stats    # savings across all packs; also: show / verify / prune
+babyzilla stats    # aggregate savings; also: show / verify / eval / prune
 babyzilla cost     # provider-side spend from OpenCode's usage records
 babyzilla recall 8c1f0b7a9d2e4c15   # exact original behind a paging marker / ledger row
 babyzilla recall 8c1f0b7a9d2e4c15:120-180   # just those lines
@@ -178,7 +188,10 @@ except Layer 1.
    pointers the model dropped but the transcript still had.
 8. **On later prompts** cold modules auto-attach when the prompt matches
    their trigger words (max 2 modules, 6K-token budget) — so long-session
-   context stays available *without staying in the window*.
+   context stays available *without staying in the window*. With
+   `carryIn: true`, a new session's **first prompt** additionally carries the
+   project library's hot modules over trigger-free (once per session, labeled
+   `[carry-in]`) — the next session starts where the last one left off.
 9. **Tool results** are journaled (kind + token estimate + 1200-char head) so
    savings are measurable and future sessions can reuse them.
 10. **Anything fails → nothing happens.** OpenCode's native compaction runs.

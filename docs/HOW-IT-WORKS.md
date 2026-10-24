@@ -116,9 +116,14 @@ The same hook compresses large tool results (Layer 2b, below).
 
 ## Layer 2b — tool-result compression (`execute.after`)
 
-`read`, `grep`, `glob` and `list` results above `toolResultMinTokens` are
-rewritten in place before they are persisted, so every later turn pays the
-smaller size. The rewrite keeps a head, a tail, and every structural
+Any single tool result whose estimated tokens exceed `toolResultEagerMinTokens`
+(default 8000) is compressed at the source — whatever tool produced it:
+`read`, `grep`, `glob`, `list`, `shell`, `execute`, MCP tools included — and is
+paged through `babyzilla recall` (the original is never deleted), so every
+later turn pays the smaller size. Results under the threshold stay inline for
+free; `toolResultEagerMinTokens: 0` restores the fixed tool-name allowlist
+(`read`, `grep`, `glob` and `list` above `toolResultMinTokens`). The rewrite
+keeps a head, a tail, and every structural
 (`import`/`export`/`class`/`def`/…), diagnostic (`ERROR`/`FATAL`/`panic`/…) and
 `TODO` line; line numbers are preserved and elided spans are marked.
 
@@ -185,12 +190,16 @@ babyzilla recall 8c1f0b7a9d2e4c15:120-180 # a span
 
 ## Library promotion
 
-`tool` and `errors` modules from real project sessions are **promoted** to
+Hot modules (`state`, `decisions`) plus cold `tool` and `errors` modules from
+real project sessions are **promoted** to
 `~/.opencode/contextpacks/library/<project-slug>/` and become attach
 candidates in *future* sessions of the same project (e.g. "how we fixed the
-ECONNRESET gateway bug" survives session death). Home-dir and temp-dir
-sessions are skipped; promotions are add/merge-only; empty promotions write
-nothing.
+ECONNRESET gateway bug" survives session death). The hot flag is preserved, so
+with `carryIn: true` a new session's first prompt carries the project's hot
+modules over trigger-free, labeled `[carry-in]`, at most once per session (a
+`.carryin` stamp under `sessions/<sid>/` prevents repeats). Home-dir and
+temp-dir sessions are skipped; promotions are add/merge-only; empty promotions
+write nothing.
 
 ## Data layout
 
@@ -204,7 +213,8 @@ nothing.
 │   ├── topic-*.md / code-*.md       # cold
 │   ├── errors-*.md / tool-*.md      # cold (+ library-promoted)
 │   └── journal.jsonl
-└── library/<project-slug>/          # cross-session cold modules
+└── library/<project-slug>/          # cross-session modules: hot state/decisions
+                                      # + cold tool/errors, carry-in source
 ```
 
 ## Why pointers-first matters

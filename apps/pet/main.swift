@@ -37,8 +37,14 @@ if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
     let line = value("--say", "Compacted: 84k -> 9k tok (89% smaller).")
     let scale = Int(value("--scale", "3")) ?? 3
     let side = CGFloat(pd.size * scale)
-    let bubbleW: CGFloat = 260
+    // the app sizes the bubble from the pet: a snapshot at any other width
+    // flatters the layout and hides how tight a real one is. --bubble overrides
+    // it for a pack whose pet is smaller than the built-in one.
+    let bubbleW: CGFloat = CGFloat(Double(value("--bubble", "")) ?? 0) > 0
+        ? CGFloat(Double(value("--bubble", "0")) ?? 0)
+        : max(200, side * 1.35)
     PixelFont.scale = PixelFont.forPetScale(scale)
+    PixelFont.pixel = 0.5   // the snapshot bitmap is 2×
     let bv = BubbleView(frame: NSRect(x: 0, y: 0, width: bubbleW, height: 90))
     bv.text = line
     bv.alpha = 1

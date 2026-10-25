@@ -144,8 +144,9 @@ tool, compaction and error events. No sockets, no network, no daemon: if the pet
 is closed the plugin writes a few bytes. Turn it off with `"pet": false`.
 
 It can also **think out loud**: one short line per step, distilled locally from
-the model's own reasoning and shown in a quieter bubble (`babyzilla pet think
-"…"` to try it; `"petThoughts": false` to turn it off).
+the model's own reasoning, said in caveman ("Read parser before pack") and shown
+in a quieter bubble (`babyzilla pet think "…"` to try it; `"petThoughts": false`
+to turn it off).
 
 A second look can be built from a sprite sheet and switched at runtime
 (`babyzilla pet packs`, `babyzilla pet use <name>`, or right-click → Pet); see

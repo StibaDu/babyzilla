@@ -8,9 +8,15 @@ enum PixelFont {
     static var scale: CGFloat = 2
 
     /// Bubble text is deliberately smaller than the pet's own pixels: the bubble is
-    /// fixed in width, so every step of glyph scale doubles the characters per line
-    /// (14 → 29 at 3×), which is the difference between a gist and a chopped one.
-    static func forPetScale(_ petScale: Int) -> CGFloat { petScale >= 4 ? 2 : 1 }
+    /// fixed in width, so every step of glyph scale changes the characters per line
+    /// (14 at 2×, 19 at 1.5×, 29 at 1×) — a half step reads bigger than 1× without
+    /// chopping a thought the way 2× did.
+    static func forPetScale(_ petScale: Int) -> CGFloat { petScale >= 4 ? 2 : 1.5 }
+
+    /// The smallest addressable unit of the display, in points. Glyph edges snap to it
+    /// so a half-step scale lands on real device pixels instead of smearing: 1.5pt at
+    /// 2× is exactly three pixels per font pixel.
+    static var pixel: CGFloat = 1
 
     static var advance: CGFloat { 6 * scale }
     static var lineHeight: CGFloat { 9 * scale }
@@ -128,18 +134,21 @@ enum PixelFont {
     static func draw(_ text: String, at origin: NSPoint, alpha: CGFloat, color: NSColor = NSColor(calibratedRed: 0.90, green: 0.98, blue: 0.92, alpha: 1)) {
         let ink = color.withAlphaComponent(alpha)
         ink.setFill()
-        var x = origin.x
+        let unit = max(pixel, 0.01)
+        func snap(_ v: CGFloat) -> CGFloat { (v / unit).rounded() * unit }
+        var x = snap(origin.x)
         for ch in text {
             let g = glyph(ch)
             for (row, rowBits) in g.enumerated() {
                 for (col, on) in rowBits.enumerated() where on {
-                    let rect = NSRect(x: x + CGFloat(col) * scale,
-                                      y: origin.y + CGFloat(6 - row) * scale,
-                                      width: scale, height: scale)
-                    rect.fill()
+                    let x0 = snap(x + CGFloat(col) * scale)
+                    let x1 = snap(x + CGFloat(col + 1) * scale)
+                    let y0 = snap(origin.y + CGFloat(6 - row) * scale)
+                    let y1 = snap(origin.y + CGFloat(7 - row) * scale)
+                    NSRect(x: x0, y: y0, width: max(unit, x1 - x0), height: max(unit, y1 - y0)).fill()
                 }
             }
-            x += advance
+            x = snap(x + advance)
         }
     }
 

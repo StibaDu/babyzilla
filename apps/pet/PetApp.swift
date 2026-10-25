@@ -267,7 +267,8 @@ final class BubbleView: NSView {
     static let padX: CGFloat = 11
     static let padY: CGFloat = 9
     static let tail: CGFloat = 7
-    static let lineH = CGFloat(PixelFont.lineHeight) + 3
+    // computed, not stored: PixelFont.scale is chosen at runtime
+    static var lineH: CGFloat { CGFloat(PixelFont.lineHeight) + 3 }
 
     static func measure(_ text: String, width: CGFloat) -> (lines: [String], height: CGFloat) {
         let lines = wrap(text, width: width - padX * 2)
@@ -276,6 +277,8 @@ final class BubbleView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard alpha > 0.01, !text.isEmpty else { return }
+        // snap glyphs to this screen's pixels; a half-step scale needs it
+        PixelFont.pixel = 1 / (window?.backingScaleFactor ?? 2)
         let lines = Self.wrap(text, width: bounds.width - Self.padX * 2)
         let lineH = Self.lineH
         let textH = CGFloat(lines.count) * lineH

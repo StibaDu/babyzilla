@@ -2,6 +2,31 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.18.0] — 2026-10-25
+
+### Changed
+
+- **The dino thinks in caveman.** Thoughts are spoken bluntly: articles, copulas,
+  auxiliaries and pronouns are dropped and verbs are bared from a known list, so
+  "The tests are failing because the cache is stale" arrives as "Tests fail because
+  cache stale". Negations, names, numbers and `because` survive — the point is to be
+  clear in fewer words, not to be cute at the cost of meaning. Unknown verbs are left
+  as written instead of being chopped into new ones ("retir", "stor"), and a sentence
+  made only of grammar comes back unchanged rather than leaving the pet silent.
+- **Bubble text sits between the two earlier sizes.** 1.5× instead of 2× (too few
+  characters per line) or 1× (too small to read): about 19 characters per line at 3×,
+  so a caveman thought lands in two rows. Glyph edges snap to the screen's device
+  pixels, which is what keeps a half-step scale crisp instead of smeared.
+
+### Fixed
+
+- `--snapshot` rendered a 260pt bubble no matter how big the pet was, which flattered
+  every layout check; it now uses the app's own width, and `--bubble <pt>` overrides it
+  to match a smaller pack.
+- `babyzilla pet think "…"` now speaks the same caveman as a live thought (it went
+  through no reducer before), so testing the voice tests the voice; `--raw` keeps the
+  words exactly as typed.
+
 ## [0.17.2] — 2026-10-25
 
 ### Fixed

@@ -142,7 +142,7 @@ reasoning — the thought that led to the step about to run:
 
 ```
    ╭──────────────────────────╮
-   │  Read the parser first   │
+   │  Read parser before pack │
    ╰───────────────╮──────────╯
                  · ·
 ```
@@ -152,6 +152,22 @@ instead of a tail, and about two seconds on screen. `lib/pet-thought.mjs` does t
 reduction locally (no model call, no tokens): drop code, markdown, links and
 anything the pixel font cannot draw; keep one sentence; strip the throat-clearing
 ("Let me…", "The user wants me to…"); clip at a word and admit the cut with `…`.
+
+**It thinks in caveman.** The pet is a dinosaur with a small head and a small
+bubble, so the sentence is spoken bluntly: articles, copulas, auxiliaries and
+pronouns go, verbs are bared from a known list, and nothing that carries meaning
+is touched — `not`, `because`, numbers and names all stay.
+
+| reasoning | thought |
+|---|---|
+| I should read the parser before the pack. | Read parser before pack |
+| The tests are failing because the cache is stale. | Tests fail because cache stale |
+| It is not working yet, but I found the reason. | Not work yet, but me found reason |
+| The retired mark was stored in config.json. | Retire mark store in config.json |
+
+Unknown verbs are left as written rather than chopped into new words ("retir",
+"stor"), and a sentence made only of grammar comes back unchanged instead of
+leaving the pet silent.
 
 Rules that keep it pleasant rather than spammy:
 

@@ -20,6 +20,7 @@ import {
   inspectConfig, planSetup, probe, applyConfig, locateConfig, configCandidates,
 } from "../lib/setup.mjs";
 import { emit as petEmit, petDir as petStateDir, eventsPath } from "../lib/pet.mjs";
+import { cavemanLine } from "../lib/pet-thought.mjs";
 import { EXPRESSIONS, byId as expressionById } from "../pet/expressions.mjs";
 import {
   renderStatus, runVerify as runVerifyBench, runReplayBench, verifyPlan, resolveVerify, runNoise,
@@ -1441,8 +1442,11 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
         if (sub === "think" || sub === "say") {
           const text = rest.slice(rest.indexOf(sub) + 1).filter((a) => !a.startsWith("--")).join(" ").trim();
           if (!text) { out(`usage: babyzilla pet ${sub} "text"\n`); process.exitCode = 2; return; }
-          petEmitLine({ kind: sub, text });
-          out(`${sub === "think" ? "thought" : "said"}: ${text}\n`);
+          // what you test should be what the dino says: thoughts go through the same
+          // reducer as a real one. --raw keeps the words exactly as typed.
+          const line = sub === "think" && !rest.includes("--raw") ? cavemanLine(text) : text;
+          petEmitLine({ kind: sub, text: line });
+          out(`${sub === "think" ? "thought" : "said"}: ${line}\n`);
           // Proof, not faith: the app writes last-bubble.json when a bubble is on
           // screen, so this can tell "no pet running" from "pet was busy".
           const ackFile = path.join(petStateDir(), "last-bubble.json");
@@ -1450,7 +1454,7 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
           for (const deadline = Date.now() + 1400; Date.now() < deadline;) {
             try {
               const got = JSON.parse(fs.readFileSync(ackFile, "utf8"));
-              if (got?.text === text) { ack = got; break; }
+              if (got?.text === line) { ack = got; break; }
             } catch { /* not written yet */ }
             try { execFileSync("/bin/sleep", ["0.1"]); } catch { /* keep polling */ }
           }

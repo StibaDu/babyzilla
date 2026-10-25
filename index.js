@@ -689,10 +689,10 @@ export default {
     const petThought = (messages) => {
       if (opts.petThoughts === false) return;
       if (!petThrottled("think", 2600)) return;
-      // verbatim by default: the model's own voice is the fun of this feature.
-      // "caveman" is opt-in because it eats exactly that voice.
+      // caveman by default: the pet's opinion of its human, bluntly. "verbatim"
+      // keeps the model's own sentences instead.
       const line = petGist(latestThought(messages), {
-        style: opts.petThoughts === "caveman" ? "caveman" : "verbatim",
+        style: opts.petThoughts === "verbatim" ? "verbatim" : "caveman",
       });
       if (!line || line === lastThought) return;
       lastThought = line;

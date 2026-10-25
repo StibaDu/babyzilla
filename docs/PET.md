@@ -137,8 +137,31 @@ the file.
 
 ## Thinking out loud
 
-On every request the pet shows one line of the model's **actual reasoning** — the
-best sentence of it, quoted as written:
+On every request the pet says one line about **you**, in caveman. Not a summary of
+the work — the model's opinion of its human, bluntly:
+
+```
+   ╭──────────────────────────────╮
+   │  Human keep ask for bigger   │
+   │  pet. Me wait.               │
+   ╰──────────────────╮───────────╯
+                 · ·
+```
+
+`lib/pet-thought.mjs` does it locally (no model call, no tokens). The reducer:
+
+- picks the sentence that is **about the human** — `user`, `they`, `asked`, `keeps`,
+  `again` — over the one about the bug, because that is the interesting one;
+- says `human` instead of `the user`, drops the grammar (articles, copulas,
+  auxiliaries, pronouns) and bares the verb: "The user wants me to make the pet
+  talk" → "Human want me make pet talk";
+- keeps what changes meaning: **negations**, `because`, names, numbers;
+- leaves unknown verbs alone rather than chopping them into new words ("retir");
+- drops code, markdown, links and anything the pixel font cannot draw, then clips
+  at a word and admits the cut with `…`.
+
+Want the literal quote instead of the persona? `"petThoughts": "verbatim"` shows the
+model's own sentence, picked for interest (a question, an aside, a "wait"):
 
 ```
    ╭──────────────────────────────╮
@@ -146,23 +169,7 @@ best sentence of it, quoted as written:
    │  leaves zero, so the fade    │
    │  never runs.                 │
    ╰──────────────────╮───────────╯
-                 · ·
 ```
-
-It is deliberately a **thought**, not a transcript: a quieter bubble, dots instead
-of a tail, and a few seconds on screen. `lib/pet-thought.mjs` does the work locally
-(no model call, no tokens): drop code, markdown, links and anything the pixel font
-cannot draw; keep one sentence; remove the bookkeeping ("The user wants me to…");
-clip at a word and admit the cut with `…`.
-
-The sentence is chosen for **interest**, not position: a question, an aside, a
-"hmm" or a "wait" scores higher than the opening line, because the model's voice is
-the funny part. So the bubble quotes things like "Honestly this whole thing is
-suspicious: the alpha never changes" instead of a tidy summary of it.
-
-If you want the parrot instead of the thinker, `"petThoughts": "caveman"` drops the
-grammar and keeps the meaning ("Tests fail because cache stale"). It eats exactly
-the voice above, which is why it is not the default.
 
 Rules that keep it pleasant rather than spammy:
 
@@ -176,9 +183,35 @@ Rules that keep it pleasant rather than spammy:
 Try it without a session:
 
 ```sh
-babyzilla pet think "Hmm, wait: the alpha never leaves zero."
-babyzilla pet think --caveman "I should read the parser before the pack."
+babyzilla pet think "The user wants me to make the pet talk."
+babyzilla pet think --caveman "They asked for this twice already."   # explicit
 ```
+
+## More animations
+
+A pack can answer more states than idle/walk/jump through its `expressions` map,
+which points an expression id at an animation name:
+
+```json
+"expressions": { "thinking": "nod", "celebrate": "sway", "compressing": "dash" }
+```
+
+`pet/pack-animations.mjs` adds three of them without repainting anything — the
+palette, the pixel blocks and the baseline cannot drift, because every frame comes
+either from the artist's own sheet or from the pack's own idle frame:
+
+```sh
+node pet/pack-animations.mjs --pack ~/.opencode/pet/packs/lil-dino \
+  --sheet "$HOME/Downloads/PACK - Lil Dino Free/PACK - Lil Dino Free.png" \
+  --cell 32 --crop 4,0,24,24 --upscale 2 --row 2 --from-col 6
+```
+
+- `dash` — the fourth row of the sheet the pack never imported (4 frames, dust and
+  all), copied cell-relative so the pose still rises where the artist drew it;
+- `nod` — the body squashing toward its feet, which reads as "yes, human";
+- `sway` — a shear that leaves the feet planted, for celebrating.
+
+`--remove` takes all three out again and leaves the pack as drawn.
 
 ## Removing a pet
 

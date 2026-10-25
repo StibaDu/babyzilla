@@ -116,18 +116,22 @@ test("bridge: appends valid JSONL, rotates, and never throws", async () => {
   process.env.BABYZILLA_PET_STATE = dir;
 });
 
-test("thoughts: the actual thinking is quoted, not paraphrased", () => {
-  // code and bookkeeping are not thinking; the model's own voice is kept
+test("thoughts: the dino says what it makes of its human, in caveman", () => {
+  // the sentence about the human wins over the sentence about the code
   assert.equal(
-    gist("```js\nconst x = 1;\n```\nThe user wants me to make the pet talk. I'll add a bubble next."),
-    "I'll add a bubble next",
+    gist("I need to check the parser. The user keeps asking for a smaller bubble."),
+    "Human keep ask for smaller bubble",
   );
-  // markdown, links and urls are stripped, the words stay as written
-  assert.equal(gist("- Read [the docs](https://example.com/x) and fix it."), "Read the docs and fix it");
-  // the interesting sentence wins, not the first one: asides are the point
+  assert.equal(gist("The user wants me to make the pet talk. I'll add a bubble next."), "Human want me make pet talk");
+  assert.equal(gist("The cache is stale. The human asked for this twice already."), "Human ask for this twice already");
+  // with nothing about the human, it is still one blunt line about the work
+  assert.equal(gist("The tests are failing because the cache is stale."), "Test fail because cache stale");
+  // emoji the bubble font cannot draw never reach it
+  assert.equal(gist("Fix the 🐛 bug in the parser"), "Fix bug in parser");
+  // verbatim is still there for the raw quote
   assert.equal(
-    gist("Checking the parser now. Hmm, wait — the alpha never leaves zero, so the fade never runs."),
-    "Hmm, wait the alpha never leaves zero, so the fade never runs",
+    gist("The tests are failing because the cache is stale.", { style: "verbatim" }),
+    "The tests are failing because the cache is stale",
   );
   // long lines break on a word and admit the cut
   const long = gist("The quick brown fox jumps over the lazy dog and then keeps running past the fence into the field beyond", { max: 40 });
@@ -138,20 +142,18 @@ test("thoughts: the actual thinking is quoted, not paraphrased", () => {
   assert.equal(gist("```\nonly code\n```"), null);
   assert.equal(gist("   "), null);
   assert.equal(gist(null), null);
-  // the bubble font cannot draw emoji: they must not reach it
-  assert.equal(gist("Fix the 🐛 bug in the parser"), "Fix the bug in the parser");
-  // a bare opener is not a thought
   assert.equal(gist("Sure."), null);
 });
 
-test("thoughts: caveman stays available, because sometimes it is the point", () => {
-  assert.equal(gist("The tests are failing because the cache is stale.", { style: "caveman" }), "Tests fail because cache stale");
+test("thoughts: caveman mechanics, including what it must not eat", () => {
   assert.equal(caveman("I should read the parser before the pack"), "me read parser before pack");
-  // a negation is meaning, not grammar: it must survive
   assert.equal(caveman("It is not working yet, but I found the reason"), "not work yet, but me found reason");
+  // the human is the subject, not "they"
+  assert.equal(caveman("They asked for this twice"), "human ask for this twice");
+  // "do" is a real verb, not only an auxiliary
+  assert.equal(caveman("Then I do it"), "me do");
   // unknown verbs are left as written rather than mangled ("retir", "stor")
   assert.equal(caveman("The retired mark was stored in config.json"), "retire mark store in config.json");
-  // a sentence made only of grammar comes back unchanged instead of going silent
   assert.equal(caveman("the a an"), "the a an");
 });
 
@@ -175,13 +177,13 @@ test("thoughts: the CLI can make it think, and the bridge tags the kind", async 
   const dir = tmp();
   const env = { ...process.env, BABYZILLA_PET_STATE: dir, BABYZILLA_NO_UPDATE_CHECK: "1" };
   const out = await run(process.execPath, [BIN, "pet", "think", "read", "the", "parser"], { env });
-  // verbatim by default: what you type is what the dino thinks
-  assert.match(out.stdout, /thought: read the parser/);
+  // caveman by default, exactly as the dino says it in a session
+  assert.match(out.stdout, /thought: Read parser/);
   const lines = fs.readFileSync(path.join(dir, "events.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
-  assert.deepEqual({ kind: lines[0].kind, text: lines[0].text }, { kind: "think", text: "read the parser" });
-  // --caveman previews the alternate register without touching config
-  const blunt = await run(process.execPath, [BIN, "pet", "think", "--caveman", "read", "the", "parser"], { env });
-  assert.match(blunt.stdout, /thought: Read parser/);
+  assert.deepEqual({ kind: lines[0].kind, text: lines[0].text }, { kind: "think", text: "Read parser" });
+  // --raw keeps the words as typed
+  const exact = await run(process.execPath, [BIN, "pet", "think", "--raw", "read", "the", "parser"], { env });
+  assert.match(exact.stdout, /thought: read the parser/);
 });
 
 test("cli: pet remove deletes a pet you are not wearing, and install restores it", async () => {
@@ -233,6 +235,79 @@ test("cli: pet remove deletes a pet you are not wearing, and install restores it
   const again = await cli("pet", "packs");
   assert.match(again.stdout, /BabyZilla \(built-in\)/);
   assert.doesNotMatch(again.stdout, /removed:/);
+});
+
+test("pack animations: a nod and a sway from the pack's own pixels, plus the sheet row it missed", async () => {
+  const dir = tmp();
+  const packDir = path.join(dir, "pack");
+  fs.mkdirSync(path.join(packDir, "sprites"), { recursive: true });
+  // a small stand-in character: body above, feet on row 44-45
+  const canvas = 48;
+  const data = Buffer.alloc(canvas * canvas * 4);
+  for (let y = 18; y <= 45; y++) {
+    for (let x = 12; x <= 36; x++) {
+      const i = (y * canvas + x) * 4;
+      const leg = y > 40 && (x < 16 || x > 32);
+      if (leg || y <= 40) {
+        data[i] = 120; data[i + 1] = 160; data[i + 2] = 90; data[i + 3] = 255;
+      }
+    }
+  }
+  fs.writeFileSync(path.join(packDir, "sprites", "idle-1.png"), encodePng(canvas, canvas, data));
+  fs.writeFileSync(path.join(packDir, "pack.json"), JSON.stringify({
+    kind: "pack", name: "demo", label: "Demo", size: canvas,
+    animations: { idle: ["idle-1"] }, fps: { idle: 6 },
+  }));
+
+  const cli = (...args) => run(process.execPath, [fileURLToPath(new URL("../pet/pack-animations.mjs", import.meta.url)), ...args], { env: process.env });
+  const first = await cli("--pack", packDir);
+  assert.match(first.stdout, /frames written: nod, sway/);
+
+  const after = JSON.parse(fs.readFileSync(path.join(packDir, "pack.json"), "utf8"));
+  assert.deepEqual(after.animations.nod, ["nod-1", "nod-2", "nod-3"]);
+  assert.deepEqual(after.animations.sway, ["sway-1", "sway-2", "sway-3"]);
+  assert.equal(after.animations.dash, undefined, "no sheet, no dash");
+  assert.equal(after.expressions.thinking, "nod");
+  assert.equal(after.expressions.celebrate, "sway");
+  for (const id of ["nod-1", "nod-2", "nod-3", "sway-1", "sway-2", "sway-3"]) {
+    assert.ok(fs.existsSync(path.join(packDir, "sprites", `${id}.png`)), `${id} written`);
+  }
+  // derived poses keep the feet on the baseline and the same palette
+  const frame = (id) => decodePng(fs.readFileSync(path.join(packDir, "sprites", `${id}.png`)));
+  const bottom = (img) => {
+    for (let y = img.height - 1; y >= 0; y--) {
+      for (let x = 0; x < img.width; x++) if (img.data[(y * img.width + x) * 4 + 3]) return y;
+    }
+    return -1;
+  };
+  assert.equal(bottom(frame("nod-1")), 45, "a nod squashes toward the feet, it does not float");
+  assert.equal(bottom(frame("sway-3")), 45, "a sway keeps its feet planted");
+
+  // a sheet's unused row becomes an animation, copied cell-relative
+  const sheet = { width: 320, height: 96, data: Buffer.alloc(320 * 96 * 4) };
+  for (let i = 0; i < 320 * 96; i++) { sheet.data[i * 4 + 3] = 255; }
+  for (let c = 6; c < 10; c++) {
+    for (let y = 2 * 32; y < 2 * 32 + 24; y++) {
+      for (let x = c * 32 + 4; x < c * 32 + 4 + 24; x++) {
+        const i = (y * sheet.width + x) * 4;
+        sheet.data[i] = 200; sheet.data[i + 1] = 60 + c; sheet.data[i + 2] = 90;
+      }
+    }
+  }
+  const sheetPath = path.join(dir, "sheet.png");
+  fs.writeFileSync(sheetPath, encodePng(sheet.width, sheet.height, sheet.data));
+  const second = await cli("--pack", packDir, "--sheet", sheetPath, "--row", "2", "--from-col", "6");
+  assert.match(second.stdout, /dash, nod, sway/);
+  const withDash = JSON.parse(fs.readFileSync(path.join(packDir, "pack.json"), "utf8"));
+  assert.equal(withDash.animations.dash.length, 4);
+  assert.equal(withDash.expressions.compressing, "dash");
+
+  const removed = await cli("--pack", packDir, "--remove");
+  assert.match(removed.stdout, /removed 10 frames/);
+  const back = JSON.parse(fs.readFileSync(path.join(packDir, "pack.json"), "utf8"));
+  assert.equal(back.animations.nod, undefined);
+  assert.equal(back.expressions, undefined, "the map goes with the animations");
+  assert.equal(fs.readdirSync(path.join(packDir, "sprites")).join(","), "idle-1.png");
 });
 
 test("cli: pet list, emit and status", async () => {

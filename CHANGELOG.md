@@ -2,6 +2,28 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.20.0] — 2026-10-25
+
+### Added
+
+- **Three more animations for a pack, with no new art.** `pet/pack-animations.mjs`
+  imports the sheet row the pack never took (`dash` — four frames with dust, copied
+  cell-relative so the pose still rises where the artist drew it) and derives `nod`
+  (the body squashing toward its feet) and `sway` (a shear that leaves the feet
+  planted) from the pack's own idle frame. Colours, pixel blocks and baseline cannot
+  drift because nothing is repainted. Each animation is wired to states through the
+  pack's `expressions` map, so the dino now nods while thinking, sways when a slow
+  shell command lands, and dashes while compacting. `--remove` takes them back out.
+
+### Changed
+
+- **Thoughts are now what the pet makes of its human, in caveman.** The reducer picks
+  the sentence about the human (`user`, `they`, `asked`, `keeps`, `again`) over the one
+  about the bug, says "human" instead of "the user", drops the grammar and bares the
+  verb: "The user wants me to make the pet talk" → "Human want me make pet talk".
+  Negations, `because`, names and numbers survive; unknown verbs are left as written.
+  `"petThoughts": "verbatim"` keeps the model's own quoted sentence instead.
+
 ## [0.19.0] — 2026-10-25
 
 ### Changed

@@ -894,6 +894,17 @@ final class PetController: NSObject {
         var rec: [String: Any] = ["ev": "say", "text": text]
         if thought { rec["thought"] = true }
         trace(rec)
+        // Observation, not faith: the CLI reports what the pet actually displayed,
+        // so "nothing happened" can be diagnosed without screen access.
+        let ack: [String: Any] = [
+            "kind": thought ? "think" : "say",
+            "text": text,
+            "thought": thought,
+            "t": Date().timeIntervalSince1970 * 1000,
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: ack) {
+            try? data.write(to: Paths.state.appendingPathComponent("last-bubble.json"))
+        }
         bubbleView.thought = thought
         bubbleView.text = text
         bubbleView.alpha = 0

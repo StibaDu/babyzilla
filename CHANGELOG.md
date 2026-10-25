@@ -2,6 +2,24 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.17.1] — 2026-10-25
+
+### Fixed
+
+- **`pet install` resurrected a pet you had removed.** It copied the built-in art
+  back and cleared the mark, so removing a pet survived only until the next update.
+  Install now skips retired pets (`skipped babyzilla (removed …)`) — a removal is a
+  decision, not a missing file.
+- **A thought or line could be "sent" and never seen, with no way to tell.** The app
+  now writes `last-bubble.json` when a bubble reaches the screen, and
+  `pet think` / `pet say` report `shown at 21:36:04 (thought)` — or `not running` /
+  `queued` — instead of assuming the append was read.
+
+### Added
+
+- `babyzilla pet restore <name>` copies a removed pet's art back, built-in or
+  bundled pack.
+
 ## [0.17.0] — 2026-10-25
 
 ### Added

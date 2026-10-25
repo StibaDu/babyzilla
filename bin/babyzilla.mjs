@@ -942,16 +942,24 @@ function petInstall({ login = false, build = true } = {}) {
   // runtime assets live next to the events file, so the app and the gallery
   // always see the same set even after the bundle is rebuilt
   fs.mkdirSync(petStateDir(), { recursive: true });
+  // An install must not resurrect a pet the user removed: `retired` is a decision,
+  // not a missing file to repair. `pet restore <name>` is the way back.
+  const retired = new Set(readPetConfig().retired ?? []);
+  const skipped = [];
   const spritesOut = path.join(petStateDir(), "sprites");
   fs.mkdirSync(spritesOut, { recursive: true });
   const spriteDir = path.join(root, "assets", "pet", "sprites");
   let copied = 0;
-  for (const file of fs.readdirSync(spriteDir)) {
-    if (!file.endsWith(".png") || file.startsWith("_")) continue;
-    fs.copyFileSync(path.join(spriteDir, file), path.join(spritesOut, file));
-    copied++;
+  if (retired.has("babyzilla")) {
+    skipped.push("babyzilla");
+  } else {
+    for (const file of fs.readdirSync(spriteDir)) {
+      if (!file.endsWith(".png") || file.startsWith("_")) continue;
+      fs.copyFileSync(path.join(spriteDir, file), path.join(spritesOut, file));
+      copied++;
+    }
+    fs.copyFileSync(path.join(root, "assets", "pet", "pet-data.json"), path.join(petStateDir(), "pet-data.json"));
   }
-  fs.copyFileSync(path.join(root, "assets", "pet", "pet-data.json"), path.join(petStateDir(), "pet-data.json"));
 
   // alternate looks: each pack is a directory with pack.json and sprites/
   const packsIn = path.join(root, "assets", "pet", "packs");
@@ -959,6 +967,7 @@ function petInstall({ login = false, build = true } = {}) {
   if (fs.existsSync(packsIn)) {
     for (const pack of fs.readdirSync(packsIn, { withFileTypes: true })) {
       if (!pack.isDirectory()) continue;
+      if (retired.has(pack.name)) { skipped.push(pack.name); continue; }
       const from = path.join(packsIn, pack.name);
       const to = path.join(petStateDir(), "packs", pack.name);
       fs.mkdirSync(path.join(to, "sprites"), { recursive: true });
@@ -990,7 +999,43 @@ function petInstall({ login = false, build = true } = {}) {
 </plist>
 `);
   }
-  return { app: PET_APP, binary, sprites: copied, packs, login };
+  return { app: PET_APP, binary, sprites: copied, packs, login, skipped };
+}
+
+/** `pet restore <name>`: undo a removal by copying that pet's assets back. */
+function petRestore(name) {
+  const root = repoRoot();
+  const cfg = readPetConfig();
+  cfg.retired = (cfg.retired ?? []).filter((n) => n !== name);
+  if (!cfg.retired.length) delete cfg.retired;
+  writePetConfig(cfg);
+
+  if (name === "babyzilla") {
+    const src = path.join(root, "assets", "pet");
+    const out = path.join(petStateDir(), "sprites");
+    fs.mkdirSync(out, { recursive: true });
+    let n = 0;
+    for (const file of fs.readdirSync(path.join(src, "sprites"))) {
+      if (!file.endsWith(".png") || file.startsWith("_")) continue;
+      fs.copyFileSync(path.join(src, "sprites", file), path.join(out, file));
+      n++;
+    }
+    fs.copyFileSync(path.join(src, "pet-data.json"), path.join(petStateDir(), "pet-data.json"));
+    return n;
+  }
+
+  const from = path.join(root, "assets", "pet", "packs", name);
+  if (!fs.existsSync(from)) throw new Error(`no bundled pack called ${name}`);
+  const to = path.join(petStateDir(), "packs", name);
+  fs.mkdirSync(path.join(to, "sprites"), { recursive: true });
+  fs.copyFileSync(path.join(from, "pack.json"), path.join(to, "pack.json"));
+  let n = 0;
+  for (const file of fs.readdirSync(path.join(from, "sprites"))) {
+    if (!file.endsWith(".png")) continue;
+    fs.copyFileSync(path.join(from, "sprites", file), path.join(to, "sprites", file));
+    n++;
+  }
+  return n;
 }
 
 function petEmitLine(event) {
@@ -1328,7 +1373,8 @@ function main() {
   status                                         running? which pet? how much art?
   packs                                          list pets: built-in + installed packs
   use <pack|babyzilla>                           switch pet (restarts it if running)
-  remove <pack|babyzilla>                        delete a pet you do not use (install restores the built-in)
+  remove <pack|babyzilla>                        delete a pet you do not use
+  restore <pack|babyzilla>                       copy a removed pet's art back
   list                                           all 100 expressions
   emit <id> [--hold 2] [--say "text"]            make it react right now
   think "text" | say "text"                     a thought (quiet bubble) or a spoken line
@@ -1344,24 +1390,10 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
             out(`${c(GREEN)}installed${c(RESET)} ${res.app}\n`);
             out(`  binary   ${res.binary}\n  sprites  ${res.sprites} → ${petStateDir()}/sprites\n`);
             if (res.login) out(`  login    ${PET_LOGIN}\n`);
-            // an install restores what `pet remove` took away: the assets are back,
-            // so the "removed" mark must go with them
-            try {
-              const cfg = readPetConfig();
-              if (Array.isArray(cfg.retired) && cfg.retired.length) {
-                const restored = [];
-                cfg.retired = cfg.retired.filter((name) => {
-                  const there = name === "babyzilla"
-                    ? fs.existsSync(path.join(petStateDir(), "pet-data.json"))
-                    : fs.existsSync(path.join(petStateDir(), "packs", name, "pack.json"));
-                  if (there) restored.push(name);
-                  return !there;
-                });
-                if (!cfg.retired.length) delete cfg.retired;
-                writePetConfig(cfg);
-                if (restored.length) out(`  restored ${restored.join(", ")}\n`);
-              }
-            } catch { /* cosmetic */ }
+            // Never resurrect a removed pet: install says so and points at restore.
+            if (res.skipped?.length) {
+              out(`  skipped  ${res.skipped.join(", ")} ${c(DIM)}(removed — babyzilla pet restore <name>)${c(RESET)}\n`);
+            }
             petStop();
             if (!rest.includes("--no-start")) {
               const pid = petStart();
@@ -1379,6 +1411,20 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
           if (!text) { out(`usage: babyzilla pet ${sub} "text"\n`); process.exitCode = 2; return; }
           petEmitLine({ kind: sub, text });
           out(`${sub === "think" ? "thought" : "said"}: ${text}\n`);
+          // Proof, not faith: the app writes last-bubble.json when a bubble is on
+          // screen, so this can tell "no pet running" from "pet was busy".
+          const ackFile = path.join(petStateDir(), "last-bubble.json");
+          let ack = null;
+          for (const deadline = Date.now() + 1400; Date.now() < deadline;) {
+            try {
+              const got = JSON.parse(fs.readFileSync(ackFile, "utf8"));
+              if (got?.text === text) { ack = got; break; }
+            } catch { /* not written yet */ }
+            try { execFileSync("/bin/sleep", ["0.1"]); } catch { /* keep polling */ }
+          }
+          if (ack) out(`  ${c(GREEN)}shown${c(RESET)} at ${new Date(ack.t).toLocaleTimeString()} (${ack.thought ? "thought" : "speech"})\n`);
+          else if (!petPidAlive()) out(`  ${c(YELLOW)}not running${c(RESET)} — babyzilla pet start\n`);
+          else out(`  ${c(YELLOW)}queued${c(RESET)} — another bubble is up; this appears when it clears\n`);
           return;
         }
         if (sub === "emit") {
@@ -1455,7 +1501,24 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
             if (fs.existsSync(dir)) { fs.rmSync(dir, { recursive: true, force: true }); gone = 1; }
           }
           out(`removed ${builtin ? "BabyZilla (built-in)" : pack.label}${gone ? "" : ` ${c(DIM)}(was not installed)${c(RESET)}`}\n`);
-          if (builtin) out(`  ${c(DIM)}restore with: babyzilla pet install${c(RESET)}\n`);
+          out(`  ${c(DIM)}restore with: babyzilla pet restore ${id}${c(RESET)}\n`);
+          return;
+        }
+
+        if (sub === "restore") {
+          const name = rest[rest.indexOf("restore") + 1] ?? "babyzilla";
+          const id = name === "default" ? "babyzilla" : name;
+          const bundled = id === "babyzilla"
+            || fs.existsSync(path.join(repoRoot(), "assets", "pet", "packs", id, "pack.json"));
+          if (!bundled) {
+            out(`${c(YELLOW)}no bundled pet called${c(RESET)} ${id} — a pack from a sheet is reinstalled with pet/pack.mjs\n`);
+            process.exitCode = 2;
+            return;
+          }
+          try {
+            const frames = petRestore(id);
+            out(`restored ${id} (${frames} frames)\n`);
+          } catch (e) { out(`${c(YELLOW)}restore failed:${c(RESET)} ${e.message}\n`); process.exitCode = 1; }
           return;
         }
 
@@ -1475,7 +1538,7 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
             }
             out(`\nswitch with: babyzilla pet use <name>\n`);
             if (retired.size) {
-              out(`${c(DIM)}removed: ${[...retired].join(", ")} — babyzilla pet install restores it${c(RESET)}\n`);
+              out(`${c(DIM)}removed: ${[...retired].join(", ")} — babyzilla pet restore <name> brings it back${c(RESET)}\n`);
             }
             return;
           }
@@ -1485,7 +1548,7 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
           const retiredUse = new Set(cfg.retired ?? []);
           const wanted = name === "default" ? "babyzilla" : name;
           if (retiredUse.has(wanted)) {
-            out(`${c(YELLOW)}${wanted} was removed${c(RESET)} — restore it: babyzilla pet install\n`);
+            out(`${c(YELLOW)}${wanted} was removed${c(RESET)} — restore it: babyzilla pet restore ${wanted}\n`);
             process.exitCode = 2;
             return;
           }

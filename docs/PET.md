@@ -181,8 +181,15 @@ babyzilla pet remove babyzilla  # or: pet remove <pack-id>
 
 `remove` refuses to delete the active pet (that would leave a blank window on the
 next launch), hides it from `pet packs`, and makes `pet use` say how to get it
-back. `babyzilla pet install` restores it — the assets were never far away, just
-not installed.
+back. A later `pet install` does **not** resurrect it — it prints
+`skipped babyzilla (removed …)` — because a removal is a decision, not a missing
+file. Bringing one back is explicit:
+
+```sh
+babyzilla pet restore babyzilla   # or a bundled pack id
+```
+
+The art was never far away, just not installed.
 
 Turn it off with the plugin option `"pet": false`, or the environment variable
 `BABYZILLA_PET=0`.

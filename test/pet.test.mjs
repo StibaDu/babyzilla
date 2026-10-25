@@ -195,9 +195,15 @@ test("cli: pet remove deletes a pet you are not wearing, and install restores it
 
   await assert.rejects(cli("pet", "use", "babyzilla"), (e) => e.code === 2 && /was removed/.test(e.stdout));
 
-  const restored = await cli("pet", "install", "--no-build", "--no-start");
+  // an install must not quietly bring it back — that would undo a decision
+  const reinstalled = await cli("pet", "install", "--no-build", "--no-start");
+  assert.match(reinstalled.stdout, /skipped\s+babyzilla/);
+  assert.equal(fs.readdirSync(path.join(dir, "sprites")).filter((f) => f.endsWith(".png")).length, 0, "still gone");
+  assert.doesNotMatch((await cli("pet", "packs")).stdout, /BabyZilla \(built-in\)/, "still hidden");
+
+  const restored = await cli("pet", "restore", "babyzilla");
   assert.match(restored.stdout, /restored babyzilla/);
-  assert.ok(fs.existsSync(path.join(dir, "sprites", "idle.png")), "install puts the art back");
+  assert.ok(fs.existsSync(path.join(dir, "sprites", "idle.png")), "restore puts the art back");
   const again = await cli("pet", "packs");
   assert.match(again.stdout, /BabyZilla \(built-in\)/);
   assert.doesNotMatch(again.stdout, /removed:/);

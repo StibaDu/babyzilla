@@ -116,10 +116,24 @@ writes them to `~/.opencode/pet/packs/`, and the repo ignores
 |---|---|
 | drag | move it, throw it, it falls and squashes |
 | click | poke (it reacts) |
-| right-click | size 2×/3×/4×, mute, chattiness, gallery, quit |
-| menu bar icon | show the pet, quit |
+| right-click | hide/show, size 1×/2×/3×, pet, mute, chattiness, gallery, quit |
+| menu bar icon | **Hide Dino / Show Dino**, size, pet, mute, gallery, quit |
 
-Position, size and chattiness persist in `~/.opencode/pet/config.json`.
+Position, size, chattiness and whether it is on persist in
+`~/.opencode/pet/config.json`.
+
+### Turning it off
+
+The menu bar icon *is* the dino's face — the pack's own idle frame, cropped to the
+character and drawn nearest-neighbour, so it is the same creature and not a generic
+glyph. Click it and the first item is **Hide Dino**; the icon dims while the pet is
+off, so the menu bar tells you its state without opening anything.
+
+Off is a real stop, not a fade: the windows are ordered out, the 30 Hz timer is
+invalidated (no CPU while it is off), and the event file is skipped rather than
+queued — otherwise turning it back on after an hour of work would replay a burst of
+old bubbles. The choice is written to `config.json`, so `pet install --login` starts
+the app at login but leaves a hidden dino hidden.
 
 ## How the connection works
 

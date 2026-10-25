@@ -2,6 +2,31 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.24.0] — 2026-10-25
+
+### Added
+
+- **The menu bar icon is the dino, and it turns the pet on and off.** The status item
+  used the built-in `idle` sprite, which a pack does not have — pack users got a blank
+  slot. It now uses the pack's own idle frame, **cropped to the character's bounds** so
+  the menu bar gets the dino and not a corner of empty canvas, drawn nearest-neighbour
+  and dimmed while the pet is off.
+- The menu is rebuilt each time it opens (a stale checkmark is a lie) and carries
+  Hide/Show, size, pet, mute, gallery and quit. Right-clicking the pet offers the same
+  switch.
+- **Off is a real stop:** windows ordered out, the 30 Hz timer invalidated, and the
+  events file skipped rather than queued — turning it back on after an hour does not
+  replay an hour of bubbles. The choice persists in `config.json`, so a login start
+  leaves a hidden pet hidden.
+- `pet install --login` now runs on this machine, so the pet is there after a reboot.
+
+### Verified
+
+- `--toggle-test` (headless, no screen-recording permission needed) prints the icon id,
+  writes the exact bitmap the menu bar is handed, and asserts the windows and timer
+  follow the switch: `hidden=true window=false timer=false` → `hidden=false
+  window=true timer=true`.
+
 ## [0.23.0] — 2026-10-25
 
 ### Fixed

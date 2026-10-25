@@ -21,9 +21,11 @@ struct PetConfig: Codable {
     var muted: Bool = false
     var followCursor: Bool = true
     var pack: String? = nil         // nil = the built-in BabyZilla art
+    /// Turned off from the menu bar. Persisted so a login start does not undo it.
+    var hidden: Bool = false
 
     enum CodingKeys: String, CodingKey {
-        case scale, x, y, chattiness, muted, followCursor, pack
+        case scale, x, y, chattiness, muted, followCursor, pack, hidden
     }
 
     /// Decode field by field. The synthesized initializer requires every
@@ -41,6 +43,7 @@ struct PetConfig: Codable {
         muted = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
         followCursor = try c.decodeIfPresent(Bool.self, forKey: .followCursor) ?? true
         pack = try c.decodeIfPresent(String.self, forKey: .pack)
+        hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
     }
 
     static func load(_ url: URL) -> PetConfig {
@@ -396,6 +399,7 @@ final class PetController: NSObject {
     let spriteSize: Int
     let pack: PackData?
     var onPackChange: (() -> Void)?
+    var onVisibilityChange: (() -> Void)?
     var window: PetPanel!
     var bubble: BubbleWindow!
     var view: PetView!
@@ -418,6 +422,11 @@ final class PetController: NSObject {
     private var nextWander = Date()
     private var walkPauseUntil = Date()
     private var busy = false
+    /// Off from the menu bar: no window, no timer, and events are skipped rather
+    /// than queued (a backlog would replay as a burst of bubbles on show).
+    private(set) var hidden = false
+    /// For the headless switch test: a hidden pet must have stopped ticking.
+    var isTicking: Bool { timer != nil }
     private var lastEventAt = Date.distantPast
     /// The model is working if events keep arriving; no event for 8s = idle again.
     private var active: Bool { busy || Date().timeIntervalSince(lastEventAt) < 8 }
@@ -557,9 +566,47 @@ final class PetController: NSObject {
     }
 
     private func start() {
+        timer?.invalidate()
         let t = Timer(timeInterval: 1.0 / 30.0, target: self, selector: #selector(tick), userInfo: nil, repeats: true)
         RunLoop.main.add(t, forMode: .common)
         timer = t
+    }
+
+    /// Menu-bar switch. Hiding is a real stop (no timer, no window), not an alpha:
+    /// a hidden pet should cost nothing and should not talk to itself.
+    func setVisible(_ visible: Bool) {
+        hidden = !visible
+        if visible {
+            skipBacklog()
+            window.orderFrontRegardless()
+            bubble.orderOut(nil)
+            bubbleVisible = false
+            pendingLines.removeAll()
+            pendingThought = nil
+            lastEventAt = .distantPast
+            lastTick = Date()
+            start()
+        } else {
+            timer?.invalidate()
+            timer = nil
+            window.orderOut(nil)
+            bubble.orderOut(nil)
+            bubbleVisible = false
+            pendingLines.removeAll()
+            pendingThought = nil
+        }
+        config.hidden = !visible
+        persist()
+    }
+
+    /// Jump to the end of the events file: what happened while the pet was off is
+    /// none of its business, and replaying it would bury the human in bubbles.
+    private func skipBacklog() {
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: Paths.events.path),
+           let size = attrs[.size] as? UInt64 {
+            eventOffset = size
+        }
+        lastWatchPoll = Date()
     }
 
     /// The DispatchSource can miss an append when the pet created the events file
@@ -1001,6 +1048,11 @@ final class PetController: NSObject {
         title.isEnabled = false
         menu.addItem(title)
         menu.addItem(.separator())
+        let hide = NSMenuItem(title: hidden ? "Show Dino" : "Hide Dino",
+                              action: #selector(toggleVisibility), keyEquivalent: "")
+        hide.target = self
+        menu.addItem(hide)
+        menu.addItem(.separator())
 
         for scale in [1, 2, 3] {
             let item = NSMenuItem(title: "Size \(scale)×", action: #selector(setScale(_:)), keyEquivalent: "")
@@ -1043,19 +1095,24 @@ final class PetController: NSObject {
         menu.popUp(positioning: nil, at: point, in: nil)
     }
 
-    @objc private func setScale(_ item: NSMenuItem) {
+    @objc private func toggleVisibility() {
+        setVisible(hidden)
+        onVisibilityChange?()
+    }
+
+    @objc func setScale(_ item: NSMenuItem) {
         config.scale = item.tag
         let side = CGFloat(spriteSize * config.scale)
         window.setFrame(NSRect(x: x - side / 2, y: floorY, width: side, height: side), display: true)
         persist()
     }
 
-    @objc private func toggleMute() {
+    @objc func toggleMute() {
         config.muted.toggle()
         persist()
     }
 
-    @objc private func choosePack(_ item: NSMenuItem) {
+    @objc func choosePack(_ item: NSMenuItem) {
         let id = item.representedObject as? String ?? "babyzilla"
         config.pack = id == "babyzilla" ? nil : id
         // a pack knows how big it wants to be: its art is not the same density
@@ -1072,7 +1129,7 @@ final class PetController: NSObject {
         persist()
     }
 
-    @objc private func openGallery() {
+    @objc func openGallery() {
         let gallery = Paths.state.appendingPathComponent("gallery.html")
         if FileManager.default.fileExists(atPath: gallery.path) {
             NSWorkspace.shared.open(gallery)
@@ -1180,6 +1237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let pet = PetController(config: cfg, configURL: Paths.config, data: petData, lib: lib, pack: pack)
         pet.onPackChange = { [weak self] in self?.rebuildPet() }
         controller = pet
+        if cfg.hidden { pet.setVisible(false) }
     }
 
     /// Switching pet swaps art and scale, which means new windows and a new
@@ -1188,6 +1246,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller?.shutdown()
         controller = nil
         startPet()
+        refreshStatusItem()
+        controller?.onVisibilityChange = { [weak self] in self?.refreshStatusItem() }
     }
 
     func captureAndExit(_ path: String, after delay: TimeInterval) {
@@ -1232,30 +1292,172 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try? FileManager.default.createDirectory(at: Paths.state, withIntermediateDirectories: true)
         startPet()
         installStatusItem()
+        controller?.onVisibilityChange = { [weak self] in self?.refreshStatusItem() }
+        // A pet turned off from the menu bar stays off across logins: the login
+        // item runs this binary, so it is the process that has to remember.
+        if controller?.hidden == true { refreshStatusItem() }
+        if CommandLine.arguments.contains("--toggle-test") {
+            // Headless proof that the switch is wired to the windows, not just to
+            // a menu title: the menu bar itself cannot be read without permissions.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                guard let self, let c = self.controller else { print("no controller"); exit(1) }
+                print("icon=\(self.statusIconId() ?? "none") hidden=\(c.hidden) window=\(c.window.isVisible)")
+                // The menu bar cannot be inspected without permissions; the icon it
+                // is given can, so the test writes exactly that bitmap out.
+                if let img = self.statusImage(),
+                   let path = ProcessInfo.processInfo.environment["BABYZILLA_PET_ICON"],
+                   let tiff = img.tiffRepresentation,
+                   let rep = NSBitmapImageRep(data: tiff),
+                   let png = rep.representation(using: .png, properties: [:]) {
+                    try? png.write(to: URL(fileURLWithPath: path))
+                    print("icon written: \(path) \(Int(img.size.width))x\(Int(img.size.height))")
+                }
+                self.togglePet()
+                print("after hide: hidden=\(c.hidden) window=\(c.window.isVisible) timer=\(c.isTicking)")
+                self.togglePet()
+                print("after show: hidden=\(c.hidden) window=\(c.window.isVisible) timer=\(c.isTicking)")
+                self.statusItem?.menu?.delegate = nil
+                exit(0)
+            }
+        }
         if let i = CommandLine.arguments.firstIndex(of: "--capture"), i + 1 < CommandLine.arguments.count {
             captureAndExit(CommandLine.arguments[i + 1], after: 2.0)
         }
     }
 
-    private func installStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let button = item.button {
-            let img = (controller?.lib.image("idle")?.copy() as? NSImage)
-            img?.size = NSSize(width: 18, height: 18)
-            button.image = img
-            button.imageScaling = .scaleProportionallyUpOrDown
-        }
-        let menu = NSMenu()
-        let show = NSMenuItem(title: "Show pet", action: #selector(showPet), keyEquivalent: "")
-        show.target = self
-        menu.addItem(show)
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        item.menu = menu
-        statusItem = item
+    /// The menu bar is the only way to reach a pet with no Dock icon, so its icon
+    /// is the pet's face: the pack's own idle frame, nearest-neighbour, not a
+    /// generic glyph. It used to be blank for packs, whose idle is `idle-1`.
+    private func statusIconId() -> String? {
+        guard let c = controller else { return nil }
+        if let first = c.pack?.animations["idle"]?.first, c.lib.images[first] != nil { return first }
+        if c.lib.images["idle"] != nil { return "idle" }
+        return c.lib.images.keys.sorted().first
     }
 
-    @objc private func showPet() {
-        controller?.window.orderFrontRegardless()
+    /// Crop away the empty canvas around the character. Pack sprites are 48×48 with
+    /// a small dino in one corner; drawn whole, the menu bar showed a corner of air.
+    private func trimmed(_ src: NSImage) -> NSImage {
+        guard let tiff = src.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else { return src }
+        let w = rep.pixelsWide, h = rep.pixelsHigh
+        var minX = w, minY = h, maxX = -1, maxY = -1
+        for y in 0..<h {
+            for x in 0..<w {
+                guard let c = rep.colorAt(x: x, y: y), c.alphaComponent > 0.05 else { continue }
+                minX = min(minX, x); maxX = max(maxX, x)
+                minY = min(minY, y); maxY = max(maxY, y)
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { return src }
+        let cw = CGFloat(maxX - minX + 1), ch = CGFloat(maxY - minY + 1)
+        let out = NSImage(size: NSSize(width: cw, height: ch))
+        out.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .none
+        src.draw(in: NSRect(x: 0, y: 0, width: cw, height: ch),
+                 from: NSRect(x: CGFloat(minX), y: CGFloat(h - maxY - 1), width: cw, height: ch),
+                 operation: .sourceOver, fraction: 1)
+        out.unlockFocus()
+        return out
+    }
+
+    private func statusImage() -> NSImage? {
+        guard let id = statusIconId(), let raw = controller?.lib.images[id] else { return nil }
+        let src = trimmed(raw)
+        let side: CGFloat = 18
+        let out = NSImage(size: NSSize(width: side, height: side))
+        out.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .none
+        NSGraphicsContext.current?.shouldAntialias = false
+        let scale = min((side - 2) / src.size.width, (side - 2) / src.size.height)
+        let w = src.size.width * scale
+        let h = src.size.height * scale
+        src.draw(in: NSRect(x: (side - w) / 2, y: (side - h) / 2, width: w, height: h),
+                 from: .zero, operation: .sourceOver, fraction: 1)
+        out.unlockFocus()
+        out.isTemplate = false
+        return out
+    }
+
+    private func installStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.button?.imageScaling = .scaleProportionallyUpOrDown
+        let menu = NSMenu()
+        menu.delegate = self
+        menu.autoenablesItems = false
+        item.menu = menu
+        statusItem = item
+        refreshStatusItem()
+    }
+
+    /// Icon and dimming follow the switch, so the menu bar says whether the pet
+    /// is on without opening anything.
+    private func refreshStatusItem() {
+        guard let button = statusItem?.button else { return }
+        button.image = statusImage()
+        button.appearsDisabled = controller?.hidden == true
+        statusItem?.menu?.delegate = nil
+        statusItem?.menu?.delegate = self
+    }
+
+    @objc func togglePet() {
+        guard let c = controller else { return }
+        c.setVisible(c.hidden)
+        refreshStatusItem()
+    }
+}
+
+extension AppDelegate: NSMenuDelegate {
+    /// Rebuilt on open: the pet can be switched, resized or muted between clicks,
+    /// and a stale checkmark is a lie.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        guard let c = controller else {
+            menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+            return
+        }
+        let toggle = NSMenuItem(title: c.hidden ? "Show Dino" : "Hide Dino",
+                                action: #selector(togglePet), keyEquivalent: "")
+        toggle.target = self
+        toggle.state = c.hidden ? .off : .on
+        menu.addItem(toggle)
+        menu.addItem(.separator())
+
+        let sizeItem = NSMenuItem(title: "Size", action: nil, keyEquivalent: "")
+        let sizes = NSMenu()
+        for scale in [1, 2, 3] {
+            let item = NSMenuItem(title: "\(scale)×", action: #selector(PetController.setScale(_:)), keyEquivalent: "")
+            item.target = c
+            item.tag = scale
+            item.state = c.config.scale == scale ? .on : .off
+            sizes.addItem(item)
+        }
+        sizeItem.submenu = sizes
+        menu.addItem(sizeItem)
+
+        let mute = NSMenuItem(title: "Mute speech", action: #selector(PetController.toggleMute), keyEquivalent: "")
+        mute.target = c
+        mute.state = c.config.muted ? .on : .off
+        menu.addItem(mute)
+
+        if Packs.available().count > 1 {
+            let petItem = NSMenuItem(title: "Pet", action: nil, keyEquivalent: "")
+            let sub = NSMenu()
+            for pet in Packs.available() {
+                let item = NSMenuItem(title: pet.label, action: #selector(PetController.choosePack(_:)), keyEquivalent: "")
+                item.target = c
+                item.representedObject = pet.id
+                item.state = (c.config.pack ?? "babyzilla") == pet.id ? .on : .off
+                sub.addItem(item)
+            }
+            petItem.submenu = sub
+            menu.addItem(petItem)
+        }
+
+        menu.addItem(.separator())
+        let gallery = NSMenuItem(title: "Gallery…", action: #selector(PetController.openGallery), keyEquivalent: "")
+        gallery.target = c
+        menu.addItem(gallery)
+        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 }
 

@@ -108,12 +108,68 @@ once.)
 | `proactiveCompactRatio` | `0.35` | Fraction of the model's context window that triggers a proactive compaction. `0.35` compacts a 1M-token Kimi K3 session at ~367K; `0` disables by ratio (the floor still applies). |
 | `proactiveCompactMinTokens` | `120000` | Absolute floor for proactive compaction, so small-window models are untouched. |
 | `proactiveCompactCooldownMs` | `600000` | Minimum gap between two proactive compactions for the same session. Prevents a `/compact` on every step if a compaction produces little reduction. |
+| `selfLearn` | `true` | Self-tuning loop (v0.10). Per-session telemetry is always recorded (plain file appends, no model calls); when this is on, a cheap analysis call may also propose **one numeric knob change** after `selfLearnSessions` new sessions and `selfLearnIntervalHours` hours. Proposals are applied provisionally, verified by a marker-gated bench run, then kept or reverted. `false` stops the loop but keeps telemetry. |
+| `selflearnModel` | `null` | Model for the analysis call. `null` = the session's own model (session-scoped route — free on `opencode`-tier models). Set `{"providerID":"…","id":"…"}` to pin a cheap analyst. Distinct from `distillModel` so the two roles can use different models. |
+| `selfLearnSessions` | `4` | Finalized sessions (≥3 turns each) of new experience required between two analysis calls. |
+| `selfLearnIntervalHours` | `20` | Minimum hours between analyses — loop cadence, not a rate limit. |
+| `selfLearnVerifyDays` | `7` | A provisional change runs its acceptance bench at most once per this many days, and never sooner than `selfLearnVerifyGraceHours` after the apply (live signals need time to accumulate). |
+| `selfLearnVerifyGraceHours` | `24` | Hours a provisional knob stays bench-free before verification may schedule. |
+| `selfLearnKnobs` | `null` | `null` = every knob in the `KNOBS` table below is tunable; an array of knob names restricts the analyst to those. Unknown names are ignored. |
 
 ## Environment
 
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `BABYZILLA_ROOT` | `~/.opencode/contextpacks` | Data root for the CLI (`babyzilla show/stats/…`). The plugin itself always uses the default. |
+| `BABYZILLA_SELFTUNE_DISABLE` | unset | Set to `1` to freeze the whole self-tuning loop — no telemetry, no overrides, no analysis calls, no benches. The bench sets this for its own child sessions so runs never recurse into the tuner. |
+
+## Self-tuning loop
+
+The loop turns recorded telemetry into bounded, verified knob changes:
+
+1. **Telemetry** — one record per finalized session in `selftune/sessions.jsonl`:
+   DB-billed tokens/cost, cache resets, recall counts, duplicate calls, paging
+   volume, distill diet. Plus `selftune/recalls.jsonl` (appended by the CLI on
+   every actual recall). No model calls, no cost.
+2. **Analysis** — after the session + interval gates, one model call receives
+   the last 8 session records and the last 10 ledger entries and answers with
+   a strict one-line JSON: `{"noop":true,…}` or `{"knob":"…","to":N,…}`.
+3. **Apply (provisional)** — numeric knobs only, inside the `KNOBS` clamps,
+   ≤ 35% step, allowlist via `selfLearnKnobs`. The change merges into the
+   running options immediately and persists in `selftune/state.json`; the
+   decision lands in `selftune/ledger.jsonl`.
+4. **Verify** — after the grace/throttle windows the `bench/ab-live.mjs` harness
+   runs plugin-vs-plugin (baseline values on the OFF leg, proposal on the ON
+   leg). Kept only if the marker is found in every leg of every rep, step
+   counts match, and the paired cost delta is cheaper and beyond the measured
+   A/A noise floor. Fail → automatic revert. Every step in the ledger.
+
+Prompts, contract text, model routing, compression algorithms and code are
+structurally out of reach — the analyst can only move numbers in this table:
+
+| Knob | Min | Max | |
+| --- | --- | --- | --- |
+| `stableMinTokens` | 800 | 6000 | request-time stable-set floor |
+| `toolResultHeadLines` | 10 | 60 | verbatim head of compressed tool results |
+| `toolResultTailLines` | 5 | 60 | verbatim tail |
+| `toolResultMinTokens` | 1200 | 12000 | compress-at-source threshold |
+| `toolResultEagerTokens` | 4000 | 30000 | eager any-tool threshold |
+| `distillBudgetDefault` | 8000 | 48000 | transcript budget fed to the distiller |
+| `requestMinSavingsPct` | 5 | 30 | per-request rewrite acceptance floor |
+
+Live quality guard: while a knob is provisional, a recall-rate storm
+(`≥ max(3, 2.5 × baseline recalls/turn × turns)` recalls in the current
+session) triggers an immediate emergency revert without waiting for a bench.
+
+CLI:
+
+```sh
+babyzilla selftune status              # state, pending proposal, counts, floor
+babyzilla selftune verify [--reps N]   # run the marker-gated bench now (spends credits)
+babyzilla selftune noise [--reps N]    # refresh the A/A noise floor (spends credits)
+babyzilla selftune revert              # revert the pending proposal manually
+babyzilla selftune baseline            # recompute the emergency-revert baseline
+```
 
 ## Changing options safely
 

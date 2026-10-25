@@ -11,6 +11,11 @@ import { sessionCosts, totals, defaultDbPath, openDb, hasTable, auditPrices } fr
 import { readPage, prunePages } from "../lib/pages.mjs";
 import { extractProbes, scorePack, missingFactsModule } from "../lib/eval.mjs";
 import { loadDB, explain as explainModels } from "../lib/modeldb.mjs";
+import {
+  renderStatus, runVerify as runVerifyBench, verifyPlan, resolveVerify, runNoise,
+  refreshBaseline, manualRevert, readState as readSelftuneState, noteRecallRendered,
+  buildSummaryData,
+} from "../lib/selftune.mjs";
 
 // ── colors & formatting ─────────────────────────────────────────────────────
 
@@ -621,6 +626,7 @@ export function recall(ref, { dbPath = defaultDbPath(), maxLines = 200 } = {}) {
   // A content hash from the page store is checked first: it works even when the
   // tool result never reached the database (or the DB was rotated).
   const page = readPage(packRoot(), id);
+  if (page) noteRecallRendered(packRoot(), id); // recall-rate telemetry
   if (page !== null) {
     const lines = page.split("\n");
     if (lines.length && lines[lines.length - 1] === "") lines.pop();
@@ -760,6 +766,10 @@ Usage:
                                     score a pack against the transcript it replaced
   babyzilla prune [--older-than 2w] [--dry-run]
                                     remove old session packs (sessions untouched)
+  babyzilla selftune [status|verify|noise|revert|baseline] [--reps N] [--json]
+                                    self-tuning loop state; verify runs the marker-gated
+                                    bench against the pending proposal; noise refreshes
+                                    the A/A floor; revert undoes the pending knob
 
 Environment:
   BABYZILLA_ROOT=<dir>              data root (default ~/.opencode/contextpacks)
@@ -818,6 +828,51 @@ function main() {
       case "prune": {
         const older = rest.includes("--older-than") ? rest[rest.indexOf("--older-than") + 1] : "2w";
         out(renderPrune(undefined, older, rest.includes("--dry-run")));
+        break;
+      }
+      case "selftune": {
+        const sub = (rest.find((r) => !r.startsWith("--")) ?? "status").toLowerCase();
+        const reps = rest.includes("--reps") ? Number(rest[rest.indexOf("--reps") + 1]) : 2;
+        const root = packRoot();
+        const repo = path.dirname(path.dirname(fs.realpathSync(new URL(import.meta.url).pathname)));
+        const asJson = rest.includes("--json");
+        if (sub === "status") {
+          out(asJson
+            ? JSON.stringify({ state: readSelftuneState(root), summary: buildSummaryData(root) }, null, 2) + "\n"
+            : renderStatus(root) + "\n");
+          break;
+        }
+        if (sub === "verify") {
+          const plan = verifyPlan(root);
+          if (!plan.pending) { out("nothing pending — nothing to verify\n"); break; }
+          out(`verifying ${plan.pending.knob} ${plan.pending.from} → ${plan.pending.to} (reps=${reps}, live bench, marker-gated)…\n`);
+          const runR = runVerifyBench({ root, repo, reps, setoffs: plan.setoffs, sets: plan.sets });
+          void Promise.resolve(resolveVerify({ root, verdict: runR.payload, log: console.error, reps })).then((judged) => {
+            out(`verdict: ${judged.ok ? "PASS — kept" : "FAIL — reverted"} — ${judged.reason}\n`);
+            process.exitCode = judged.ok ? 0 : 1;
+          });
+          break;
+        }
+        if (sub === "noise") {
+          out(`A/A baseline refresh (reps=${reps}, identical configs both legs)…\n`);
+          const n = runNoise({ root, repo, reps });
+          out(n.ok ? `noise = ${n.pct.toFixed(2)}% → floor ${n.floor.toFixed(2)}%\n` : `noise run failed: ${n.reason}\n`);
+          process.exitCode = n.ok ? 0 : 1;
+          break;
+        }
+        if (sub === "revert") {
+          const r = manualRevert(root);
+          out(r.ok ? `reverted ${r.knob} → ${r.to}\n` : `${r.reason}\n`);
+          process.exitCode = r.ok ? 0 : 1;
+          break;
+        }
+        if (sub === "baseline") {
+          const b = refreshBaseline(root);
+          out(b ? `baseline recalls/turn = ${b.recallsPerTurn.toFixed(3)} over ${b.sampleTurns} turns\n` : "no sessions recorded yet\n");
+          break;
+        }
+        out(`unknown selftune subcommand: ${sub} (status | verify | noise | revert | baseline)\n`);
+        process.exitCode = 2;
         break;
       }
       case "--help": case "-h": case "help": case "": out(HELP); break;

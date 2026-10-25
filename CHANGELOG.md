@@ -6,6 +6,25 @@ All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
 ### Added
 
+- **Self-tuning loop (v0.10).** The plugin now closes its own feedback loop:
+  per-session telemetry (`selftune/sessions.jsonl` — billed tokens/cost from
+  OpenCode's DB, cache resets, recall counts, duplicate calls, paging volume,
+  distill diet; plus CLI-appended `selftune/recalls.jsonl`), then — after
+  `selfLearnSessions` new sessions and ≥ `selfLearnIntervalHours` hours — one
+  cheap analysis call proposes at most one numeric knob change, inside a hard
+  clamp table (`lib/selftune.mjs` `KNOBS`), capped at a 35% step and an
+  optional `selfLearnKnobs` allowlist. Proposals apply provisionally (state +
+  ledger + live options), are verified by a marker-gated plugin-vs-plugin
+  bench run (`bench/ab-live.mjs --both-plugins` with baseline values on the
+  OFF leg), and are kept or automatically reverted; the acceptance bar is
+  marker-found-in-every-leg, equal step counts, and a paired cost delta beyond
+  the measured A/A noise floor (`selftune noise`). A recall storm while a knob
+  is provisional triggers an emergency revert without a bench. Analyst model:
+  `selflearnModel` or the session's own (free on `opencode`-tier models).
+  CLI: `babyzilla selftune status|verify|noise|revert|baseline`. Freeze switch:
+  `BABYZILLA_SELFTUNE_DISABLE=1` (the bench sets it for its own children).
+  Prompts, contract text, routing, algorithms and code are structurally
+  unreachable — the analyst moves numbers only.
 - **Character-window compression for dump-shaped outputs.** The line-based
   compressor gave up on minified JSON, bundled JS and one-line command dumps
   (a live session measured `193.4K → 189.9K tok, 2% smaller` on a 193K-token

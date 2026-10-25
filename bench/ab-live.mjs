@@ -21,6 +21,26 @@ const opt = (name, def) => {
   const i = args.indexOf(`--${name}`);
   return i === -1 ? def : args[i + 1];
 };
+// --set k=v / --setoff k=v (repeatable): arbitrary option overrides for the
+// ON leg / OFF leg. The self-tuning verifier compares plugin-vs-plugin with
+// the baseline knobs on one leg and the proposal on the other.
+const parsePairs = (name) => {
+  const out = {};
+  let i = 0;
+  while ((i = args.indexOf(`--${name}`, i)) !== -1) {
+    const pair = args[i + 1];
+    i += 2;
+    if (!pair || pair.startsWith("--")) continue;
+    const eq = pair.indexOf("=");
+    if (eq === -1) continue;
+    const k = pair.slice(0, eq);
+    let v = pair.slice(eq + 1);
+    try { v = JSON.parse(v); } catch { /* keep string */ }
+    if (typeof v === "string" && v !== "" && !Number.isNaN(Number(v))) v = Number(v);
+    out[k] = v;
+  }
+  return out;
+};
 
 const MODEL = opt("model", "ollama-cloud/deepseek-v4.1-flash:1017");
 const NFILES = Number(opt("files", 10));
@@ -119,9 +139,11 @@ function makeOffConfig() {
 }
 
 // Same isolation, but keep the plugin and inject option overrides — used to
-// sweep policy knobs (requestBudgetTokens) without touching the live config.
-function makeOnConfig(overrides) {
-  const dir = path.join(WORK, "cfg" + Object.values(overrides).join("-"), "opencode");
+// sweep policy knobs (requestBudgetTokens) without touching the live config,
+// and (with `--both-plugins`) to run plugin-vs-plugin knob comparisons where
+// the OFF leg carries the baseline values and the ON leg the proposal.
+function makeOnConfig(overrides, name = "on") {
+  const dir = path.join(WORK, `cfg-${name}-${Math.abs(hash(overrides))}`, "opencode");
   fs.mkdirSync(dir, { recursive: true });
   for (const entry of fs.readdirSync(CONFIG_SRC)) {
     if (["node_modules", "plugins", "plugins-disabled", "opencode.db"].includes(entry)) continue;
@@ -139,6 +161,13 @@ function makeOnConfig(overrides) {
   }
   fs.writeFileSync(cfgPath, raw);
   return dir;
+}
+
+function hash(obj) {
+  const s = JSON.stringify(obj);
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return h;
 }
 
 // Remove the "plugins": [...] block by brace matching, preserving everything
@@ -194,7 +223,10 @@ function runLeg(label, cwd, env) {
     {
       cwd,
       // OpenCode resolves the project from PWD, not the process cwd.
-      env: { ...process.env, ...env, PWD: cwd, INIT_CWD: cwd },
+      // BABYZILLA_SELFTUNE_DISABLE=1 freezes the plugin's self-tuning loop
+      // inside bench children — a bench must never recurse into the tuner or
+      // auto-apply state.json overrides over the explicit leg config.
+      env: { ...process.env, ...env, PWD: cwd, INIT_CWD: cwd, BABYZILLA_SELFTUNE_DISABLE: "1" },
       encoding: "utf8",
       maxBuffer: 256 * 1024 * 1024,
     },
@@ -237,20 +269,30 @@ console.log(JSON.stringify({ reqs, sum, peak: Math.max(0,...reqs.map(r=>r.in+r.c
 
 // ── main ───────────────────────────────────────────────────────────────────
 fs.mkdirSync(WORK, { recursive: true });
-const cfgOffDir = makeOffConfig();
 const BUDGET = Number(opt("budget", 0));
 const AA = opt("aa", null) === "1";
 const RATIO = opt("ratio", null);
+const BOTH = opt("both-plugins", null) === "1";
+const JSON_OUT = opt("json-out", null);
+const SETS = parsePairs("set");
+const SETOFFS = parsePairs("setoff");
 const OVER = {};
 if (BUDGET) OVER.requestBudgetTokens = BUDGET;
 if (RATIO !== null) OVER.requestTargetRatio = Number(RATIO);
-const cfgOnDir = Object.keys(OVER).length ? makeOnConfig(OVER) : null;
+Object.assign(OVER, SETS);
+// plugin-vs-plugin mode: the OFF leg keeps the plugin too, with baseline
+// values (--setoff) instead of stripping it entirely.
+const OVEROFF = BOTH ? {} : null;
+if (BOTH) Object.assign(OVEROFF, SETOFFS);
+const cfgOffDir = BOTH ? makeOnConfig(OVEROFF, "off") : makeOffConfig();
+const cfgOnDir = Object.keys(OVER).length ? makeOnConfig(OVER, "on") : null;
 
 const REPS = Number(opt("reps", 1));
 console.log(`\nfixture  ${NFILES} files x ${KB}KB${DUMP ? " (single-line JSON dumps)" : ""} · marker ${marker} in ${markerFile}.txt`);
 console.log(`model    ${MODEL}`);
 console.log(`reps     ${REPS}`);
-console.log(`on-opts  ${JSON.stringify(OVER)}`);
+console.log(`mode     ${AA ? "A/A (plugin-less twice)" : BOTH ? "plugin-vs-plugin (both legs keep the plugin)" : "off vs on"}`);
+console.log(`on-opts  ${JSON.stringify(OVER)}${BOTH ? `\noff-opts ${JSON.stringify(OVEROFF)}` : ""}`);
 console.log(`work     ${WORK}\n`);
 
 const results = [];
@@ -272,7 +314,9 @@ for (let rep = 1; rep <= REPS; rep++) {
         ? runLeg("off", dirOff, { XDG_CONFIG_HOME: path.dirname(cfgOffDir) })
         : runLeg("on", dirOn, AA
             ? { XDG_CONFIG_HOME: path.dirname(cfgOffDir) }
-            : cfgOnDir ? { XDG_CONFIG_HOME: path.dirname(cfgOnDir) } : {});
+            : BOTH
+              ? { XDG_CONFIG_HOME: path.dirname(cfgOnDir ?? cfgOffDir) }
+              : cfgOnDir ? { XDG_CONFIG_HOME: path.dirname(cfgOnDir) } : {});
   }
   const off = run.off;
   const on = run.on;
@@ -351,6 +395,34 @@ for (const r of results) {
   );
 }
 console.log(`  artefacts: ${WORK}\n`);
+
+// ── machine payload (self-tuning verifier consumes this) ───────────────────
+const payload = {
+  model: MODEL,
+  reps: REPS,
+  files: NFILES,
+  kb: KB,
+  dump: DUMP,
+  aa: AA,
+  bothPlugins: BOTH,
+  over: OVER,
+  overoff: OVEROFF,
+  marker: { off: results.filter((r) => r.hitOff).length, on: results.filter((r) => r.hitOn).length },
+  results,
+  medians: {
+    costOff: med(results.map((r) => r.off.sum.cost)),
+    costOn: med(results.map((r) => r.on.sum.cost)),
+    promptOff: med(results.map((r) => prompts(r.off))),
+    promptOn: med(results.map((r) => prompts(r.on))),
+  },
+};
+const jsonLine = `##BENCH-JSON## ${JSON.stringify(payload)}`;
+console.log(jsonLine);
+if (JSON_OUT) {
+  try { fs.writeFileSync(JSON_OUT, JSON.stringify(payload, null, 2)); } catch (e) {
+    console.error(`json-out write failed: ${e.message}`);
+  }
+}
 
 function dupReads(leg) {
   const seen = new Map();

@@ -40,6 +40,8 @@ import { libraryIndex } from "./lib/library.mjs";
 import { anchorModule, ANCHOR_KIND } from "./lib/anchor.mjs";
 import { renderModules } from "./lib/eval.mjs";
 import { assemblePack } from "./lib/pack.mjs";
+import { createSelftune, applyOverrides as applySelftuneOverrides, readState as readSelftuneState, disabledReason as selftuneDisabled } from "./lib/selftune.mjs";
+import { SELF_LEARN_INSTRUCTIONS, normalizeModelRef } from "./lib/analyze.mjs";
 
 const execAsync = promisify(execCb);
 const execFileAsync = promisify(execFileCb);
@@ -86,6 +88,11 @@ const compactionInFlight = new Map();
 const proactiveRequested = new Map();
 // Sessions that already got the one-time compression contract note.
 const contractSent = new Set();
+
+// Self-tuning loop (v0.10) — telemetry, analysis calls and knob applies. One
+// instance per plugin process; null when disabled (selfLearn:false or
+// BABYZILLA_SELFTUNE_DISABLE=1, which the bench sets for its own children).
+let SELFTUNE = null;
 
 // What the model is told when paging first happens. The point is to make the
 // rules predictable: the agent should plan around compression, not discover it.
@@ -270,6 +277,28 @@ const defaults = {
   proactiveCompactMinTokens: 120_000,
   // minimum gap between two proactive compactions for the same session.
   proactiveCompactCooldownMs: 10 * 60_000,
+  // Self-tuning loop: telemetry is always on (file appends only); the analysis
+  // cycle additionally needs `selfLearnSessions` sessions of new experience
+  // and ≥ selfLearnIntervalHours hours since the last call, proposes at most
+  // one numeric knob inside the KNOB clamp table, and only after a
+  // marker-gated bench run confirms it does the change become permanent
+  // (otherwise it is reverted). Set selfLearnKnobs to an array to restrict
+  // the tunables, or selfLearn:false to disable everything but telemetry.
+  selfLearn: true,
+  // model for the analysis call; null = the session's own model (free-tier
+  // sessions distill through the session-scoped route, so this stays free).
+  selflearnModel: null,
+  // sessions of new experience (≥3 turns each) before an analysis may run.
+  selfLearnSessions: 4,
+  // minimum hours between two analyses — the loop cadence, not a rate limit.
+  selfLearnIntervalHours: 20,
+  // a provisional change lives at least this many days before its bench runs
+  // (live signals need time to accumulate), and benches run at most once per
+  // this interval.
+  selfLearnVerifyDays: 7,
+  selfLearnVerifyGraceHours: 24,
+  // null = every knob in lib/selftune.mjs KNOBS; array = explicit allowlist.
+  selfLearnKnobs: null,
 };
 
 function log(...args) {
@@ -798,8 +827,10 @@ async function compressOlderToolResults(ctx, sessionID, opts) {
       ? (opts.toolResultMinTokens ?? 4000)
       : (opts.toolResultEagerTokens ?? opts.toolResultMinTokens ?? 4000);
     const ref = writePage(ROOT, textOfPart(part), { sessionID });
-    n += compressToolResult(part, { ...opts, toolResultMinTokens: min }, (tool, before, after) =>
-      log(`tool result compressed: ${tool} ${fmt(before)}→${fmt(after)} tok`), ref);
+    n += compressToolResult(part, { ...opts, toolResultMinTokens: min }, (tool, before, after) => {
+      try { SELFTUNE?.noteCompression(sessionID, tool, before, after); } catch { /* telemetry only */ }
+      log(`tool result compressed: ${tool} ${fmt(before)}→${fmt(after)} tok`);
+    }, ref);
   }
   return n;
 }
@@ -808,6 +839,19 @@ export default {
   id: "contextpack",
   setup: async (ctx) => {
     const opts = { ...defaults, ...(ctx.options ?? {}) };
+
+    // ---- self-tuning loop ---------------------------------------------------
+    // Overrides from a verified (currently pending) proposal are applied to
+    // the options object BEFORE any hook registers, so thresholds read them
+    // everywhere. Disabled runs (bench children set the env var; or
+    // selfLearn:false) skip both overrides and the loop — bench legs are
+    // always plain config as given.
+    if (!selftuneDisabled(opts)) {
+      try {
+        applySelftuneOverrides(opts, readSelftuneState(ROOT), log);
+      } catch (e) { log("selftune override load skipped:", e?.message ?? e); }
+      SELFTUNE = createSelftune({ root: ROOT, opts, log });
+    }
 
     // ---- journal capture (stats + raw bulk record) -------------------------
     if (typeof ctx.tool?.hook === "function") {
@@ -818,6 +862,7 @@ export default {
           if (!sid) return;
           const out = typeof event?.result === "string" ? event.result : deepText(event?.result, 0);
           const err = event?.error?.message ?? (event?.error ? String(event.error) : "");
+          try { SELFTUNE?.noteToolUse(sid, toolName, out || err); } catch { /* telemetry only */ }
           void writeJournal(sid, {
             t: Date.now(),
             tool: toolName,
@@ -1023,6 +1068,7 @@ export default {
           const prevPack = prevIdx && (await readModules(prevIdx));
           const prompt = distillationPrompt(prevPack, reduced.text);
           log(`distilling with ${model.providerID}/${model.id} (fed ~${fmt(estTokens(reduced.text))} tokens of ${fmt(rawTokens)})…`);
+          try { SELFTUNE?.noteDistill(event?.sessionID, estTokens(reduced.text), rawTokens); } catch { /* telemetry only */ }
           let modules = null;
           for (let attempt = 1; attempt <= 2 && !modules; attempt++) {
             const retryNote = attempt > 1 ? "\n\nIMPORTANT: your previous reply was not parseable. Output ONLY newline-delimited JSON objects per line, exactly as instructed. No thinking, no fences." : "";
@@ -1119,6 +1165,28 @@ export default {
           }
           prompt.files ??= [];
           if (!Array.isArray(prompt.files)) return;
+          // Self-tuning loop (v0.10). The synchronous part here is cheap file
+          // IO; the analysis cycle runs fire-and-forget behind an in-process
+          // mutex — never inside a request and never blocking the turn.
+          if (SELFTUNE) {
+            try {
+              const analysisModel = normalizeModelRef(opts.selflearnModel) ?? sessionModelIdentity(event);
+              const viaMode = opts.distillVia ?? "auto";
+              const preferSession = viaMode === "session" ||
+                (viaMode === "auto" && (!analysisModel || analysisModel.providerID === "opencode"));
+              void SELFTUNE.onPrompt({
+                sid,
+                model: analysisModel,
+                callText: ({ prompt: analysisPrompt }) => distillText(ctx, {
+                  sessionID: sid,
+                  model: analysisModel,
+                  prompt: SELF_LEARN_INSTRUCTIONS + "\n\n" + analysisPrompt,
+                  preferSession,
+                  allowFallback: viaMode !== "text",
+                }),
+              }).catch((e) => log("selftune hook skipped:", e?.message ?? e));
+            } catch (e) { log("selftune hook skipped:", e?.message ?? e); }
+          }
           // Vision auto-routing (opt-out via visionRoute:false): before any
           // module machinery — image prompts need the nudge even when the
           // pack would bail. One synthetic note per prompt, never a loop.

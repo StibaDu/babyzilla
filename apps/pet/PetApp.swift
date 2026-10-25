@@ -444,7 +444,11 @@ final class PetController: NSObject {
     private var lastLineAt = Date.distantPast
     private var lastBlink = Date()
     private var movingFrame: String? = nil
-    private var walkClock: TimeInterval = 0
+    /// True only while the pet actually moved this tick. Walking in the air is a
+    /// bug: a bubble freezes the body, so the feet must freeze with it.
+    private var isWalking = false
+    /// Position inside one walk cycle, advanced by distance rather than time.
+    private var walkPhase: Double = 0
     private var walkLift: CGFloat = 0
     private var walkSquash: CGFloat = 0
     private var lastRendered = ""
@@ -589,16 +593,23 @@ final class PetController: NSObject {
         bubbleView.needsDisplay = true
     }
 
+    /// One walk cycle carries the pet this far. Tied to the sprite size, so the
+    /// cadence reads the same at any scale: a stride is half a body wide.
+    private var stride: CGFloat { max(8, CGFloat(spriteSize * config.scale) * 0.5) }
+
     private func stepMovement(dt: Double, now: Date) {
+        let wasWalking = isWalking
+        isWalking = false
         guard !dragging else { return }
         // Stop and react, and stay put while a bubble is on screen: walking away
         // mid-sentence reads like the pet is not listening.
         guard Date() >= expressionUntil else { return }
         if bubbleView.alpha > 0.02, Date() < bubbleUntil { return }
         if active { return }
+        let before = x
         if let target = targetX {
             let dx = target - x
-            let speed: CGFloat = 46
+            let speed: CGFloat = 74
             let step = min(abs(dx), speed * CGFloat(dt))
             x += dx > 0 ? step : -step
             facingRight = dx > 0
@@ -613,6 +624,14 @@ final class PetController: NSObject {
             vx *= 0.90
             if abs(vx) < 2 { vx = 0 }
         }
+        // The animation is a consequence of the displacement, never an intention:
+        // blocked movement means a still pet, not a dino running on the spot.
+        let moved = abs(x - before)
+        isWalking = moved > 0.02
+        guard isWalking else { return }
+        if !wasWalking { walkPhase = 0 }
+        walkPhase += Double(moved / stride)
+        walkPhase -= floor(walkPhase)
     }
 
     private func stepFall(dt: Double) {
@@ -734,16 +753,14 @@ final class PetController: NSObject {
             walkSquash = 0
         } else if lift > 0.5 || vy > 40 {
             movingFrame = vy > 120 ? "loco-hop-1" : "loco-hop-2"
-        } else if targetX != nil || abs(vx) > 2 {
+        } else if isWalking {
             // It hops, it does not walk. The art has no stride — the legs are
             // planted in every front-view sprite, so a "walk cycle" just skates.
             // A four-beat hop (crouch, rise, apex, land) keeps the feet off the
-            // ground for most of each step, and the cadence follows distance so
-            // the ground never slides under it.
+            // ground for most of each step, and the beat is driven by the distance
+            // covered, so the ground never slides under it.
             let side = CGFloat(spriteSize * config.scale)
-            let hopTime = max(0.30, (side * 0.22) / max(25, abs(vx)))
-            walkClock += dt
-            switch Int(walkClock / (hopTime / 4)) % 4 {
+            switch Int(walkPhase * 4) % 4 {
             case 0: // crouch, loaded
                 movingFrame = "loco-hop-1"; walkLift = 0; walkSquash = 0.5
             case 1: // push off, standing tall
@@ -778,7 +795,7 @@ final class PetController: NSObject {
             // the pack's own expression map wins; then its jump for excitement
             anim = pack.expressions?[expressionId]
                 ?? (PackData.energetic.contains(expressionId) ? "jump" : "idle")
-        } else if targetX != nil || abs(vx) > 2 {
+        } else if isWalking {
             anim = "walk"
         } else {
             anim = "idle"
@@ -787,12 +804,20 @@ final class PetController: NSObject {
             // restart on change so a walk always begins on its first frame
             packAnim = anim
             packClock = 0
+            if anim == "walk" { walkPhase = 0 }
         }
         packClock += dt
         let frames = pack.animations[anim] ?? pack.animations["idle"] ?? []
         guard !frames.isEmpty else { return }
-        let fps = max(1.0, pack.fps?[anim] ?? 8)
-        let id = frames[Int(packClock * fps) % frames.count]
+        let id: String
+        if anim == "walk" {
+            // One cycle per stride of floor covered, not per second of wall clock:
+            // this is what stops the legs outrunning the ground.
+            id = frames[Int(walkPhase * Double(frames.count)) % frames.count]
+        } else {
+            let fps = max(1.0, pack.fps?[anim] ?? 8)
+            id = frames[Int(packClock * fps) % frames.count]
+        }
         if id != lastRendered {
             lastRendered = id
             currentImage = lib.image(id)

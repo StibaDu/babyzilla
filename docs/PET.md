@@ -93,10 +93,13 @@ writes them to `~/.opencode/pet/packs/`, and the repo ignores
 ## What it does
 
 - **Lives on the floor.** It sits above the Dock (`visibleFrame`, not the raw
-  screen), wanders, pauses, turns at the edges, and hops. While it travels it
-  *hops* rather than walks: the front-view sprites have planted legs, so a walk
-  cycle can only skate. The hop cadence follows distance, not the clock, so the
-  ground never slides under it.
+  screen), wanders, pauses, turns at the edges, and hops. With the built-in art it
+  *hops* rather than walks — those front-view sprites have planted legs, so a walk
+  cycle can only skate — while a pack that ships a walk gets its own walk cycle.
+  Either way the cadence is driven by **distance travelled, not by the clock**:
+  one cycle per stride, so the feet can never skate under a body that is not
+  moving. If a bubble or a tool call freezes the pet mid-stride, the animation
+  freezes with it (it stands and listens) instead of running on the spot.
 - **Reacts.** A prompt makes it listen, a tool call changes its face per tool,
   a failure makes it wince, compaction has it squeezing something, an available
   update makes it hold up a gift.

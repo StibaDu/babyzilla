@@ -2,6 +2,22 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.23.0] — 2026-10-25
+
+### Fixed
+
+- **The pet no longer walks on the spot.** Two separate causes, both real: a bubble
+  or an in-flight tool call froze the body while `targetX` stayed set, so the pack
+  kept playing `walk` for the rest of the session; and the walk cycle ran on the
+  clock (12 fps) while the pet crept at 46 px/s, so the legs outran the ground even
+  when it was moving. Walking is now a consequence of displacement — the animation
+  only plays while the body actually moved this tick — and the walk cadence advances
+  by **distance**, one cycle per stride (half a body width), so the feet stay
+  planted on the floor they cover. Walking speed is 74 px/s instead of 46, which
+  matches that stride.
+- Reactions still play standing still: a dino that keeps marching while it talks to
+  you reads as not listening.
+
 ## [0.22.0] — 2026-10-25
 
 ### Added

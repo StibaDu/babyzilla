@@ -216,7 +216,9 @@ test("buildSummary renders state, decisions, and cold module pointers", () => {
   assert.match(out, /raw ~10\.0K tokens → pack ~1\.0K tokens, 3 modules/);
   assert.match(out, /## CURRENT STATE\nCURRENT/);
   assert.match(out, /## DECISIONS[\s\S]*DECIDED/);
-  assert.match(out, /file:\/\/\/p\/code-hooks\.md/);
+  // Pointer root resolution is platform-dependent (absolute fixture paths
+  // resolve against cwd on win32); assert the URI form and the module name.
+  assert.match(out, /file:\/\/\/\S*p\/code-hooks\.md/);
   assert.match(out, /triggers: hook, api/);
 });
 

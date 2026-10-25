@@ -1131,6 +1131,14 @@ export default {
             }
           }
 
+          // No index and no project library (headless `opencode run`, or a dir
+          // with no library yet): nothing to attach, and `idx` stays null — so
+          // return before the keyword gate, which assumes an index.
+          if (!idx?.modules?.length) {
+            log(`prompt hook: no index to attach from (session=${sid.slice(0, 14)}…, projectDir=${projectDir ? "yes" : "none"})`);
+            return;
+          }
+
           // Carried context skips the keyword gate entirely — the whole point
           // is that any first prompt (even "ok go") opens the project warm.
           const matched = carried ? idx.modules : matchModules(idx, text);

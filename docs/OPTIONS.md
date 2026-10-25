@@ -184,7 +184,52 @@ babyzilla selftune baseline            # recompute the emergency-revert baseline
 babyzilla update [--check] [--yes] [--json]
                                        daily cached update check; asks before
                                        pulling (git checkout only)
+babyzilla setup [--yes] [--dry-run] [--check] [--json] [--config PATH]
+                                       guided setup: plugin registration and the
+                                       permissions BabyZilla needs
 ```
+
+## Setup wizard
+
+`babyzilla setup` reads the real OpenCode config (`$OPENCODE_CONFIG`, else
+`~/.config/opencode/opencode.json(c)`, else `~/.opencode/…`), reports what is
+missing, and — after showing the exact changes and asking — writes them with a
+`.bak-<timestamp>` next to the file.
+
+It can change only these things:
+
+| Change | Why |
+|---|---|
+| `plugins[]` entry for BabyZilla (or `plugin[]` in the legacy tuple form) | the plugin has to be loaded at all |
+| `permission.bash["babyzilla recall *"]`, `…["babyzilla retrieve *"]` = `allow` | paged-out output is only recoverable through these; without it every recall prompts (or is denied) |
+| `permission.external_directory["~/.opencode/contextpacks/**"]` = `allow` | lets the agent open a module file by absolute path; packs live outside the project |
+| `options.selfLearn`, `options.checkUpdates` | the two switches people actually turn off |
+
+Nothing else is touched. Comments, ordering and formatting survive (the wizard
+edits byte spans with `lib/jsonc.mjs`, it does not re-serialize the file), and
+the new rules are **appended**, because OpenCode evaluates permission rules
+last-match-wins — an allow only wins if it comes after the broad `"*": "ask"`.
+
+If your config uses the newer ordered form (`permissions: [{ action, resource,
+effect }]`), the same two rules are appended there instead.
+
+Flags: `--yes` (recommended answers, no prompts), `--dry-run` (print, write
+nothing), `--check` (detect + self-test only), `--json` (machine output; never
+prompts and never writes without `--yes`), `--config PATH`, `--no-recall`,
+`--no-external`.
+
+The self-test actually exercises the install: data-dir write, a compression
+round-trip on synthetic output (must shrink and carry a recall handle), a page
+write/read round-trip, and a `PATH` check for the CLI. It is offline.
+
+A `deny` is never silently loosened: the wizard keeps it as `"*": "deny"` and
+adds only the two narrow allows, and says so in the summary.
+
+Defaults are respected, not assumed: OpenCode allows `bash` when no permission
+is configured, so a fresh config needs only the `external_directory` rule (that
+one defaults to `ask`). The wizard reports what is *effectively* true — your
+action rules first, then a global `"*"` rule, then OpenCode's default — instead
+of inventing a gap.
 
 ## Update check
 

@@ -115,6 +115,7 @@ npm i -g --allow-git=all git+https://github.com/StibaDu/babyzilla.git
 # or, with no npm flags at all (works on every npm version):
 #   git clone https://github.com/StibaDu/babyzilla.git ~/.local/src/babyzilla
 #   npm i -g ~/.local/src/babyzilla
+babyzilla setup    # guided setup: registers the plugin, grants the two permissions it needs
 babyzilla stats    # aggregate savings; also: show / verify / eval / prune
 babyzilla update   # check for a newer release (daily, cached); asks before updating
 babyzilla cost     # provider-side spend from OpenCode's usage records
@@ -124,6 +125,30 @@ babyzilla recall 8c1f0b7a9d2e4c15   # exact original behind a paging marker / le
 babyzilla recall 8c1f0b7a9d2e4c15:120-180   # just those lines
 babyzilla retrieve src/app.js:120-160   # exact span, numbered
 ```
+
+### Setup, and the permissions that actually matter
+
+```sh
+babyzilla setup           # asks a few questions, shows the diff, writes with a backup
+babyzilla setup --check   # report only: what is missing, plus a live self-test
+babyzilla setup --yes     # accept the recommended answers (scripts)
+```
+
+The wizard registers the plugin if it is missing, offers the two permissions
+BabyZilla needs, and proves the pieces work on this machine (data dir,
+compression, recall round-trip, CLI on `PATH`).
+
+| Permission | Why it matters | If you say no |
+|---|---|---|
+| `bash` → `babyzilla recall *`, `babyzilla retrieve *` | paged-out tool output is only recoverable through these commands | every recall prompts you; in a `deny` setup the paged detail is unreachable |
+| `external_directory` → `~/.opencode/contextpacks/**` | packs and recall pages live outside the project | the agent cannot open a module file by path (recall via bash still works) |
+
+That is the whole list. BabyZilla does **not** need `webfetch`, `websearch`,
+`edit`, or broad `bash`: it never edits your files and runs no model tools of
+its own. The wizard writes only its own keys, appends rules so they win
+(`last match wins` in OpenCode), keeps a `.bak-<timestamp>`, and leaves a `deny`
+in place as `"*": "deny"` with a narrow exception rather than silently
+loosening it.
 
 ### Updates
 

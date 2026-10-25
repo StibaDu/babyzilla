@@ -2,6 +2,46 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.13.0] — 2026-10-25
+
+### Added
+
+- **`babyzilla setup` — a wizard for the things that actually break an
+  install.** Reads the real OpenCode config, reports what is missing, shows the
+  exact changes, and writes them with a `.bak-<timestamp>` only after you say
+  yes. It can change exactly four things:
+  - the `plugins[]` entry (registers BabyZilla; supports the v2 object form and
+    the legacy tuple form);
+  - `permission.bash` allows for `babyzilla recall *` / `babyzilla retrieve *`
+    — without these, every recovery of paged-out output prompts, and under a
+    `deny` the detail is unreachable;
+  - `permission.external_directory` for `~/.opencode/contextpacks/**`, so the
+    agent can open a module file by path;
+  - the `selfLearn` / `checkUpdates` switches.
+  No `webfetch`, `websearch`, `edit` or broad `bash` is requested.
+- **Comment-preserving config editing** (`lib/jsonc.mjs`): parse JSONC with
+  byte spans, splice only the edited values. Comments, key order and formatting
+  survive, and new permission rules are appended — required because OpenCode
+  evaluates them last-match-wins, so an allow must come after the broad rule it
+  is an exception to. A deliberate `"*": "deny"` is preserved as the wildcard
+  and called out, never silently loosened.
+- **Self-test in the wizard**: data-dir write, a real compression round-trip
+  (must shrink and carry a recall handle), a page write/read round-trip, and a
+  `PATH` check. Offline, no model calls. `--check` runs just this.
+- Flags: `--yes`, `--dry-run`, `--check`, `--json` (never prompts, never writes
+  without `--yes`), `--config PATH`, `--no-recall`, `--no-external`. Non-TTY
+  runs print the plan instead of hanging on a prompt.
+- The newer ordered `permissions: [{action, resource, effect}]` form is
+  detected and gets appended allow rules instead of a `permission` object.
+
+### Notes
+
+- A one-line config is pretty-printed instead of spliced into (it has no
+  comments to preserve, and splicing newlines into one line is unreadable).
+- 23 new tests (239 total): the JSONC editor on comments/trailing commas/CRLF,
+  rule resolution with wildcards and last-match-wins, the plan for every config
+  shape, idempotency, backups, and two end-to-end CLI runs.
+
 ## [0.12.0] — 2026-10-25
 
 ### Added

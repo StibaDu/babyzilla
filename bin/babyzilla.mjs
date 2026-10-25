@@ -17,6 +17,9 @@ import {
   applyUpdate, disabled as updatesDisabled, UPDATE_INTERVAL_MS, RETRY_AFTER_MS,
 } from "../lib/updates.mjs";
 import {
+  inspectConfig, planSetup, probe, applyConfig, locateConfig, configCandidates,
+} from "../lib/setup.mjs";
+import {
   renderStatus, runVerify as runVerifyBench, runReplayBench, verifyPlan, resolveVerify, runNoise,
   refreshBaseline, manualRevert, readState as readSelftuneState, noteRecallRendered,
   buildSummaryData,
@@ -774,6 +777,10 @@ Usage:
   babyzilla update [--check] [--yes] [--json]
                                     daily update check (cached 24h); with consent
                                     runs 'git pull --ff-only' on a checkout
+  babyzilla setup [--yes] [--dry-run] [--check] [--json] [--config PATH]
+                                    guided setup: registers the plugin and grants
+                                    the permissions it needs (recall, pack reads);
+                                    writes a backup and only touches its own keys
   babyzilla selftune [status|verify|noise|revert|baseline] [--live] [--reps N] [--json]
                                     self-tuning loop state; verify replays the pipeline
                                     deterministically against the pending proposal
@@ -785,6 +792,16 @@ Environment:
   BABYZILLA_ROOT=<dir>              data root (default ~/.opencode/contextpacks)
   OPENCODE_DB=<path>                OpenCode database for babyzilla cost/recall
 `;
+
+function writeOne(file, text, exists) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (!exists) {
+    fs.writeFileSync(file, text, { mode: 0o600 });
+    return { file, backup: null };
+  }
+  const res = applyConfig({ file, text });
+  return { file, backup: res.backup };
+}
 
 function pkgVersion() {
   return JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
@@ -818,6 +835,55 @@ function maybeUpdateNotice(cmd, rest, out) {
   if (!shouldNotify(cache, Date.now(), "cliNoticeTs")) return;
   out(`\n${renderUpdateNotice(cache)}\n`);
   markNotified(root, Date.now(), "cliNoticeTs");
+}
+
+async function ask(question, fallback = true) {
+  if (!process.stdin.isTTY) return fallback;
+  const readline = await import("node:readline/promises");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const hint = fallback ? "[Y/n]" : "[y/N]";
+    const answer = (await rl.question(`${question} ${hint} `)).trim().toLowerCase();
+    if (!answer) return fallback;
+    return answer === "y" || answer === "yes";
+  } catch {
+    process.stdout.write("\n");
+    return fallback;
+  } finally {
+    rl.close();
+  }
+}
+
+const mark = (ok) => (ok ? `${c(GREEN)}✓${c(RESET)}` : `${c(YELLOW)}!${c(RESET)}`);
+
+function renderProbes(checks) {
+  const lines = [`\n${c(BOLD)}checks${c(RESET)}`];
+  for (const chk of checks) lines.push(`  ${mark(chk.ok)} ${chk.id.padEnd(12)} ${c(DIM)}${chk.detail}${c(RESET)}`);
+  return lines.join("\n") + "\n";
+}
+
+function renderSetup({ file, exists, info, plan, checks, wrote, next }) {
+  const lines = [];
+  lines.push(`${c(BOLD)}BabyZilla setup${c(RESET)}`);
+  lines.push(`  config      ${file}${exists ? "" : ` ${c(DIM)}(will be created)${c(RESET)}`}`);
+  lines.push(`  data root   ${packRoot()}`);
+  lines.push(`  plugin      ${info.registered ? info.plugin.spec : `${c(YELLOW)}not registered${c(RESET)}`}`);
+  lines.push(`  recall      ${info.permission.recallAllowed ? "allowed" : `bash ${info.permission.recallEffect === "unset" ? "asks per call" : info.permission.recallEffect}`}`);
+  lines.push(`  pack reads  ${info.permission.externalAllowed ? "allowed" : "external_directory asks"}`);
+  lines.push(`  self-tune   ${info.options.selfLearn === false ? "off" : "on"}${info.options.selfLearn === undefined ? " (default)" : ""}`);
+  lines.push(`  updates     ${info.options.checkUpdates === false ? "off" : "daily check on"}`);
+  if (plan?.changes?.length) {
+    lines.push(`\n${c(BOLD)}planned changes${c(RESET)}`);
+    for (const ch of plan.changes) lines.push(`  · ${ch.detail}`);
+  } else if (plan) {
+    lines.push(`\n${c(GREEN)}config already complete${c(RESET)}`);
+  }
+  for (const w of plan?.warnings ?? []) lines.push(`  ${mark(false)} ${w}`);
+  for (const m of plan?.manual ?? []) lines.push(`  ${mark(false)} ${m}`);
+  if (checks?.length) lines.push(renderProbes(checks));
+  if (wrote) lines.push(`${c(GREEN)}wrote${c(RESET)} ${wrote.file} ${c(DIM)}(backup: ${wrote.backup ?? "none — new file"})${c(RESET)}`);
+  if (next?.length) lines.push(`\n${c(BOLD)}next${c(RESET)}\n${next.map((n) => `  · ${n}`).join("\n")}`);
+  return lines.join("\n") + "\n";
 }
 
 async function confirm(question) {
@@ -959,6 +1025,100 @@ function main() {
         }
         out(`unknown selftune subcommand: ${sub} (status | verify | noise | revert | baseline)\n`);
         process.exitCode = 2;
+        break;
+      }
+      case "setup": {
+        const asJson = rest.includes("--json");
+        const assumeYes = rest.includes("--yes") || rest.includes("-y");
+        const dryRun = rest.includes("--dry-run");
+        const checkOnly = rest.includes("--check");
+        const explicit = rest.includes("--config") ? rest[rest.indexOf("--config") + 1] : null;
+        void (async () => {
+          const file = explicit ? path.resolve(explicit) : (locateConfig() ?? configCandidates()[0]);
+          const exists = fs.existsSync(file);
+          let text = exists
+            ? fs.readFileSync(file, "utf8")
+            : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
+          const info = inspectConfig(text);
+          const root = packRoot();
+
+          const answers = {
+            registerPlugin: assumeYes ? true : null,
+            allowRecall: !rest.includes("--no-recall"),
+            allowExternal: !rest.includes("--no-external"),
+            selfLearn: null,
+            checkUpdates: null,
+          };
+
+          if (!assumeYes && !checkOnly && process.stdin.isTTY) {
+            out(`${c(BOLD)}BabyZilla setup${c(RESET)} ${c(DIM)}${file}${c(RESET)}\n\n`);
+            if (!info.registered) answers.registerPlugin = await ask("Register BabyZilla in this config?", true);
+            if (!info.permission.recallAllowed) {
+              answers.allowRecall = await ask(
+                `Allow \`babyzilla recall\`/\`retrieve\` without approval? (${info.permission.recallEffect === "unset" ? "bash currently asks per call" : `bash is ${info.permission.recallEffect}`})`,
+                true,
+              );
+            }
+            if (!info.permission.externalAllowed) {
+              answers.allowExternal = await ask("Allow the agent to read the pack directory directly?", true);
+            }
+            answers.selfLearn = await ask("Keep the self-tuning loop enabled?", info.options.selfLearn !== false);
+            answers.checkUpdates = await ask("Check for updates daily?", info.options.checkUpdates !== false);
+          }
+
+          const plan = checkOnly ? null : planSetup({ text, root, answers });
+          const checks = probe({ root });
+
+          // Writing requires an explicit path: --yes, or an interactive TTY
+          // confirmation. `--json` never prompts and never writes on its own.
+          let wrote = null;
+          let declined = false;
+          if (plan?.changed && !dryRun) {
+            if (assumeYes) {
+              wrote = writeOne(file, plan.text, exists);
+            } else if (!asJson && process.stdin.isTTY) {
+              if (await ask("Write these changes?", true)) wrote = writeOne(file, plan.text, exists);
+              else declined = true;
+            }
+          }
+
+          const next = wrote ? ["restart opencode so the plugin reloads"] : [];
+          if (asJson) {
+            out(JSON.stringify({
+              config: { file, exists },
+              detected: {
+                registered: info.registered,
+                spec: info.plugin?.spec ?? null,
+                recallAllowed: info.permission.recallAllowed,
+                recallEffect: info.permission.recallEffect,
+                externalAllowed: info.permission.externalAllowed,
+                permissionForm: info.permission.form,
+                options: info.options,
+              },
+              plan: plan ? { changes: plan.changes, warnings: plan.warnings, manual: plan.manual } : null,
+              wrote,
+              probes: checks,
+              next,
+            }, null, 2) + "\n");
+            return;
+          }
+
+          out(renderSetup({ file, exists, info, plan, checks, wrote, next }));
+
+          if (checkOnly) return;
+          if (!plan.changed) return;
+          if (dryRun) {
+            out(`\n${c(DIM)}--dry-run: nothing written. Re-run without it to apply.${c(RESET)}\n`);
+            return;
+          }
+          if (declined) { out("not written\n"); return; }
+          if (!wrote) {
+            out(`\n${c(DIM)}nothing written (no TTY). Re-run with --yes to apply.${c(RESET)}\n`);
+          }
+        })().catch((e) => {
+          out(`${c(YELLOW)}setup error:${c(RESET)} ${e?.message ?? e}\n`);
+          process.exitCode = 1;
+        });
         break;
       }
       case "update": {

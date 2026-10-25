@@ -2,6 +2,44 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.15.0] — 2026-10-25
+
+### Added
+
+- **Sprite packs: a second pet.** A pack is another look for the same pet — same
+  reactions, bubbles and event bridge, different art. Packs carry whole
+  animations (`idle`, `walk`, `jump`) rather than one sprite per expression,
+  which is the shape a hand-drawn or third-party sheet actually has, and the only
+  way to get a real walk cycle: legs move when the sheet was drawn for it. The app
+  picks an animation by state — idle when still, walk while travelling, jump when
+  the pet is excited or airborne.
+- `pet/pack.mjs`: build a pack from a grid sheet (`--cell`, `--crop`, `--rows
+  idle,walk,jump`, `--upscale`). Cells are copied cell-relative, so a jump that
+  rises in the sheet rises in the app. `pack.json` records animations, frame rate,
+  canvas size, default scale, source and license.
+- `babyzilla pet packs | use <name> | start | stop | --help`. Switching rebuilds
+  the windows and sprite library in place and keeps the position. `pet install`
+  copies installed packs; the right-click menu has the same switch under **Pet**.
+
+### Fixed
+
+- **A config missing one key reset everything.** `PetConfig` used the synthesized
+  initializer, so a hand-edited `{"pack": "lil-dino"}` threw and the loader fell
+  back to defaults — losing the pack, the size and the saved position at once. It
+  now decodes field by field.
+- **The single-instance guard could be fooled by a stale pid**, letting a second
+  pet run against the same state dir (and leaving a stale `pet.pid` behind). It
+  now holds a `flock` for the process lifetime, which the kernel releases however
+  the pet dies, and `pet.pid` is removed on exit.
+
+### Notes
+
+- Pack art built from someone else's sprite sheet is not ours to redistribute:
+  the builder writes packs to `~/.opencode/pet/packs/` and the repo ignores
+  `assets/pet/packs/`. Only the builder ships.
+- 2 new tests (252 total): the pack builder against a synthetic sheet, and the
+  `packs` / `use` CLI.
+
 ## [0.14.2] — 2026-10-25
 
 ### Changed

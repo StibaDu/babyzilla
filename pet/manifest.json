@@ -2531,6 +2531,98 @@
       },
       "ms": 30493,
       "at": "2026-10-25T19:47:52.867Z"
+    },
+    "loco-side-1": {
+      "seed": 7,
+      "prompt": "a cute baby Godzilla kaiju hatchling, chunky pear shaped body with a big round belly, mint green skin, cream coloured belly with four horizontal plate ridges, a row of dark teal triangular dorsal plates along its back and thick tail, short stubby legs with three toes, two small arms, big round white eyes with amber irises and large black pupils, tiny white fangs, soft pink blush cheeks, side view profile facing right, full body, standing upright on two feet, near leg stepping forward, foot flat on the ground, far leg extended back with the heel lifted, arms swinging, tail out behind for balance, 16-bit pixel art, SNES era game sprite, hard 3 tone cel shading, chunky readable shapes, bold 2 pixel black outline, limited 16 colour palette, flat colours, no gradients, no anti-aliasing, isolated on a solid pure magenta background",
+      "ref": null,
+      "strength": null,
+      "raw": "assets/pet/raw/loco-side-1.png",
+      "sprite": "assets/pet/sprites/loco-side-1.png",
+      "stats": {
+        "colors": 12,
+        "opaquePct": 47.3,
+        "bbox": {
+          "x0": 5,
+          "y0": 4,
+          "x1": 59,
+          "y1": 61,
+          "w": 55,
+          "h": 58
+        },
+        "borderClean": true
+      },
+      "ms": 29386,
+      "at": "2026-10-25T20:10:22.324Z"
+    },
+    "loco-side-2": {
+      "seed": 7,
+      "prompt": "a cute baby Godzilla kaiju hatchling, chunky pear shaped body with a big round belly, mint green skin, cream coloured belly with four horizontal plate ridges, a row of dark teal triangular dorsal plates along its back and thick tail, short stubby legs with three toes, two small arms, big round white eyes with amber irises and large black pupils, tiny white fangs, soft pink blush cheeks, side view profile facing right, full body, standing upright on two feet, legs passing under the body, feet close together, body at its lowest point, slight crouch, arms hanging, 16-bit pixel art, SNES era game sprite, hard 3 tone cel shading, chunky readable shapes, bold 2 pixel black outline, limited 16 colour palette, flat colours, no gradients, no anti-aliasing, isolated on a solid pure magenta background",
+      "ref": null,
+      "strength": null,
+      "raw": "assets/pet/raw/loco-side-2.png",
+      "sprite": "assets/pet/sprites/loco-side-2.png",
+      "stats": {
+        "colors": 13,
+        "opaquePct": 49.8,
+        "bbox": {
+          "x0": 4,
+          "y0": 4,
+          "x1": 59,
+          "y1": 61,
+          "w": 56,
+          "h": 58
+        },
+        "borderClean": true
+      },
+      "ms": 28852,
+      "at": "2026-10-25T20:10:51.179Z"
+    },
+    "loco-side-3": {
+      "seed": 7,
+      "prompt": "a cute baby Godzilla kaiju hatchling, chunky pear shaped body with a big round belly, mint green skin, cream coloured belly with four horizontal plate ridges, a row of dark teal triangular dorsal plates along its back and thick tail, short stubby legs with three toes, two small arms, big round white eyes with amber irises and large black pupils, tiny white fangs, soft pink blush cheeks, side view profile facing right, full body, standing upright on two feet, far leg stepping forward, foot flat on the ground, near leg extended back with the heel lifted, arms swinging the other way, tail swinging forward, 16-bit pixel art, SNES era game sprite, hard 3 tone cel shading, chunky readable shapes, bold 2 pixel black outline, limited 16 colour palette, flat colours, no gradients, no anti-aliasing, isolated on a solid pure magenta background",
+      "ref": null,
+      "strength": null,
+      "raw": "assets/pet/raw/loco-side-3.png",
+      "sprite": "assets/pet/sprites/loco-side-3.png",
+      "stats": {
+        "colors": 14,
+        "opaquePct": 46.9,
+        "bbox": {
+          "x0": 5,
+          "y0": 4,
+          "x1": 59,
+          "y1": 61,
+          "w": 55,
+          "h": 58
+        },
+        "borderClean": true
+      },
+      "ms": 28434,
+      "at": "2026-10-25T20:11:19.613Z"
+    },
+    "loco-side-4": {
+      "seed": 7,
+      "prompt": "a cute baby Godzilla kaiju hatchling, chunky pear shaped body with a big round belly, mint green skin, cream coloured belly with four horizontal plate ridges, a row of dark teal triangular dorsal plates along its back and thick tail, short stubby legs with three toes, two small arms, big round white eyes with amber irises and large black pupils, tiny white fangs, soft pink blush cheeks, side view profile facing right, full body, standing upright on two feet, legs passing under the body, body lifted high on the supporting leg, tail level, arms at its sides, 16-bit pixel art, SNES era game sprite, hard 3 tone cel shading, chunky readable shapes, bold 2 pixel black outline, limited 16 colour palette, flat colours, no gradients, no anti-aliasing, isolated on a solid pure magenta background",
+      "ref": null,
+      "strength": null,
+      "raw": "assets/pet/raw/loco-side-4.png",
+      "sprite": "assets/pet/sprites/loco-side-4.png",
+      "stats": {
+        "colors": 14,
+        "opaquePct": 44.3,
+        "bbox": {
+          "x0": 6,
+          "y0": 4,
+          "x1": 57,
+          "y1": 61,
+          "w": 52,
+          "h": 58
+        },
+        "borderClean": true
+      },
+      "ms": 28231,
+      "at": "2026-10-25T20:11:47.845Z"
     }
   },
   "master": {

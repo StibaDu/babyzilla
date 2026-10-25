@@ -16,6 +16,41 @@ Requirements: macOS with the Xcode command line tools (`xcode-select --install`)
 the first time it builds. After that the app is a normal bundle in
 `~/Applications/BabyZillaPet.app`.
 
+## A second pet: packs
+
+A pack is a different look for the same pet — same reactions, same bubbles, same
+event bridge, different art. Packs carry whole animations (`idle`, `walk`,
+`jump`) instead of one sprite per expression, which is the shape a hand-drawn or
+third-party sprite sheet actually has. That is also the only way to get a real
+walk cycle: legs can move when a sheet was drawn for it.
+
+```sh
+babyzilla pet packs          # what is installed, and which is active
+babyzilla pet use lil-dino   # switch, restarts the pet if it was running
+babyzilla pet use babyzilla  # back to the generated art
+```
+
+The same switch is in the pet's right-click menu under **Pet**.
+
+### Building a pack from a sheet
+
+```sh
+node pet/pack.mjs   --sheet ~/Downloads/PACK.png   --name lil-dino --label "Lil Dino"   --cell 32 --crop 4,0,24,24   --rows idle,walk,jump --cols 6 --upscale 2   --out "$HOME/.opencode/pet/packs/lil-dino"
+```
+
+- `--cell` is the grid cell in the sheet; `--crop` is the region inside each cell
+  that should become the frame (crop out the sheet's margins, once, for all).
+- `--rows` names the animations top to bottom; empty cells are skipped.
+- `--upscale` is nearest-neighbour, so pixels stay square.
+- Frames are copied **cell-relative**, never re-aligned: a jump that rises in
+  the sheet still rises in the app.
+- `pack.json` records the animations, their frame rate, the canvas size, the
+  default scale, and where the art came from.
+
+Packs built from someone else's sheet are not ours to redistribute: the builder
+writes them to `~/.opencode/pet/packs/`, and the repo ignores
+`assets/pet/packs/`.
+
 ## What it does
 
 - **Lives on the floor.** It sits above the Dock (`visibleFrame`, not the raw

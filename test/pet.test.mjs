@@ -15,7 +15,7 @@ import {
   TOOL_EXPRESSION, toolExpression, outcomeExpression, compactionExpression,
   budgetExpression, updateExpression, errorExpression, sessionSummary,
 } from "../lib/pet-map.mjs";
-import { decodePng } from "../pet/png.mjs";
+import { decodePng, encodePng } from "../pet/png.mjs";
 import { analyze } from "../pet/pixelate.mjs";
 
 const run = promisify(execFile);
@@ -221,6 +221,53 @@ test("app: every sprite it asks for exists", (t) => {
   const data = JSON.parse(fs.readFileSync(path.join(ROOT, "assets/pet/pet-data.json"), "utf8"));
   const absent = data.expressions.filter((e) => !built.has(e.id)).map((e) => e.id);
   assert.deepEqual(absent, [], `expressions with no sprite: ${absent.join(", ")}`);
+});
+
+test("pack builder: a sheet becomes coherent, complete animations", async (t) => {
+  // Build a synthetic 6x3 sheet from the repo's own master sprite, so the test
+  // exercises pet/pack.mjs without shipping third-party art.
+  const master = path.join(SPRITES, "master.png");
+  if (!fs.existsSync(master)) return t.skip("no master sprite");
+  const cell = 32, cols = 6, rows = 3;
+  const sheet = { width: cell * cols, height: cell * rows, data: Buffer.alloc(cell * cols * cell * rows * 4) };
+  const src = decodePng(fs.readFileSync(master));
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      for (let y = 0; y < Math.min(cell, src.height); y++) {
+        for (let x = 0; x < Math.min(cell, src.width); x++) {
+          const s = (y * src.width + x) * 4;
+          const d = ((r * cell + y) * sheet.width + (c * cell + x)) * 4;
+          for (let k = 0; k < 4; k++) sheet.data[d + k] = src.data[s + k];
+        }
+      }
+    }
+  }
+  const dir = tmp();
+  const sheetPath = path.join(dir, "sheet.png");
+  fs.writeFileSync(sheetPath, encodePng(sheet.width, sheet.height, sheet.data));
+  const out = path.join(dir, "pack");
+  await run(process.execPath, [path.join(ROOT, "pet/pack.mjs"), "--sheet", sheetPath, "--name", "testpack",
+    "--label", "Test Pack", "--cell", String(cell), "--crop", "0,0,24,24", "--rows", "idle,walk,jump",
+    "--cols", String(cols), "--upscale", "2", "--out", out], { env: { ...process.env, BABYZILLA_NO_UPDATE_CHECK: "1" } });
+
+  const pack = JSON.parse(fs.readFileSync(path.join(out, "pack.json"), "utf8"));
+  assert.equal(pack.size, 48, "24px crop at 2x");
+  for (const anim of ["idle", "walk", "jump"]) {
+    assert.equal(pack.animations[anim].length, cols, `${anim} has every column`);
+    for (const frame of pack.animations[anim]) {
+      const img = decodePng(fs.readFileSync(path.join(out, "sprites", `${frame}.png`)));
+      assert.equal(img.width, pack.size);
+      assert.equal(img.height, pack.size);
+    }
+  }
+});
+
+test("cli: pet packs lists the built-in pet, and use rejects unknown names", async () => {
+  const env = { ...process.env, BABYZILLA_PET_STATE: tmp(), BABYZILLA_NO_UPDATE_CHECK: "1" };
+  const packs = await run(process.execPath, [BIN, "pet", "packs"], { env });
+  assert.match(packs.stdout, /babyzilla\s+BabyZilla \(built-in\)/);
+  const bad = run(process.execPath, [BIN, "pet", "use", "not-a-pack"], { env });
+  await assert.rejects(bad, (e) => e.code === 2);
 });
 
 test("data file: matches the catalogue", (t) => {

@@ -8,3 +8,7 @@ test/real-shape.mjs
 
 # Generated art sources (regenerate with: node pet/build.mjs master && node pet/build.mjs expressions)
 assets/pet/raw/
+
+# Pet packs built from third-party sheets: art licensing is the pack author's,
+# so only the builder (pet/pack.mjs) is versioned.
+assets/pet/packs/

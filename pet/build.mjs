@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { decodePng, encodePng } from "./png.mjs";
 import { pixelate, resizeBox, analyze } from "./pixelate.mjs";
 import { EXPRESSIONS, byId } from "./expressions.mjs";
-import { masterPrompt, expressionPrompt, locomotionPrompt, walkPrompt, LOCOMOTION, seedFor } from "./prompts.mjs";
+import { masterPrompt, expressionPrompt, locomotionPrompt, walkPrompt, sidePrompt, LOCOMOTION, seedFor } from "./prompts.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
@@ -146,7 +146,9 @@ async function main() {
     const master = path.join(RAW, "master.png");
     for (const frame of LOCOMOTION) {
       if (filter && !filter.has(frame.id) && !filter.has(`loco-${frame.id}`)) continue;
-      if (frame.walk) {
+      if (frame.side) {
+        await attempt({ id: `loco-${frame.id}`, prompt: sidePrompt(frame.delta), seed, ref: null, strength: null, force });
+      } else if (frame.walk) {
         // condition on the master: same character, different legs
         await attempt({ id: `loco-${frame.id}`, prompt: walkPrompt(frame.delta), seed, ref: master, strength: 0.55, force });
       } else {

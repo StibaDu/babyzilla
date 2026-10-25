@@ -70,17 +70,20 @@ if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
     exit(0)
 }
 
-// Single instance: two pets fighting over the same events file is confusing.
-do {
-    try? FileManager.default.createDirectory(at: Paths.state, withIntermediateDirectories: true)
-    let lock = Paths.state.appendingPathComponent("pet.pid")
-    if let raw = try? String(contentsOf: lock, encoding: .utf8), let pid = Int32(raw.trimmingCharacters(in: .whitespacesAndNewlines)) {
-        if kill(pid, 0) == 0, pid != getpid() {
-            print("BabyZillaPet already running (pid \(pid))")
-            exit(0)
-        }
-    }
-    try? String(getpid()).write(to: lock, atomically: true, encoding: .utf8)
+// Single instance, per state dir. A pid file is not enough: a crashed or
+// --capture instance leaves a pid behind, and a recycled pid then either blocks
+// a legitimate start or lets a second pet run. An advisory lock is released by
+// the kernel however the process dies.
+try? FileManager.default.createDirectory(at: Paths.state, withIntermediateDirectories: true)
+let lockFD = open(Paths.state.appendingPathComponent("pet.lock").path, O_CREAT | O_RDWR, 0o644)
+if lockFD >= 0, flock(lockFD, LOCK_EX | LOCK_NB) != 0 {
+    print("BabyZillaPet already running for \(Paths.state.path)")
+    exit(0)
+}
+// the CLI reads this to stop the right process
+try? String(getpid()).write(to: Paths.state.appendingPathComponent("pet.pid"), atomically: true, encoding: .utf8)
+atexit {
+    try? FileManager.default.removeItem(at: Paths.state.appendingPathComponent("pet.pid"))
 }
 
 let app = NSApplication.shared

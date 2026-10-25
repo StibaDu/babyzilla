@@ -33,6 +33,22 @@ export const WALK_BASE =
 
 export const walkPrompt = (delta) => `${WALK_BASE}, ${delta}, ${STYLE}`;
 
+/**
+ * Walking needs a profile: a front view cannot show a stride, and conditioning
+ * on the front master pins the legs. Side frames are generated from the same
+ * character description and seed without a reference, which is the only way the
+ * legs are free — the cost is that the profile is a second drawing of the
+ * creature rather than a rotation of the first.
+ */
+export const SIDE_BASE =
+  "a cute baby Godzilla kaiju hatchling, chunky pear shaped body with a big round belly, mint green skin, " +
+  "cream coloured belly with four horizontal plate ridges, a row of dark teal triangular dorsal plates " +
+  "along its back and thick tail, short stubby legs with three toes, two small arms, " +
+  "big round white eyes with amber irises and large black pupils, tiny white fangs, soft pink blush cheeks, " +
+  "side view profile facing right, full body, standing upright on two feet";
+
+export const sidePrompt = (delta) => `${SIDE_BASE}, ${delta}, ${STYLE}`;
+
 /** Locomotion frames: generated from the master, legs and lean only. */
 export const LOCOMOTION = [
   // A four-beat march, front view: step, settle, opposite step, settle. Each
@@ -41,6 +57,11 @@ export const LOCOMOTION = [
   { id: "walk-2", walk: true, delta: "both feet flat on the ground, knees slightly bent, body at its lowest, arms hanging down" },
   { id: "walk-3", walk: true, delta: "right knee lifted high toward its belly, left leg planted straight, body tilted a little to the left, arms out for balance" },
   { id: "walk-4", walk: true, delta: "both feet flat on the ground, standing tall, arms slightly away from the body" },
+  // profile walk cycle: contact, passing, opposite contact, passing
+  { id: "side-1", side: true, delta: "near leg stepping forward, foot flat on the ground, far leg extended back with the heel lifted, arms swinging, tail out behind for balance" },
+  { id: "side-2", side: true, delta: "legs passing under the body, feet close together, body at its lowest point, slight crouch, arms hanging" },
+  { id: "side-3", side: true, delta: "far leg stepping forward, foot flat on the ground, near leg extended back with the heel lifted, arms swinging the other way, tail swinging forward" },
+  { id: "side-4", side: true, delta: "legs passing under the body, body lifted high on the supporting leg, tail level, arms at its sides" },
   { id: "run-1", delta: "running fast, both legs stretched wide, body leaning far forward, arms back" },
   { id: "run-2", delta: "running fast, legs tucked under body mid air, tail straight back" },
   { id: "run-3", delta: "running fast, opposite leg stretch, body low, arms pumping" },

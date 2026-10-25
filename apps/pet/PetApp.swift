@@ -20,6 +20,28 @@ struct PetConfig: Codable {
     var chattiness: String = "normal"   // quiet | normal | chatty
     var muted: Bool = false
     var followCursor: Bool = true
+    var pack: String? = nil         // nil = the built-in BabyZilla art
+
+    enum CodingKeys: String, CodingKey {
+        case scale, x, y, chattiness, muted, followCursor, pack
+    }
+
+    /// Decode field by field. The synthesized initializer requires every
+    /// non-optional key, so a hand-edited config with only `{"pack": "..."}`
+    /// threw, and the loader silently fell back to defaults — losing the pack,
+    /// the position and the size all at once.
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        scale = try c.decodeIfPresent(Int.self, forKey: .scale) ?? 2
+        x = try c.decodeIfPresent(Double.self, forKey: .x)
+        y = try c.decodeIfPresent(Double.self, forKey: .y)
+        chattiness = try c.decodeIfPresent(String.self, forKey: .chattiness) ?? "normal"
+        muted = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
+        followCursor = try c.decodeIfPresent(Bool.self, forKey: .followCursor) ?? true
+        pack = try c.decodeIfPresent(String.self, forKey: .pack)
+    }
 
     static func load(_ url: URL) -> PetConfig {
         guard let data = try? Data(contentsOf: url),
@@ -71,6 +93,8 @@ enum Paths {
     static var config: URL { state.appendingPathComponent("config.json") }
     static var sprites: URL { state.appendingPathComponent("sprites") }
     static var data: URL { state.appendingPathComponent("pet-data.json") }
+    static var packs: URL { state.appendingPathComponent("packs") }
+    static func packDir(_ name: String) -> URL { packs.appendingPathComponent(name) }
 
     /// Always returns the *sprites directory* (the one holding the PNGs).
     /// Callers used to get "the assets root" here and append "/sprites" again,
@@ -97,6 +121,67 @@ enum Paths {
 
 // ── sprites ──────────────────────────────────────────────────────────────────
 
+/// Where packs live: the installed state dir, plus the repo/dev location.
+enum Packs {
+    static func roots() -> [URL] {
+        var roots = [Paths.packs]
+        if let env = ProcessInfo.processInfo.environment["BABYZILLA_PET_DIR"] {
+            roots.append(URL(fileURLWithPath: env).appendingPathComponent("packs"))
+        } else {
+            // dev: assets/pet/packs next to the sprites directory
+            roots.append(Paths.resolveSprites().deletingLastPathComponent().appendingPathComponent("packs"))
+        }
+        return roots
+    }
+
+    static func directory(_ name: String) -> URL? {
+        for root in roots() {
+            let dir = root.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: dir.appendingPathComponent("pack.json").path) { return dir }
+        }
+        return nil
+    }
+
+    /// Always offers the built-in art first; packs found on disk follow.
+    static func available() -> [(id: String, label: String)] {
+        var out: [(id: String, label: String)] = [("babyzilla", "BabyZilla")]
+        for root in roots() {
+            let dirs = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+            for dir in dirs.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+                guard let pack = PackData.load(dir: dir) else { continue }
+                if !out.contains(where: { $0.id == pack.name }) { out.append((pack.name, pack.label)) }
+            }
+        }
+        return out
+    }
+}
+
+/// A pet pack: a different look for the same pet. Packs carry whole animations
+/// (idle / walk / jump) instead of one sprite per expression, which is what a
+/// hand-drawn or third-party sheet can actually provide.
+struct PackData: Decodable {
+    let kind: String?
+    let name: String
+    let label: String
+    let size: Int
+    let animations: [String: [String]]
+    let fps: [String: Double]?
+    let defaultScale: Int?
+    let source: String?
+
+    /// Expressions that should use the jump animation rather than idle.
+    static let energetic: Set<String> = [
+        "celebrate", "party", "dance", "wave", "poke", "love", "ship-it", "success",
+        "eureka", "cake", "roar", "glitch", "rubber-duck", "high-five",
+    ]
+
+    static func load(dir: URL) -> PackData? {
+        guard let d = try? Data(contentsOf: dir.appendingPathComponent("pack.json")),
+              let p = try? JSONDecoder().decode(PackData.self, from: d) else { return nil }
+        return p
+    }
+}
+
 final class SpriteLibrary {
     private(set) var images: [String: NSImage] = [:]
     let base: URL
@@ -108,6 +193,9 @@ final class SpriteLibrary {
             let name = file.deletingPathExtension().lastPathComponent
             if name.hasPrefix("_") { continue }
             if let img = NSImage(contentsOf: file) { images[name] = img }
+        }
+        if images.isEmpty {
+            FileHandle.standardError.write(Data("BabyZillaPet: no sprites in \(dir.path)\n".utf8))
         }
     }
 
@@ -277,6 +365,8 @@ final class PetController: NSObject {
     let data: PetData
     let lib: SpriteLibrary
     let spriteSize: Int
+    let pack: PackData?
+    var onPackChange: (() -> Void)?
     var window: PetPanel!
     var bubble: BubbleWindow!
     var view: PetView!
@@ -322,6 +412,8 @@ final class PetController: NSObject {
     private var walkLift: CGFloat = 0
     private var walkSquash: CGFloat = 0
     private var lastRendered = ""
+    private var packClock: TimeInterval = 0
+    private var packAnim = "idle"
     private var lastExprAt = Date.distantPast
 
     private var timer: Timer?
@@ -350,12 +442,13 @@ final class PetController: NSObject {
         }
     }
 
-    init(config: PetConfig, configURL: URL, data: PetData, lib: SpriteLibrary) {
+    init(config: PetConfig, configURL: URL, data: PetData, lib: SpriteLibrary, pack: PackData? = nil) {
         self.config = config
         self.configURL = configURL
         self.data = data
         self.lib = lib
-        self.spriteSize = data.size
+        self.pack = pack
+        self.spriteSize = pack?.size ?? data.size
         PixelFont.scale = CGFloat(config.scale <= 1 ? 1 : (config.scale >= 4 ? 3 : 2))
         super.init()
         buildWindows()
@@ -411,6 +504,16 @@ final class PetController: NSObject {
     }
 
     // ── ticking ──────────────────────────────────────────────────────────────
+
+    func shutdown() {
+        timer?.invalidate()
+        timer = nil
+        eventSource?.cancel()
+        eventSource = nil
+        eventHandle = nil
+        window?.close()
+        bubble?.close()
+    }
 
     private func start() {
         let t = Timer(timeInterval: 1.0 / 30.0, target: self, selector: #selector(tick), userInfo: nil, repeats: true)
@@ -552,6 +655,7 @@ final class PetController: NSObject {
     /// Locomotion frames are separate from expressions: a reaction plays the
     /// face sprite standing still, otherwise walking/hopping cycles its own set.
     private func stepFrames(dt: Double) {
+        if pack != nil { stepPack(dt: dt); return }
         let reacting = Date() < expressionUntil
         if reacting {
             // a reaction plays standing still, on the ground
@@ -593,6 +697,38 @@ final class PetController: NSObject {
         }
     }
 
+    /// Packs animate by state, not by expression: idle / walk / jump.
+    private func stepPack(dt: Double) {
+        guard let pack else { return }
+        let anim: String
+        if lift > 0.5 || vy > 40 {
+            // the physics hop uses the sheet's own jump
+            anim = "jump"
+        } else if Date() < expressionUntil {
+            anim = PackData.energetic.contains(expressionId) ? "jump" : "idle"
+        } else if targetX != nil || abs(vx) > 2 {
+            anim = "walk"
+        } else {
+            anim = "idle"
+        }
+        if anim != packAnim {
+            // restart on change so a walk always begins on its first frame
+            packAnim = anim
+            packClock = 0
+        }
+        packClock += dt
+        let frames = pack.animations[anim] ?? pack.animations["idle"] ?? []
+        guard !frames.isEmpty else { return }
+        let fps = max(1.0, pack.fps?[anim] ?? 8)
+        let id = frames[Int(packClock * fps) % frames.count]
+        if id != lastRendered {
+            lastRendered = id
+            currentImage = lib.image(id)
+            trace(["ev": "frame", "id": id])
+            view.needsDisplay = true
+        }
+    }
+
     private var renderId: String {
         if Date() < expressionUntil { return expressionId }
         return movingFrame ?? expressionId
@@ -612,7 +748,7 @@ final class PetController: NSObject {
         }
         // while a locomotion frame is showing, the art already carries the
         // vertical motion — an extra breathing bob would double it
-        if movingFrame != nil { bob = 0 }
+        if movingFrame != nil || pack != nil { bob = 0 }
         if walkSquash > 0 {
             sy = min(sy, 1 - walkSquash * 0.10)
             sx = max(sx, 1 + walkSquash * 0.08)
@@ -645,6 +781,7 @@ final class PetController: NSObject {
     }
 
     private func applySprite() {
+        guard pack == nil else { return }
         lastRendered = renderId
         currentImage = lib.image(lastRendered)
         view.needsDisplay = true
@@ -740,6 +877,20 @@ final class PetController: NSObject {
             menu.addItem(item)
         }
         menu.addItem(.separator())
+        let pets = Packs.available()
+        if pets.count > 1 {
+            let petItem = NSMenuItem(title: "Pet", action: nil, keyEquivalent: "")
+            let sub = NSMenu()
+            for pet in pets {
+                let item = NSMenuItem(title: pet.label, action: #selector(choosePack(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = pet.id
+                item.state = (config.pack ?? "babyzilla") == pet.id ? .on : .off
+                sub.addItem(item)
+            }
+            petItem.submenu = sub
+            menu.addItem(petItem)
+        }
         let mute = NSMenuItem(title: "Mute speech", action: #selector(toggleMute), keyEquivalent: "")
         mute.target = self
         mute.state = config.muted ? .on : .off
@@ -769,6 +920,18 @@ final class PetController: NSObject {
     @objc private func toggleMute() {
         config.muted.toggle()
         persist()
+    }
+
+    @objc private func choosePack(_ item: NSMenuItem) {
+        let id = item.representedObject as? String ?? "babyzilla"
+        config.pack = id == "babyzilla" ? nil : id
+        // a pack knows how big it wants to be: its art is not the same density
+        if id != "babyzilla", let dir = Packs.directory(id), let pack = PackData.load(dir: dir),
+           let scale = pack.defaultScale {
+            config.scale = scale
+        }
+        persist()
+        onPackChange?()
     }
 
     @objc private func setChattiness(_ item: NSMenuItem) {
@@ -866,6 +1029,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var controller: PetController?
     var statusItem: NSStatusItem?
 
+    private func startPet() {
+        var cfg = PetConfig.load(Paths.config)
+        cfg.scale = max(1, min(6, cfg.scale))
+        let base = Paths.resolveSprites()
+        var pack: PackData?
+        var packDir: URL?
+        if let name = cfg.pack, let dir = Packs.directory(name), let loaded = PackData.load(dir: dir) {
+            pack = loaded
+            packDir = dir
+        }
+        let petData = PetData.load(spritesDir: base) ?? PetData.fallback
+        // a pack dir holds sprites/ — the library wants the directory with the PNGs
+        let lib = SpriteLibrary(base: packDir.map { $0.appendingPathComponent("sprites") } ?? base)
+        let pet = PetController(config: cfg, configURL: Paths.config, data: petData, lib: lib, pack: pack)
+        pet.onPackChange = { [weak self] in self?.rebuildPet() }
+        controller = pet
+    }
+
+    /// Switching pet swaps art and scale, which means new windows and a new
+    /// sprite library; cheaper than relaunching and it keeps the position.
+    func rebuildPet() {
+        controller?.shutdown()
+        controller = nil
+        startPet()
+    }
+
     func captureAndExit(_ path: String, after delay: TimeInterval) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, let c = self.controller,
@@ -906,12 +1095,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         try? FileManager.default.createDirectory(at: Paths.state, withIntermediateDirectories: true)
-        let base = Paths.resolveSprites()
-        let petData = PetData.load(spritesDir: base) ?? PetData.fallback
-        let lib = SpriteLibrary(base: base)
-        var cfg = PetConfig.load(Paths.config)
-        cfg.scale = max(1, min(6, cfg.scale))
-        controller = PetController(config: cfg, configURL: Paths.config, data: petData, lib: lib)
+        startPet()
         installStatusItem()
         if let i = CommandLine.arguments.firstIndex(of: "--capture"), i + 1 < CommandLine.arguments.count {
             captureAndExit(CommandLine.arguments[i + 1], after: 2.0)

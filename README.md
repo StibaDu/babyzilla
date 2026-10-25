@@ -143,6 +143,10 @@ It reads `~/.opencode/pet/events.jsonl`, which the plugin appends to on prompt,
 tool, compaction and error events. No sockets, no network, no daemon: if the pet
 is closed the plugin writes a few bytes. Turn it off with `"pet": false`.
 
+A second look can be built from a sprite sheet and switched at runtime
+(`babyzilla pet packs`, `babyzilla pet use <name>`, or right-click → Pet); see
+[docs/PET.md](docs/PET.md).
+
 ### Setup, and the permissions that actually matter
 
 ```sh

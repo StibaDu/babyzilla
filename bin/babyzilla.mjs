@@ -849,6 +849,44 @@ function petStop() {
   return pid;
 }
 
+function petConfigFile() { return path.join(petStateDir(), "config.json"); }
+
+function readPetConfig() {
+  try { return JSON.parse(fs.readFileSync(petConfigFile(), "utf8")); } catch { return {}; }
+}
+
+function writePetConfig(cfg) {
+  fs.mkdirSync(petStateDir(), { recursive: true });
+  fs.writeFileSync(petConfigFile(), JSON.stringify(cfg, null, 2) + "\n");
+}
+
+/** Packs shipped with the plugin plus any installed in the state dir. */
+function listPacks() {
+  const out = [];
+  const seen = new Set();
+  const roots = [path.join(repoRoot(), "assets", "pet", "packs"), path.join(petStateDir(), "packs")];
+  for (const root of roots) {
+    if (!fs.existsSync(root)) continue;
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory() || seen.has(entry.name)) continue;
+      try {
+        const pack = JSON.parse(fs.readFileSync(path.join(root, entry.name, "pack.json"), "utf8"));
+        seen.add(entry.name);
+        out.push({ id: entry.name, ...pack, installed: root.startsWith(petStateDir()) });
+      } catch { /* not a pack */ }
+    }
+  }
+  return out;
+}
+
+function petStart() {
+  const binary = path.join(PET_APP, "Contents", "MacOS", "BabyZillaPet");
+  if (!fs.existsSync(binary)) return false;
+  const child = spawn(binary, [], { detached: true, stdio: "ignore" });
+  child.unref();
+  return true;
+}
+
 function petInstall({ login = false, build = true } = {}) {
   const root = repoRoot();
   const src = path.join(root, "apps", "pet");
@@ -893,6 +931,24 @@ function petInstall({ login = false, build = true } = {}) {
     copied++;
   }
   fs.copyFileSync(path.join(root, "assets", "pet", "pet-data.json"), path.join(petStateDir(), "pet-data.json"));
+
+  // alternate looks: each pack is a directory with pack.json and sprites/
+  const packsIn = path.join(root, "assets", "pet", "packs");
+  let packs = 0;
+  if (fs.existsSync(packsIn)) {
+    for (const pack of fs.readdirSync(packsIn, { withFileTypes: true })) {
+      if (!pack.isDirectory()) continue;
+      const from = path.join(packsIn, pack.name);
+      const to = path.join(petStateDir(), "packs", pack.name);
+      fs.mkdirSync(path.join(to, "sprites"), { recursive: true });
+      fs.copyFileSync(path.join(from, "pack.json"), path.join(to, "pack.json"));
+      for (const file of fs.readdirSync(path.join(from, "sprites"))) {
+        if (!file.endsWith(".png")) continue;
+        fs.copyFileSync(path.join(from, "sprites", file), path.join(to, "sprites", file));
+      }
+      packs++;
+    }
+  }
   const gallery = path.join(petStateDir(), "gallery.html");
   for (const asset of ["gallery.html", "gallery.css", "gallery-data.js"]) {
     const srcFile = path.join(root, "assets", "pet", asset);
@@ -913,7 +969,7 @@ function petInstall({ login = false, build = true } = {}) {
 </plist>
 `);
   }
-  return { app: PET_APP, binary, sprites: copied, login };
+  return { app: PET_APP, binary, sprites: copied, packs, login };
 }
 
 function petEmitLine(event) {
@@ -1243,6 +1299,22 @@ function main() {
       }
       case "pet": {
         const sub = rest.find((a) => !a.startsWith("-")) ?? "status";
+        if (sub === "help" || rest.includes("--help") || rest.includes("-h")) {
+          out(`babyzilla pet <command>
+
+  install [--login] [--no-start] [--no-build]   build + install the macOS app
+  start | stop                                   run or stop the pet
+  status                                         running? which pet? how much art?
+  packs                                          list pets: built-in + installed packs
+  use <pack|babyzilla>                           switch pet (restarts it if running)
+  list                                           all 100 expressions
+  emit <id> [--hold 2] [--say "text"]            make it react right now
+  gallery                                        open the sprite field guide
+
+A pack is a second look built from a sprite sheet; see docs/PET.md.
+`);
+          return;
+        }
         if (sub === "install") {
           try {
             const res = petInstall({ login: rest.includes("--login"), build: !rest.includes("--no-build") });
@@ -1282,6 +1354,56 @@ function main() {
           if (id && !id.startsWith("-")) out(`emitted ${id}\n`);
           return;
         }
+        if (sub === "start" || sub === "stop") {
+          if (sub === "stop") {
+            const pid = petStop();
+            out(pid ? `stopped ${pid}\n` : "pet was not running\n");
+            return;
+          }
+          if (petPidAlive()) { out(`already running (pid ${petPidAlive()})\n`); return; }
+          if (!fs.existsSync(PET_APP)) { out("no app installed — babyzilla pet install\n"); process.exitCode = 1; return; }
+          out(petStart() ? "started\n" : "could not start\n");
+          return;
+        }
+
+        if (sub === "packs" || sub === "use") {
+          const packs = listPacks();
+          const active = readPetConfig().pack ?? "babyzilla";
+          if (sub === "packs") {
+            out(`  ${"babyzilla".padEnd(16)} BabyZilla ${c(DIM)}(built-in)${c(RESET)}${active === "babyzilla" ? `  ${c(GREEN)}active${c(RESET)}` : ""}\n`);
+            for (const p of packs) {
+              const anims = Object.entries(p.animations ?? {}).map(([k, v]) => `${k} ${v.length}`).join(", ");
+              out(`  ${p.id.padEnd(16)} ${p.label} ${c(DIM)}${anims}${c(RESET)}${active === p.id ? `  ${c(GREEN)}active${c(RESET)}` : ""}\n`);
+            }
+            out(`\nswitch with: babyzilla pet use <name>\n`);
+            return;
+          }
+          const name = rest[rest.indexOf("use") + 1];
+          if (!name) { out("usage: babyzilla pet use <pack|babyzilla>\n"); process.exitCode = 2; return; }
+          const cfg = readPetConfig();
+          if (name === "babyzilla" || name === "default") {
+            delete cfg.pack;
+            writePetConfig(cfg);
+            out(`pet: BabyZilla (built-in)\n`);
+          } else {
+            const pack = packs.find((p) => p.id === name);
+            if (!pack) {
+              out(`${c(YELLOW)}unknown pack${c(RESET)} ${name} — try: babyzilla pet packs\n`);
+              process.exitCode = 2;
+              return;
+            }
+            cfg.pack = name;
+            if (pack.defaultScale) cfg.scale = pack.defaultScale;
+            writePetConfig(cfg);
+            out(`pet: ${pack.label}\n`);
+          }
+          // only relaunch a pet that was already up: switching while closed
+          // should not start one behind the user's back
+          const wasRunning = petStop();
+          if (wasRunning && petStart()) out(`${c(GREEN)}restarted${c(RESET)}\n`);
+          return;
+        }
+
         if (sub === "list") {
           let last = "";
           for (const e of EXPRESSIONS) {
@@ -1315,7 +1437,10 @@ function main() {
         out(`${c(BOLD)}BabyZilla pet${c(RESET)}\n`);
         out(`  app       ${pids.length ? `${c(GREEN)}running${c(RESET)} (pid ${pids.join(", ")})` : `${c(YELLOW)}not running${c(RESET)} — babyzilla pet install`}\n`);
         out(`  installed ${pids.length || fs.existsSync(PET_APP) ? PET_APP : `${c(DIM)}no${c(RESET)}`}\n`);
-        out(`  sprites   ${covered}/${EXPRESSIONS.length} expressions${loco ? ` + ${loco} locomotion frames` : ""}\n`);
+        const activePack = readPetConfig().pack;
+        const packLabel = activePack ? (listPacks().find((p) => p.id === activePack)?.label ?? activePack) : "BabyZilla";
+        out(`  pet       ${packLabel}${activePack ? ` ${c(DIM)}(pack)${c(RESET)}` : ""}\n`);
+        if (!activePack) out(`  sprites   ${covered}/${EXPRESSIONS.length} expressions${loco ? ` + ${loco} locomotion frames` : ""}\n`);
         out(`  events    ${eventsPath()}\n  last      ${lastEvent}\n`);
         out(`  config    ${path.join(petStateDir(), "config.json")}\n`);
         return;

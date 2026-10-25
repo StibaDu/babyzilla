@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 import { sessionCosts, totals, defaultDbPath, openDb, hasTable } from "../lib/cost.mjs";
 import { readPage, prunePages } from "../lib/pages.mjs";
 import { extractProbes, scorePack, missingFactsModule } from "../lib/eval.mjs";
+import { loadDB, explain as explainModels } from "../lib/modeldb.mjs";
 
 // ── colors & formatting ─────────────────────────────────────────────────────
 
@@ -722,6 +723,9 @@ Usage:
   babyzilla cost [sessionID] [--limit N] [--json]
                                     provider-side spend from the OpenCode database
   babyzilla verify [sessionID]      check path:line pointers still resolve
+  babyzilla models [--lanes] [--json]
+                                    Ollama Cloud model knowledge base: caps,
+                                    context, pricing, and default lane picks
   babyzilla recall <call-id|part-id|message-id>[:<start>[-<end>]] [--max-lines N]
                                     print the original text behind an elision marker
   babyzilla retrieve <path>[:<start>[-<end>]] [--context N] [--max-lines N]
@@ -752,6 +756,13 @@ function main() {
         break;
       }
       case "verify": out(renderVerify(rest[0] || undefined)); break;
+      case "models": {
+        const db = loadDB({});
+        out(rest.includes("--json")
+          ? JSON.stringify(explainModels(db, { json: true }), null, 2) + "\n" + "\n"
+          : explainModels(db, { lanes: rest.includes("--lanes") }));
+        break;
+      }
       case "eval": {
         const sid = rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined;
         const dbPath = rest.includes("--db") ? rest[rest.indexOf("--db") + 1] : undefined;

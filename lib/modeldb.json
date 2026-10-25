@@ -1,0 +1,382 @@
+{
+  "meta": {
+    "version": 1,
+    "fetched": "2026-10-25",
+    "sources": [
+      "https://ollama.com/api/tags  (live catalog: id + capabilities + modified_at)",
+      "https://ollama.com/search?c=cloud  (per-model pricing, usage class, context, badge rows)",
+      "https://ollama.com/library/<model>  (family pages: tag sets, blurbs)",
+      "lib/cost.mjs PRICES  (USD/1M: input, cached-input, output — price source of truth)"
+    ],
+    "notes": [
+      "Cloud catalog only (oLLaMa Cloud subscription models; no local/downloadable tags).",
+      "No image GENERATION models on cloud (local macOS experimental only; future: Cloudflare Workers AI flux-schnell).",
+      "qwen3-vl is NOT on cloud (downloadable /library tags only).",
+      "Pricing key in cost.mjs is the single source of truth; modeldb never duplicates numbers.",
+      "usage classes are ollama.com's own tiers (Low/Medium/High/Extra High) = demand, not quality."
+    ]
+  },
+
+  "beam": {
+    "family": "beam",
+    "vendor": "Reflection",
+    "params": { "total": "501B", "active": "23B" },
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": false },
+    "context": 1048576,
+    "usage": "Low",
+    "free": "with paid plan or usage credits (no per-token price published)",
+    "released": "2026-10-16",
+    "hf": "reflection/Beam-1.0-501B-A23B",
+    "cutoff": "2026-06-30",
+    "facts": [
+      "Sparse MoE: 501B total, 23B active, 256 experts, 1M context.",
+      "Vendor claims token-efficient reasoning: ~3x fewer reasoning tokens than a typical thinking model.",
+      "Benchmark profile: SWE-Bench Verified 81.6, Terminal Bench 80.1 (from model card).",
+      "Smoke-tested live 2026-10-25 on the OpenAI-compat path: text OK, tool_calls shape OK, 19.8K-token needle retrieved in 1.6s.",
+      "Image input cleanly rejected with HTTP 400 'this model does not support image input'.",
+      "Reasoning tokens count against any max_tokens cap — never set a low output cap."
+    ],
+    "useFor": [
+      "Heavy build/main-lane coding and agentic work at zero token cost",
+      "Very long context sweeps (needle-finding across tens of thousands of tokens verified fast)",
+      "Sessions where minimizing wall-time-per-token AND dollar cost both matter"
+    ],
+    "avoidFor": ["anything visual", "long creative writing (it is a builder, not a prose model)"],
+    "verify": "smoke-tested"
+  },
+
+  "glm-5.2": {
+    "family": "glm",
+    "vendor": "Z.ai",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": false },
+    "context": 1048576,
+    "usage": "High",
+    "released": "2026-06-16",
+    "facts": [
+      "Z.ai flagship for the era of long-horizon tasks.",
+      "Proven default main-lane model in this setup since mid-2026."
+    ],
+    "useFor": ["long-horizon coding agent sessions", "reliable main lane with 1M context", "long multi-step plans"],
+    "avoidFor": ["image understanding", "cost-sensitive bulk loops (High usage pricing)"],
+    "verify": "docs+daily-use"
+  },
+
+  "glm-5.3": {
+    "family": "glm",
+    "vendor": "Z.ai",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": false },
+    "context": 1048576,
+    "usage": "High",
+    "released": "2026-08-28",
+    "facts": [
+      "'Most capable open-weights model for coding', major gains on long-horizon agentic tasks.",
+      "Same pricing class as glm-5.2; pick by latest-or-proven preference."
+    ],
+    "useFor": ["hardest coding tasks", "agentic benchmark chasing", "when newest GLM matters"],
+    "avoidFor": ["image work", "budget runs"],
+    "verify": "docs"
+  },
+
+  "glm-5.3-flash": {
+    "family": "glm",
+    "vendor": "Z.ai",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": true },
+    "context": 1048576,
+    "usage": "Medium",
+    "released": "2026-08-26",
+    "facts": [
+      "Z.ai's first natively multimodal model; ~18B active parameters.",
+      "Vendor places it near Claude Opus 4.8 on coding and agentic benchmarks.",
+      "Cheapest thinking+vision+1M-context combo on the cloud index."
+    ],
+    "useFor": ["flash lane (fast cheap thinking)", "budget multimodal vision lane", "distillation summarization"],
+    "avoidFor": ["nothing serious — it is the utility knife of this catalog"],
+    "verify": "docs"
+  },
+
+  "gemma4:31b": {
+    "family": "gemma4",
+    "vendor": "Google",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": true, "audio": "family-level" },
+    "context": 262144,
+    "usage": "Low",
+    "released": "2026-04-02",
+    "facts": [
+      "Only general-purpose vision+tools chat model on cloud at review time.",
+      "Image understanding live-verified: 1px red PNG via OpenAI-compat data-URL answered 'Red'.",
+      "Family page: frontier-level performance at each size; audio badge is family-wide, verify per tag before relying on it."
+    ],
+    "useFor": ["vision lane standard (cheap: $0.14/$0.40)", "small-model general chat with images", "quick visual sanity checks"],
+    "avoidFor": ["1M-context jobs (256K cap)", "hardest reasoning (bigger fish exist)"],
+    "verify": "smoke-tested"
+  },
+
+  "minimax-m3.1-flash": {
+    "family": "minimax",
+    "vendor": "MiniMax",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": true },
+    "context": 999424,
+    "usage": "Medium",
+    "released": "2026-10-19",
+    "facts": [
+      "Next-gen Flash: 'generational leap in agentic tasks, coding, Computer Use and cybersecurity'.",
+      "~3x faster online inference, -70% cost vs minimax-m3."
+    ],
+    "useFor": ["cost-efficient agentic loops with vision", "Computer-Use style tasks", "mid-weight main lane"],
+    "avoidFor": ["no known hard negatatives; 976K ctx cap is the main limit"],
+    "verify": "docs"
+  },
+
+  "minimax-m3": {
+    "family": "minimax",
+    "vendor": "MiniMax",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": true },
+    "context": 512000,
+    "usage": "High",
+    "released": "2026-06-01",
+    "facts": ["Coding and agentic frontier of the M3 line; largely superseded by cheaper m3.1-flash."],
+    "useFor": ["when M3-class quality is required and m3.1 feels weak"],
+    "avoidFor": ["budget work — m3.1-flash is same-class for far less"],
+    "verify": "docs"
+  },
+
+  "minimax-m2.7": {
+    "family": "minimax",
+    "vendor": "MiniMax",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": false },
+    "context": 196608,
+    "usage": "Medium",
+    "released": "2026-03-18",
+    "facts": ["M2-series coder/agent; smallest context window of the M-line (192K)."],
+    "useFor": ["tight multimodal-free coding loops on older M2 behavior"],
+    "avoidFor": ["modern agentic work (m3.1-flash dominates at same price class)"],
+    "verify": "docs"
+  },
+
+  "minimax-m2": {
+    "family": "minimax",
+    "vendor": "MiniMax",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": false },
+    "context": null,
+    "usage": null,
+    "released": "2026-04-01",
+    "facts": ["Legacy M2 original; no price row on the current cloud index; superseded by m2.7 and m3."],
+    "useFor": ["behavioral repro of old M2 runs"],
+    "avoidFor": ["everything else"],
+    "verify": "docs"
+  },
+
+  "muse-spark-open": {
+    "family": "muse-spark",
+    "vendor": "Meta",
+    "params": { "total": "816B", "active": "42B" },
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": true },
+    "context": 1048576,
+    "usage": "High",
+    "released": "2026-10-15",
+    "facts": [
+      "Natively multimodal flagship, built for coding and agentic work.",
+      "Excels at long-horizon tasks, complex software engineering, multi-step reasoning."
+    ],
+    "useFor": ["premium multimodal heavy engineering", "1M-context vision+code mixed sessions"],
+    "avoidFor": ["budget runs ($1.25/$4.25 High)"],
+    "verify": "docs"
+  },
+
+  "kimi-k3": {
+    "family": "kimi",
+    "vendor": "Moonshot AI",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": true },
+    "context": 1048576,
+    "usage": "Extra High",
+    "released": "2026-07-27",
+    "facts": ["'Most capable model to date' of the Kimi line; native multimodal agentic.", "Most expensive model on the cloud index."],
+    "useFor": ["hardest long-horizon multimodal agent tasks when budget is secondary", "premium vision reasoning"],
+    "avoidFor": ["routine work — Small tasks waste the price point"],
+    "verify": "docs"
+  },
+
+  "kimi-k2.7-code": {
+    "family": "kimi",
+    "vendor": "Moonshot AI",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": true },
+    "context": 262144,
+    "usage": "High",
+    "released": "2026-06-12",
+    "facts": ["Coding-specialized agentic descendant of K2.6; vision-capable per live /api/tags (2026-10-25)."],
+    "useFor": ["coding-focused multimodal agentic work", "kimi-line behavior with tighter budget than k3"],
+    "avoidFor": ["256K context heavy scans"],
+    "verify": "docs+api"
+  },
+
+  "kimi-k2.6": {
+    "family": "kimi",
+    "vendor": "Moonshot AI",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": true },
+    "context": 262144,
+    "usage": "High",
+    "released": "2026-04-20",
+    "facts": [
+      "Native multimodal agentic model: long-horizon coding, coding-driven design, proactive autonomous execution, swarm-based task orchestration."
+    ],
+    "useFor": ["swarm/orchestration-style agent designs", "coding-driven design flows"],
+    "avoidFor": ["256K ceiling vs 1M rivals", "budget"],
+    "verify": "docs+api"
+  },
+
+  "deepseek-v4.1-flash": {
+    "family": "deepseek",
+    "vendor": "DeepSeek",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": true },
+    "context": 1048576,
+    "usage": "Medium",
+    "released": "2026-09-10",
+    "facts": ["Greater capability, faster inference, higher throughput, scales to larger models.", "Listed price is 'From $0.30/$1.20' — variant-based; the :1017 variant may price differently."],
+    "useFor": ["cheap 1M-context multimodal thinking", "high-throughput batches"],
+    "avoidFor": ["relying on exact variant pricing without checking `babyzilla cost` output"],
+    "verify": "docs"
+  },
+
+  "deepseek-v4.1-flash:1017": {
+    "variantOf": "deepseek-v4.1-flash",
+    "family": "deepseek",
+    "vendor": "DeepSeek",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": true },
+    "context": 1048576,
+    "usage": "Medium",
+    "released": "2026-10-17",
+    "facts": ["Newest deepseek flash build (2026-10-17)."],
+    "useFor": ["same as base; prefer when freshness matters"],
+    "avoidFor": ["assume 'From' pricing needs cost check"],
+    "verify": "api"
+  },
+
+  "deepseek-v4-pro:0813": {
+    "family": "deepseek",
+    "vendor": "DeepSeek",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": false },
+    "context": 1048576,
+    "usage": "Extra High",
+    "released": "2026-08-13",
+    "facts": ["Frontier MoE with large context and three reasoning modes.", "DeepSeek's strongest reasoning class at roughly 1/4 of kimi-k3's output price."],
+    "useFor": ["frontier text reasoning below kimi prices"],
+    "avoidFor": ["vision", "budget bulk (Extra High)"],
+    "verify": "docs"
+  },
+
+  "mistral-large-4": {
+    "family": "mistral",
+    "vendor": "Mistral",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": true },
+    "context": 1048576,
+    "usage": "High",
+    "released": "2026-10-06",
+    "facts": ["Newest Mistral large flagship; multimodal."],
+    "useFor": ["mistral-style enterprise workloads with vision"],
+    "avoidFor": ["cheaper peers exist for most lanes"],
+    "verify": "docs"
+  },
+
+  "mistral-large-3:675b": {
+    "family": "mistral",
+    "vendor": "Mistral",
+    "caps": { "text": true, "tools": true, "vision": true, "thinking": false },
+    "context": 262144,
+    "usage": "Medium",
+    "released": "2025-12-02",
+    "facts": ["General-purpose multimodal MoE; NO thinking capability (no thinking badge on cloud index or tags API)."],
+    "useFor": ["fast non-reasoning multimodal requests", "production-grade enterprise tasks without think-latency"],
+    "avoidFor": ["step-reasoning tasks (it does not think)"],
+    "verify": "docs+api"
+  },
+
+  "nemotron-3-ultra": {
+    "family": "nemotron",
+    "vendor": "NVIDIA",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": false },
+    "context": 262144,
+    "usage": "High",
+    "released": "2026-06-04",
+    "facts": ["High-throughput reasoning for long-running agent workflows.", "Pricing profile: very cheap input ($0.10), pricey output ($3.00)."],
+    "useFor": ["long-input, short-output agent loops (feed lots of context, tools emit little)"],
+    "avoidFor": ["output-heavy generation (expensive out-token)"],
+    "verify": "docs"
+  },
+
+  "nemotron-3-super": {
+    "family": "nemotron",
+    "vendor": "NVIDIA",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": false },
+    "context": 262144,
+    "usage": "Medium",
+    "released": "2026-03-11",
+    "facts": ["Absolute cheapest input tokens with thinking: $0.015/$0.60.", "256K context."],
+    "useFor": ["distillation on a budget (read much, write short)", "high-volume tool-call routing", "input-heavy batch classification"],
+    "avoidFor": ["creative output volume", "frontier reasoning"],
+    "verify": "docs"
+  },
+
+  "nemotron-3-nano:30b": {
+    "family": "nemotron",
+    "vendor": "NVIDIA",
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": false },
+    "context": 262144,
+    "usage": "Low",
+    "released": "2025-12-15",
+    "facts": ["Cheapest output tokens that still carry tools+thinking ($0.06/$0.24)."],
+    "useFor": ["output-heavy micro tasks", "cheap classify/route/stream loops"],
+    "avoidFor": ["hard reasoning (30B class)"],
+    "verify": "docs"
+  },
+
+  "gpt-oss:120b": {
+    "family": "gpt-oss",
+    "vendor": "OpenAI",
+    "params": { "total": "~117B", "active": "5.1B" },
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": false },
+    "context": 131072,
+    "usage": null,
+    "released": "2025-08-05",
+    "facts": [
+      "OpenAI's open-weight reasoning MoE (Apache-2.0), Aug 2025 vintage.",
+      "NOT on the current cloud price index (availability/pricing unclear 2026-10-25) — cost.mjs still carries $0.15/$0.60 historical pricing.",
+      "Library pages remain live. Treat as historic fallback, verify before relying on it."
+    ],
+    "useFor": ["legacy repro only"],
+    "avoidFor": ["production lanes until presence on cloud index re-verified"],
+    "verify": "api+docs"
+  },
+
+  "gpt-oss:20b": {
+    "family": "gpt-oss",
+    "vendor": "OpenAI",
+    "params": { "total": "~21B", "active": "3.6B" },
+    "caps": { "text": true, "tools": true, "thinking": true, "vision": false },
+    "context": 131072,
+    "usage": null,
+    "released": "2025-08-05",
+    "facts": ["Small sibling of gpt-oss:120b; same cloud-index caveat as the 120b (not on current price index)."],
+    "useFor": ["legacy repro only"],
+    "avoidFor": ["production lanes"],
+    "verify": "api+docs"
+  },
+
+  "clef:27b": {
+    "family": "clef",
+    "vendor": "Cloudflare",
+    "caps": { "text": true, "vision": true, "tools": false, "thinking": false, "decision": true },
+    "context": 65536,
+    "usage": "Low",
+    "released": "2026-10-04",
+    "facts": [
+      "Specialized: turns a state + a schema of typed questions into decisions (guided-choice flows).",
+      "Non-autoregressive single-pass architecture — not a chat generalist.",
+      "Served via the /v1/systemone API shape, not standard chat.",
+      "Max 4 images per request, 4 MiB / 16 MP each; billed per INPUT token (cost.mjs: $0.24 in, no output token billing).",
+      "Capabilities on /api/tags are literally [decision, vision] — no tools/thinking."
+    ],
+    "useFor": ["structured decision answer flows built on the systemone API", "image-conditioned typed-question questionnaires"],
+    "avoidFor": ["general chat", "agentic tool looping", "anything needing >4 images/request or >64K input tokens"],
+    "verify": "docs+api"
+  }
+}

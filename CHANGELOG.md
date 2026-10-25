@@ -16,6 +16,13 @@ All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
   default) and distillation runs on the model the user actually selected
   (`event.model`), with the window taken from that model's limit. Pinning one
   model explicitly remains supported for setups that want a fixed lane.
+- Model knowledge base for Ollama Cloud (`lib/modeldb.json` + `lib/modeldb.mjs`
+  + `docs/MODELDB.md`): 22 entries covering caps, context, usage class, verified
+  behaviors and use-for/avoid-for guidance; `priceForId` delegates to
+  `lib/cost.mjs PRICES` (three missing rows added: minimax-m3.1-flash,
+  mistral-large-4, muse-spark-open). New lane policies (`LANES`) degrade
+  gracefully against the host catalog, and `catalogCompat()` flags unknown or
+  vanished models both ways. CLI: `babyzilla models [--lanes|--json]`.
 
 ## [0.8.1] — 2026-10-25
 

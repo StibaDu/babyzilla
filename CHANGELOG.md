@@ -2,6 +2,17 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.11.1] — 2026-10-25
+
+### Fixed
+
+- **The published package omitted `bench/`.** `npm i -g git+…` (and any
+  registry install) shipped `lib/`, `bin/` and docs but not `bench/`, so the
+  deterministic verifier could not find `bench/replay.mjs` and every
+  provisional knob would have deferred instead of being decided. `bench/` is
+  now part of the package, and a packed-tarball install is exercised before
+  release (status + a real replay verdict from the installed copy).
+
 ## [0.11.0] — 2026-10-25
 
 ### Changed

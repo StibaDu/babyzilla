@@ -46,7 +46,8 @@ import {
   checkForUpdate, readUpdateCache, shouldNotify, markNotified, agentUpdateNotice,
   disabled as updatesDisabled, UPDATE_INTERVAL_MS,
 } from "./lib/updates.mjs";
-import { petEnabled, expr as petExpr, say as petSay } from "./lib/pet.mjs";
+import { petEnabled, expr as petExpr, say as petSay, think as petThink } from "./lib/pet.mjs";
+import { gist as petGist, latestThought } from "./lib/pet-thought.mjs";
 import { toolExpression, outcomeExpression, compactionExpression, budgetExpression, updateExpression } from "./lib/pet-map.mjs";
 
 const execAsync = promisify(execCb);
@@ -682,6 +683,17 @@ export default {
     // never reach a turn, so every emission is wrapped.
     const pet = petEnabled(opts);
     const petSeen = new Map();
+    // The pet narrates the model's thinking when `petThoughts` is on. One line per
+    // step, never the same line twice, and never at a rate that turns into wallpaper.
+    let lastThought = "";
+    const petThought = (messages) => {
+      if (opts.petThoughts === false) return;
+      if (!petThrottled("think", 2600)) return;
+      const line = petGist(latestThought(messages));
+      if (!line || line === lastThought) return;
+      lastThought = line;
+      petThink(line);
+    };
     const petThrottled = (key, ms) => {
       const now = Date.now();
       if (now - (petSeen.get(key) ?? 0) < ms) return false;
@@ -833,6 +845,7 @@ export default {
           const window = Number(event?.model?.limit?.context ?? event?.model?.limit?.input) || 0;
           petOn(() => {
             if (petThrottled("ctx", 900)) petExpr("thinking", 1.6);
+            petThought(messages);
             if (window) {
               const pct = (estimateMessagesTokens(event?.messages) / window) * 100;
               const b = budgetExpression(pct);

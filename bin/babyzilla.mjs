@@ -1328,8 +1328,10 @@ function main() {
   status                                         running? which pet? how much art?
   packs                                          list pets: built-in + installed packs
   use <pack|babyzilla>                           switch pet (restarts it if running)
+  remove <pack|babyzilla>                        delete a pet you do not use (install restores the built-in)
   list                                           all 100 expressions
   emit <id> [--hold 2] [--say "text"]            make it react right now
+  think "text" | say "text"                     a thought (quiet bubble) or a spoken line
   gallery                                        open the sprite field guide
 
 A pack is a second look built from a sprite sheet; see docs/PET.md.
@@ -1342,6 +1344,24 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
             out(`${c(GREEN)}installed${c(RESET)} ${res.app}\n`);
             out(`  binary   ${res.binary}\n  sprites  ${res.sprites} → ${petStateDir()}/sprites\n`);
             if (res.login) out(`  login    ${PET_LOGIN}\n`);
+            // an install restores what `pet remove` took away: the assets are back,
+            // so the "removed" mark must go with them
+            try {
+              const cfg = readPetConfig();
+              if (Array.isArray(cfg.retired) && cfg.retired.length) {
+                const restored = [];
+                cfg.retired = cfg.retired.filter((name) => {
+                  const there = name === "babyzilla"
+                    ? fs.existsSync(path.join(petStateDir(), "pet-data.json"))
+                    : fs.existsSync(path.join(petStateDir(), "packs", name, "pack.json"));
+                  if (there) restored.push(name);
+                  return !there;
+                });
+                if (!cfg.retired.length) delete cfg.retired;
+                writePetConfig(cfg);
+                if (restored.length) out(`  restored ${restored.join(", ")}\n`);
+              }
+            } catch { /* cosmetic */ }
             petStop();
             if (!rest.includes("--no-start")) {
               const pid = petStart();
@@ -1353,6 +1373,13 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
             }
             return;
           } catch (e) { out(`${c(YELLOW)}pet install failed:${c(RESET)} ${e.message}\n`); process.exitCode = 1; return; }
+        }
+        if (sub === "think" || sub === "say") {
+          const text = rest.slice(rest.indexOf(sub) + 1).filter((a) => !a.startsWith("--")).join(" ").trim();
+          if (!text) { out(`usage: babyzilla pet ${sub} "text"\n`); process.exitCode = 2; return; }
+          petEmitLine({ kind: sub, text });
+          out(`${sub === "think" ? "thought" : "said"}: ${text}\n`);
+          return;
         }
         if (sub === "emit") {
           const id = rest[rest.indexOf("emit") + 1];
@@ -1392,21 +1419,76 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
           return;
         }
 
+        if (sub === "remove" || sub === "retire") {
+          const name = rest[rest.indexOf(sub) + 1];
+          if (!name) { out(`usage: babyzilla pet ${sub} <pack|babyzilla>\n`); process.exitCode = 2; return; }
+          const cfg = readPetConfig();
+          const active = cfg.pack ?? "babyzilla";
+          const builtin = name === "babyzilla" || name === "default";
+          const id = builtin ? "babyzilla" : name;
+          const pack = builtin ? null : listPacks().find((p) => p.id === name);
+          if (!builtin && !pack) {
+            out(`${c(YELLOW)}unknown pet${c(RESET)} ${name} — try: babyzilla pet packs\n`);
+            process.exitCode = 2;
+            return;
+          }
+          if (active === id) {
+            // Deleting the art the app is drawing from would leave a blank window
+            // on the next launch; make switching the explicit step it should be.
+            out(`${c(YELLOW)}refusing${c(RESET)}: ${id} is the pet on screen — switch first: babyzilla pet use <other>\n`);
+            process.exitCode = 2;
+            return;
+          }
+          cfg.retired = [...new Set([...(cfg.retired ?? []), id])];
+          writePetConfig(cfg);
+          let gone = 0;
+          if (builtin) {
+            const dir = path.join(petStateDir(), "sprites");
+            for (const file of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
+              if (!file.endsWith(".png")) continue;
+              fs.rmSync(path.join(dir, file));
+              gone++;
+            }
+            fs.rmSync(path.join(petStateDir(), "pet-data.json"), { force: true });
+          } else {
+            const dir = path.join(petStateDir(), "packs", id);
+            if (fs.existsSync(dir)) { fs.rmSync(dir, { recursive: true, force: true }); gone = 1; }
+          }
+          out(`removed ${builtin ? "BabyZilla (built-in)" : pack.label}${gone ? "" : ` ${c(DIM)}(was not installed)${c(RESET)}`}\n`);
+          if (builtin) out(`  ${c(DIM)}restore with: babyzilla pet install${c(RESET)}\n`);
+          return;
+        }
+
         if (sub === "packs" || sub === "use") {
           const packs = listPacks();
-          const active = readPetConfig().pack ?? "babyzilla";
+          const cfgNow = readPetConfig();
+          const retired = new Set(cfgNow.retired ?? []);
+          const active = cfgNow.pack ?? "babyzilla";
           if (sub === "packs") {
-            out(`  ${"babyzilla".padEnd(16)} BabyZilla ${c(DIM)}(built-in)${c(RESET)}${active === "babyzilla" ? `  ${c(GREEN)}active${c(RESET)}` : ""}\n`);
+            if (!retired.has("babyzilla")) {
+              out(`  ${"babyzilla".padEnd(16)} BabyZilla ${c(DIM)}(built-in)${c(RESET)}${active === "babyzilla" ? `  ${c(GREEN)}active${c(RESET)}` : ""}\n`);
+            }
             for (const p of packs) {
+              if (retired.has(p.id)) continue;
               const anims = Object.entries(p.animations ?? {}).map(([k, v]) => `${k} ${v.length}`).join(", ");
               out(`  ${p.id.padEnd(16)} ${p.label} ${c(DIM)}${anims}${c(RESET)}${active === p.id ? `  ${c(GREEN)}active${c(RESET)}` : ""}\n`);
             }
             out(`\nswitch with: babyzilla pet use <name>\n`);
+            if (retired.size) {
+              out(`${c(DIM)}removed: ${[...retired].join(", ")} — babyzilla pet install restores it${c(RESET)}\n`);
+            }
             return;
           }
           const name = rest[rest.indexOf("use") + 1];
           if (!name) { out("usage: babyzilla pet use <pack|babyzilla>\n"); process.exitCode = 2; return; }
           const cfg = readPetConfig();
+          const retiredUse = new Set(cfg.retired ?? []);
+          const wanted = name === "default" ? "babyzilla" : name;
+          if (retiredUse.has(wanted)) {
+            out(`${c(YELLOW)}${wanted} was removed${c(RESET)} — restore it: babyzilla pet install\n`);
+            process.exitCode = 2;
+            return;
+          }
           if (name === "babyzilla" || name === "default") {
             delete cfg.pack;
             writePetConfig(cfg);

@@ -259,6 +259,8 @@ final class PetView: NSView {
 final class BubbleView: NSView {
     var text: String = ""
     var alpha: CGFloat = 0
+    /// Drawn as a thought: quieter ink, and dots instead of a tail.
+    var thought = false
 
     static func measure(_ text: String, width: CGFloat) -> (lines: [String], height: CGFloat) {
         let lines = wrap(text, width: width - 22)
@@ -281,23 +283,38 @@ final class BubbleView: NSView {
         NSBezierPath(rect: bounds).fill()
 
         let path = NSBezierPath(roundedRect: box.insetBy(dx: 1, dy: 1), xRadius: 3, yRadius: 3)
-        // tail
-        let t = NSBezierPath()
-        t.move(to: NSPoint(x: boxW / 2 - 6, y: box.minY + 1))
-        t.line(to: NSPoint(x: boxW / 2, y: 0))
-        t.line(to: NSPoint(x: boxW / 2 + 6, y: box.minY + 1))
-        t.close()
-        path.append(t)
+        if thought {
+            // Two dots instead of a tail: the shape that says "this is inside its
+            // head", not something it said to you.
+            for (dx, y, r) in [(-9.0, 2.6, 2.9), (-1.0, 0.2, 1.6)] as [(CGFloat, CGFloat, CGFloat)] {
+                let dot = NSBezierPath(ovalIn: NSRect(x: boxW / 2 + dx - r, y: y, width: r * 2, height: r * 2))
+                path.append(dot)
+            }
+        } else {
+            // tail
+            let t = NSBezierPath()
+            t.move(to: NSPoint(x: boxW / 2 - 6, y: box.minY + 1))
+            t.line(to: NSPoint(x: boxW / 2, y: 0))
+            t.line(to: NSPoint(x: boxW / 2 + 6, y: box.minY + 1))
+            t.close()
+            path.append(t)
+        }
 
         NSColor(calibratedRed: 0.06, green: 0.05, blue: 0.09, alpha: 0.94 * alpha).setFill()
         path.fill()
-        NSColor(calibratedRed: 0.72, green: 0.94, blue: 0.78, alpha: 0.95 * alpha).setStroke()
+        let edge = thought
+            ? NSColor(calibratedRed: 0.60, green: 0.68, blue: 0.86, alpha: 0.92 * alpha)
+            : NSColor(calibratedRed: 0.72, green: 0.94, blue: 0.78, alpha: 0.95 * alpha)
+        edge.setStroke()
         path.lineWidth = 2
         path.stroke()
 
+        let ink = thought
+            ? NSColor(calibratedRed: 0.76, green: 0.82, blue: 0.94, alpha: 1)
+            : NSColor(calibratedRed: 0.90, green: 0.98, blue: 0.92, alpha: 1)
         var y = box.maxY - padY - CGFloat(PixelFont.glyphHeight)
         for line in lines {
-            PixelFont.draw(line, at: NSPoint(x: padX, y: y), alpha: alpha)
+            PixelFont.draw(line, at: NSPoint(x: padX, y: y), alpha: alpha, color: ink)
             y -= lineH
         }
     }
@@ -407,6 +424,13 @@ final class PetController: NSObject {
     private var lastInteract = Date()
     private var bubbleUntil = Date.distantPast
     private var pendingLines: [String] = []
+    /// A thought is held separately: it must never displace something the pet is
+    /// actually saying, and only the newest one is worth showing.
+    private var pendingThought: String?
+    private var lastBubbleDebug = Date.distantPast
+    /// Whether a bubble is on screen. Not `bubble.isVisible`: that stayed true once
+    /// alpha stopped being animated, which stalled every queued line behind it.
+    private var bubbleVisible = false
     private var lastLineAt = Date.distantPast
     private var lastBlink = Date()
     private var movingFrame: String? = nil
@@ -656,13 +680,35 @@ final class PetController: NSObject {
     }
 
     private func stepBubble(now: Date) {
-        if now >= bubbleUntil, !bubble.isVisible, bubbleView.alpha < 0.02, !pendingLines.isEmpty {
-            let line = pendingLines.removeFirst()
-            showBubble(line)
+        if ProcessInfo.processInfo.environment["BABYZILLA_PET_DEBUG"] != nil,
+           now.timeIntervalSince(lastBubbleDebug) > 0.4 {
+            lastBubbleDebug = now
+            trace(["ev": "bubble", "alpha": Double(bubbleView.alpha), "visible": bubbleVisible,
+                   "queued": pendingLines.count, "thoughtQueued": pendingThought != nil,
+                   "until": bubbleUntil.timeIntervalSince1970])
         }
-        if now >= bubbleUntil, bubbleView.alpha > 0 {
-            bubbleView.alpha = max(0, bubbleView.alpha - 0.08)
-            if bubbleView.alpha <= 0 { bubble.orderOut(nil) }
+        if bubbleVisible {
+            if now < bubbleUntil {
+                // fade in over a few ticks; the animator proxy proved unreliable
+                // here and left alpha pinned at 0, which deadlocked the queue
+                if bubbleView.alpha < 1 {
+                    bubbleView.alpha = min(1, bubbleView.alpha + 0.3)
+                    bubbleView.needsDisplay = true
+                }
+            } else {
+                bubbleView.alpha = max(0, bubbleView.alpha - 0.12)
+                bubbleView.needsDisplay = true
+                if bubbleView.alpha <= 0 {
+                    bubble.orderOut(nil)
+                    bubbleVisible = false
+                    bubbleView.thought = false
+                }
+            }
+        } else if !pendingLines.isEmpty {
+            showBubble(pendingLines.removeFirst())
+        } else if let thought = pendingThought {
+            pendingThought = nil
+            showBubble(thought, thought: true)
         }
     }
 
@@ -819,6 +865,8 @@ final class PetController: NSObject {
 
     func say(_ text: String, hold: TimeInterval = 4.5) {
         guard !config.muted else { return }
+        // Real speech outranks a thought: fade whatever it was muttering.
+        if bubbleVisible, bubbleView.thought { bubbleUntil = Date.distantPast }
         let limit: TimeInterval = config.chattiness == "quiet" ? 900 : config.chattiness == "chatty" ? 2 : 8
         if Date().timeIntervalSince(lastLineAt) < limit { return }
         lastLineAt = Date()
@@ -826,16 +874,36 @@ final class PetController: NSObject {
         if pendingLines.count > 3 { pendingLines.removeFirst() }
     }
 
-    private func showBubble(_ text: String) {
-        trace(["ev": "say", "text": text])
+    /// One line of the model's reasoning, in the quieter bubble.
+    ///
+    /// Deliberately not routed through `say()`: its chattiness rules exist to stop
+    /// the pet interrupting *itself*, and a thought is already rate-limited at the
+    /// source. It also never displaces speech — if the pet is mid-sentence, the
+    /// thought is simply dropped, because a stale thought is worth less than a
+    /// sentence someone is reading.
+    func think(_ text: String) {
+        guard !config.muted, !text.isEmpty else { return }
+        // never while the pet is mid-sentence, never the same line twice
+        if bubbleVisible, !bubbleView.thought { return }
+        if bubbleVisible, bubbleView.text == text { return }
+        pendingThought = text
+        if bubbleVisible, bubbleView.thought { bubbleUntil = Date.distantPast }
+    }
+
+    private func showBubble(_ text: String, thought: Bool = false) {
+        var rec: [String: Any] = ["ev": "say", "text": text]
+        if thought { rec["thought"] = true }
+        trace(rec)
+        bubbleView.thought = thought
         bubbleView.text = text
         bubbleView.alpha = 0
+        bubbleView.needsDisplay = true
+        bubbleVisible = true
         bubble.orderFrontRegardless()
-        bubbleUntil = Date().addingTimeInterval(max(2.6, Double(text.count) * 0.055))
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.18
-            bubbleView.animator().alpha = 1
-        }
+        // A thought is a glance, not a reading matter.
+        let perChar: Double = thought ? 0.045 : 0.055
+        let floor: Double = thought ? 1.8 : 2.6
+        bubbleUntil = Date().addingTimeInterval(max(floor, Double(text.count) * perChar))
     }
 
     // ── mouse ────────────────────────────────────────────────────────────────
@@ -1029,6 +1097,8 @@ final class PetController: NSObject {
             }
         case "say":
             if let text = ev["text"] as? String { say(text) }
+        case "think":
+            if let text = ev["text"] as? String { think(text) }
         case "busy":
             busy = (ev["on"] as? Bool) ?? false
             if busy { setExpression("typing", hold: 0) }

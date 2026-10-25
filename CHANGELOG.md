@@ -2,6 +2,36 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.17.0] — 2026-10-25
+
+### Added
+
+- **The pet thinks out loud.** On every request it shows one short line distilled
+  from the newest assistant reasoning, in a quieter bubble with dots instead of a
+  tail — the thought that led to the step about to run. `lib/pet-thought.mjs` does
+  the reduction locally (no model call, no tokens): code, markdown, links and
+  anything the pixel font cannot draw are dropped; one sentence is kept; the
+  throat-clearing ("Let me…", "The user wants me to…") is stripped; the result is
+  clipped at a word and admits the cut. One thought per step, 2.6s throttle, never
+  the same line twice, only the newest reasoning, never while the pet is speaking.
+  Off with `petThoughts: false`.
+- `babyzilla pet think "text"` and `pet say "text"` for trying it without a session;
+  `--snapshot --thought` renders the thought bubble offscreen.
+- **`babyzilla pet remove <name>`** deletes a pet you do not use, built-in or pack.
+  It refuses to remove the pet you are wearing (that would leave a blank window on
+  the next launch), hides it from `pet packs`, and `pet use` points at the restore.
+  `pet install` puts the art back and clears the mark.
+
+### Fixed
+
+- **The bubble never advanced past its first line.** Its alpha was driven through
+  an `NSView` animator proxy that no-opped (alpha stayed 0), so the fade-out — and
+  therefore `orderOut` — never ran and `isVisible` stayed true forever. Every queued
+  line and thought sat behind it. Alpha is now stepped in the tick loop and
+  visibility is tracked explicitly, so lines play in order and a thought cuts short
+  when something is actually said. Found with `BABYZILLA_PET_DEBUG=1`, which traces
+  the bubble's alpha/queue state.
+
 ## [0.16.2] — 2026-10-25
 
 ### Added

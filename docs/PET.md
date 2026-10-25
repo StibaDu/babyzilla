@@ -135,6 +135,55 @@ the file.
 | update check | `update-available` |
 | model / network errors | `rate-limited`, `offline`, `model-error` |
 
+## Thinking out loud
+
+On every request the pet can show one short line distilled from the model's own
+reasoning — the thought that led to the step about to run:
+
+```
+   ╭──────────────────────────╮
+   │  Read the parser first   │
+   ╰───────────────╮──────────╯
+                 · ·
+```
+
+It is deliberately a **thought**, not a transcript: a quieter bubble, dots
+instead of a tail, and about two seconds on screen. `lib/pet-thought.mjs` does the
+reduction locally (no model call, no tokens): drop code, markdown, links and
+anything the pixel font cannot draw; keep one sentence; strip the throat-clearing
+("Let me…", "The user wants me to…"); clip at a word and admit the cut with `…`.
+
+Rules that keep it pleasant rather than spammy:
+
+- **one thought per step**, 2.6s throttle, and never the same line twice;
+- **speech wins** — a thought never displaces a line the pet is saying, and a
+  line arriving mid-thought cuts it short;
+- **only the newest** assistant reasoning is used, so a stale thought is never
+  replayed later in the turn;
+- off with `"petThoughts": false`, `"pet": false`, or `BABYZILLA_PET=0`.
+
+Try it without a session:
+
+```sh
+babyzilla pet think "Read the parser before the pack"
+babyzilla pet say "Done."
+```
+
+## Removing a pet
+
+`pet install` puts the built-in pet in your state dir. If you only ever use a pack,
+the built-in art is dead weight:
+
+```sh
+babyzilla pet use lil-dino      # you cannot remove what you are wearing
+babyzilla pet remove babyzilla  # or: pet remove <pack-id>
+```
+
+`remove` refuses to delete the active pet (that would leave a blank window on the
+next launch), hides it from `pet packs`, and makes `pet use` say how to get it
+back. `babyzilla pet install` restores it — the assets were never far away, just
+not installed.
+
 Turn it off with the plugin option `"pet": false`, or the environment variable
 `BABYZILLA_PET=0`.
 

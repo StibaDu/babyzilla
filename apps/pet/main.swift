@@ -42,6 +42,9 @@ if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
     let bv = BubbleView(frame: NSRect(x: 0, y: 0, width: bubbleW, height: 90))
     bv.text = line
     bv.alpha = 1
+    // --thought renders the quieter variant, so the two bubbles can be compared
+    // without a session.
+    bv.thought = args.contains("--thought")
     let bubbleH = BubbleView.measure(line, width: bubbleW).height
     bv.frame = NSRect(x: 0, y: 0, width: bubbleW, height: bubbleH)
     let W = bubbleW + 40, H = bubbleH + side + 20

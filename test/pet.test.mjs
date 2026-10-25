@@ -11,6 +11,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { EXPRESSIONS, byId, CATEGORIES } from "../pet/expressions.mjs";
+import { gist, latestThought } from "../lib/pet-thought.mjs";
 import {
   TOOL_EXPRESSION, toolExpression, outcomeExpression, compactionExpression,
   budgetExpression, updateExpression, errorExpression, sessionSummary,
@@ -113,6 +114,93 @@ test("bridge: appends valid JSONL, rotates, and never throws", async () => {
   process.env.BABYZILLA_PET_STATE = "/dev/null/nope";
   assert.doesNotThrow(() => pet.expr("idle"));
   process.env.BABYZILLA_PET_STATE = dir;
+});
+
+test("thoughts: reasoning becomes one small line, or nothing", () => {
+  // code and throat-clearing are not speech
+  assert.equal(
+    gist("```js\nconst x = 1;\n```\nThe user wants me to make the pet talk. I'll add a bubble next."),
+    "Make the pet talk",
+  );
+  // markdown, links and urls are stripped, not spoken
+  assert.equal(gist("- Read [the docs](https://example.com/x) and fix it."), "Read the docs and fix it");
+  // long lines break on a word and admit the cut
+  const long = gist("The quick brown fox jumps over the lazy dog and then keeps running past the fence into the field beyond", { max: 40 });
+  assert.ok(long.length <= 40, `clipped to ${long.length}: ${long}`);
+  assert.match(long, /…$/);
+  assert.ok(!/\s…$/.test(long), "no dangling space before the ellipsis");
+  // nothing worth saying
+  assert.equal(gist("```\nonly code\n```"), null);
+  assert.equal(gist("   "), null);
+  assert.equal(gist(null), null);
+  // the bubble font cannot draw emoji: they must not reach it
+  assert.equal(gist("Fix the 🐛 bug in the parser"), "Fix the bug in the parser");
+  // a bare opener is not a thought; the filler is stripped, the content kept
+  assert.equal(gist("Sure."), null);
+  assert.equal(gist("Okay, so the parser is the problem."), "The parser is the problem");
+});
+
+test("thoughts: only the newest assistant reasoning is used", () => {
+  const messages = [
+    { role: "user", content: [{ type: "text", text: "hi" }] },
+    { role: "assistant", content: [{ type: "reasoning", text: "old thought" }, { type: "text", text: "done" }] },
+    { role: "user", content: [{ type: "text", text: "next" }] },
+    { role: "assistant", content: [{ type: "reasoning", text: "new thought" }, { type: "tool-call" }] },
+  ];
+  assert.equal(latestThought(messages), "new thought");
+  // signed/encrypted reasoning has no text: do not fall back to a stale thought
+  assert.equal(latestThought([...messages, { role: "assistant", content: [{ type: "reasoning", text: "" }] }]), null);
+  // parts[] is the other shape a host may send
+  assert.equal(latestThought([{ role: "assistant", parts: [{ type: "reasoning", reasoning: "via parts" }] }]), "via parts");
+  assert.equal(latestThought([]), null);
+  assert.equal(latestThought(null), null);
+});
+
+test("thoughts: the CLI can make it think, and the bridge tags the kind", async () => {
+  const dir = tmp();
+  const env = { ...process.env, BABYZILLA_PET_STATE: dir, BABYZILLA_NO_UPDATE_CHECK: "1" };
+  const out = await run(process.execPath, [BIN, "pet", "think", "read", "the", "parser"], { env });
+  assert.match(out.stdout, /thought: read the parser/);
+  const lines = fs.readFileSync(path.join(dir, "events.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  assert.deepEqual({ kind: lines[0].kind, text: lines[0].text }, { kind: "think", text: "read the parser" });
+});
+
+test("cli: pet remove deletes a pet you are not wearing, and install restores it", async () => {
+  const dir = tmp();
+  const env = { ...process.env, BABYZILLA_PET_STATE: dir, BABYZILLA_NO_UPDATE_CHECK: "1" };
+  const cli = (...args) => run(process.execPath, [BIN, ...args], { env });
+  await cli("pet", "install", "--no-build", "--no-start");
+  assert.ok(fs.existsSync(path.join(dir, "sprites", "idle.png")), "sprites installed");
+
+  // never delete the art the app is drawing from
+  await assert.rejects(cli("pet", "remove", "babyzilla"), (e) => e.code === 2 && /refusing/.test(e.stdout));
+
+  // stand up a second pet and wear it
+  const pack = path.join(dir, "packs", "fakey");
+  fs.mkdirSync(path.join(pack, "sprites"), { recursive: true });
+  fs.writeFileSync(path.join(pack, "pack.json"), JSON.stringify({
+    kind: "pack", name: "fakey", label: "Fakey", size: 48, animations: { idle: ["idle-1"] },
+  }));
+  fs.copyFileSync(path.join(dir, "sprites", "idle.png"), path.join(pack, "sprites", "idle-1.png"));
+  await cli("pet", "use", "fakey");
+
+  const removed = await cli("pet", "remove", "babyzilla");
+  assert.match(removed.stdout, /removed BabyZilla \(built-in\)/);
+  assert.equal(fs.readdirSync(path.join(dir, "sprites")).filter((f) => f.endsWith(".png")).length, 0, "no built-in art left");
+  assert.ok(!fs.existsSync(path.join(dir, "pet-data.json")));
+
+  const list = await cli("pet", "packs");
+  assert.doesNotMatch(list.stdout, /BabyZilla \(built-in\)/, "the listing hides it");
+  assert.match(list.stdout, /removed: babyzilla/, "and says how to get it back");
+
+  await assert.rejects(cli("pet", "use", "babyzilla"), (e) => e.code === 2 && /was removed/.test(e.stdout));
+
+  const restored = await cli("pet", "install", "--no-build", "--no-start");
+  assert.match(restored.stdout, /restored babyzilla/);
+  assert.ok(fs.existsSync(path.join(dir, "sprites", "idle.png")), "install puts the art back");
+  const again = await cli("pet", "packs");
+  assert.match(again.stdout, /BabyZilla \(built-in\)/);
+  assert.doesNotMatch(again.stdout, /removed:/);
 });
 
 test("cli: pet list, emit and status", async () => {

@@ -59,7 +59,9 @@ test("context hook asks OpenCode to compact proactively on a 1M-token model", as
 });
 
 test("context hook caps a 1M-token Kimi K3 session by >90% and keeps the last result", async () => {
-  const { handlers } = await loadPlugin();
+  // Budget rewriting is the legacy path; prefix-stable mode is the default
+  // (see stable-select.test.mjs) and is asserted separately below.
+  const { handlers } = await loadPlugin({ stablePrefix: false });
   const bulk = numbered(8000); // ~39K tokens per result
   const messages = [{ id: "u0", role: "user", content: [{ type: "text", text: "long-horizon task" }] }];
   for (let i = 0; i < 26; i++) {
@@ -85,10 +87,48 @@ test("context hook caps a 1M-token Kimi K3 session by >90% and keeps the last re
 });
 
 test("context hook fits an 8K local model", async () => {
-  const { handlers } = await loadPlugin();
+  const { handlers } = await loadPlugin({ stablePrefix: false });
   const bulk = numbered(2000);
   const messages = [{ id: "u0", role: "user", content: [{ type: "text", text: "task" }] }];
   for (let i = 0; i < 8; i++) messages.push({ id: `m${i}`, role: "assistant", content: [{ type: "tool-result", id: `c${i}`, name: "read", result: { type: "text", value: bulk } }] });
   await handlers.get("context")({ sessionID: "ses_small", messages, model: { id: "local-8k", limit: { context: 8192 } } });
   assert.ok(estimateMessagesTokens(messages) <= 4096);
+});
+
+test("prefix-stable mode: a second request resends the same bytes for old parts", async () => {
+  const { handlers } = await loadPlugin(); // stablePrefix defaults to true
+  const bulk = numbered(8000);
+  const messages = [{ id: "u0", role: "user", content: [{ type: "text", text: "task" }] }];
+  for (let i = 0; i < 6; i++) {
+    messages.push({ id: `m${i}`, role: "assistant", content: [{ type: "tool-result", id: `c${i}`, name: "read", result: { type: "text", value: bulk } }] });
+  }
+  const model = { id: "kimi-k3", limit: { context: 1_000_000 } };
+  await handlers.get("context")({ sessionID: "ses_stable", messages, model });
+  const afterFirst = JSON.stringify(messages);
+
+  // A new tool result arrives; every already-sent part must keep its exact bytes,
+  // which is what keeps the provider's cached prefix valid.
+  messages.push({ id: "m6", role: "assistant", content: [{ type: "tool-result", id: "c6", name: "read", result: { type: "text", value: numbered(300) } }] });
+  const prefixBefore = JSON.stringify(messages.slice(0, -1));
+  await handlers.get("context")({ sessionID: "ses_stable", messages, model });
+  const prefixAfter = JSON.stringify(messages.slice(0, -1));
+
+  assert.equal(prefixAfter, prefixBefore, "prefix must be byte-identical between requests");
+  assert.ok(estimateMessagesTokens(messages) < estimateMessagesTokens([{ role: "user", content: [{ type: "text", text: "x" }] }, ...messages.slice(1).map((m) => ({ ...m, content: m.content.map((c) => ({ ...c, result: { type: "text", value: bulk } })) }))]),
+    "compression must have shrunk the big results");
+  assert.ok(!afterFirst.includes(bulk), "the huge result should be paged out on first sight");
+});
+
+test("prefix-stable mode still fires as an overflow valve near the window", async () => {
+  const { handlers } = await loadPlugin();
+  const bulk = numbered(8000);
+  const messages = [{ id: "u0", role: "user", content: [{ type: "text", text: "task" }] }];
+  for (let i = 0; i < 26; i++) {
+    messages.push({ id: `m${i}`, role: "assistant", content: [{ type: "tool-result", id: `c${i}`, name: "read", result: { type: "text", value: bulk } }] });
+  }
+  const before = estimateMessagesTokens(messages);
+  // Window set so the prompt exceeds 90% of it: the valve must trip.
+  await handlers.get("context")({ sessionID: "ses_stable2", messages, model: { id: "kimi-k3", limit: { context: Math.round(before / 1.05) } } });
+  const after = estimateMessagesTokens(messages);
+  assert.ok(after < before * 0.5, `overflow valve should shrink the request, got ${Math.round((1 - after / before) * 100)}%`);
 });

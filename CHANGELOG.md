@@ -6,6 +6,19 @@ All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
 ### Added
 
+- **Prefix-stable compression (`stablePrefix`, default on).** Tool results are
+  compressed from their own bytes only, at request-build time, and never
+  revisited — so an already-sent prefix serialises identically on every later
+  request and the provider's prompt cache keeps hitting. The previous
+  budget/position policy rewrote a different slice each request, which turned
+  cheap cached input into full-price input: measured on Ollama Cloud, −45%
+  tokens produced **+4% credits**. Stable mode measured **−46.6% credits**
+  (−50% prompt tokens, −49.9% peak context, task success 6/6 in both arms).
+  Options: `stableMinTokens` (size gate, default 4000) and
+  `stableOverflowRatio` (default 0.9 — the budget pass now runs only as an
+  overflow valve near the model window). `stablePrefix: false` restores the
+  old behaviour.
+
 - Capability-aware vision routing: when a prompt carries images, BabyZilla now
   checks whether the user's *selected* session model accepts image input
   (`ctx.catalog.model.get` → `capabilities.input` includes `image`). It does —

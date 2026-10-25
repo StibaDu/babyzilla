@@ -28,7 +28,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { estTokens, compressToolText, compressToolResult, routeDistill, selectCompressibleParts, compactMessagesForRequest } from "./lib/text.mjs";
+import { estTokens, estimateMessagesTokens, compressToolText, compressToolResult, routeDistill, selectCompressibleParts, selectStableParts, applyStableCompression, compactMessagesForRequest } from "./lib/text.mjs";
 import { writePage, pageHash } from "./lib/pages.mjs";
 import {
   fmt, dirSlug,
@@ -190,6 +190,14 @@ const defaults = {
   requestMinBudgetTokens: 10_000,
   // below this, leave the request alone even if the budget is smaller.
   requestMinTokens: 20_000,
+  // Prefix-stable mode: compress each tool result once, when it arrives, and
+  // decide from its own bytes only. Already-sent history is never rewritten, so
+  // the provider's prompt-cache prefix survives — the only mode that actually
+  // reduces billed input on a cache-discounting provider like Ollama.
+  stablePrefix: true,
+  // In stable mode the request hook is a valve only: it runs when the prompt
+  // reaches this share of the model window (cache cost beats a hard failure).
+  stableOverflowRatio: 0.9,
   // never let one request exceed this fraction of the model's context window
   // (system prompt and tool schemas are not counted, so leave headroom).
   requestMaxPromptRatio: 0.5,
@@ -756,11 +764,15 @@ function textOfPart(part) {
 async function compressOlderToolResults(ctx, sessionID, opts) {
   if (typeof ctx.session?.context !== "function" || !sessionID) return 0;
   const messages = await ctx.session.context({ sessionID });
-  const targets = selectCompressibleParts(messages, opts.toolResultProtectRecent ?? 3, COMPRESSIBLE_TOOLS, {
-    protectTurn: opts.toolResultProtectTurn !== false,
-    dedupe: true,
-    eagerMinTokens: opts.toolResultEagerTokens ?? null,
-  });
+  // Prefix-stable mode: decide from each part's own bytes only, at arrival,
+  // so already-sent history is never rewritten (prompt-cache safe).
+  const targets = opts.stablePrefix === true
+    ? selectStableParts(messages, opts)
+    : selectCompressibleParts(messages, opts.toolResultProtectRecent ?? 3, COMPRESSIBLE_TOOLS, {
+        protectTurn: opts.toolResultProtectTurn !== false,
+        dedupe: true,
+        eagerMinTokens: opts.toolResultEagerTokens ?? null,
+      });
   // The request shape carries no message ids, so the recall handle is a
   // content hash of the exact original text, written to the page store.
   let n = 0;
@@ -862,11 +874,31 @@ export default {
     // (the built-in plan-mode plugin uses the same mechanism). This is what
     // makes BabyZilla effective on huge-window models like Kimi K3 (1M), where
     // native compaction — and therefore Layer 1 — may never fire.
+    // In prefix-stable mode this hook rewrites only what is content-eligible:
+    // each big tool result is paged out deterministically, so the prefix a
+    // provider cached last request is byte-identical this request. The budget
+    // pass runs afterwards and only as an overflow valve.
     if (typeof ctx.session?.hook === "function" && opts.requestCompression !== false) {
       await ctx.session.hook("context", async (event) => {
         try {
           const messages = event?.messages;
           if (!Array.isArray(messages) || !messages.length) return;
+          const window = Number(event?.model?.limit?.context ?? event?.model?.limit?.input) || 0;
+          const pageRef = (text) => writePage(ROOT, text, { sessionID: event?.sessionID });
+          if (opts.stablePrefix === true) {
+            const stable = applyStableCompression(messages, opts, pageRef);
+            if (stable.parts) {
+              log(`stable compression: ${stable.parts} part(s), ${fmt(stable.before)} → ${fmt(stable.after)} tok (${stable.savedPct}% smaller), prefix-preserving`);
+            }
+            // Window management is a different concern from prefix stability:
+            // asking the host to compact still makes sense at the usual
+            // thresholds, and it is the host's own summary either way.
+            maybeRequestCompaction(ctx, event, stable, opts);
+            const ratio = Number(opts.stableOverflowRatio ?? 0.9);
+            const est = estimateMessagesTokens(messages);
+            if (!window || est < window * ratio) return;
+            log(`overflow valve: ${fmt(est)} tok > ${Math.round(ratio * 100)}% of ${fmt(window)} tok window`);
+          }
           const stats = compactMessagesForRequest(messages, {
             ...opts,
             modelContext: Number(event?.model?.limit?.context ?? event?.model?.limit?.input) || undefined,

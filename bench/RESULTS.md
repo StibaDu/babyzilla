@@ -126,3 +126,34 @@ every request keeps the prefix byte-stable. Projected with cache share held at
 OFF's 71% on the halved prompt (64K uncached / 156K cached / 758 out):
 
     $0.0096 + $0.0005 + $0.0005 ≈ $0.0105   ≈ −44% vs OFF
+
+## After the fix: prefix-stable compression (same harness, 10×24KB, 6 reps)
+
+`stablePrefix` (now default) decides from each part's own bytes and never
+rewrites an already-sent prefix. Same fixture, same model, same noise floor.
+
+| metric | OFF | ON | delta |
+|---|---|---|---|
+| prompt tokens | 717.7K | 358.6K | **−50.0%** |
+| uncached input | 191.0K | 100.2K | **−47.6%** |
+| peak request ctx | 119.2K | 59.8K | −49.9% |
+| output tokens | 1.3K | 1.7K | +31% |
+| **credits** | **$0.0310** | **$0.0166** | **−46.6%** |
+| task completed | 6/6 | 6/6 | — |
+
+Per-rep credits: `$0.0208→$0.0191`, `$0.0278→$0.0161`, `$0.0352→$0.0155`,
+`$0.0268→$0.0170`, `$0.0342→$0.0160`, `$0.0364→$0.0170` — **6/6 reps cheaper**,
+and the ON spread ($0.0155–0.0191) is far tighter than OFF's ($0.0208–$0.0364)
+because cache hits stop depending on luck.
+
+That is the whole point of the change: the same token cut as before (−50%),
+but it now lands in the cheap tier instead of destroying the cache.
+
+## Two bugs found on the way
+
+- `compressToolResult` never rewrote persisted parts: `slots === event.state`
+  compared an array to an object, so `state.output` was dead code.
+- `ctx.session.context()` returns a **copy** — mutating tool parts from
+  `execute.after` never reaches the wire (compression logged 6.4K→2.5K while
+  the request stayed raw). The honoured hook is `session.hook("context")`,
+  which is where the stable rewrite now lives.

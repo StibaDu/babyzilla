@@ -2,6 +2,18 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.11.2] — 2026-10-25
+
+### Fixed
+
+- **The documented install command fails on npm 12.** npm 12 ships
+  `allow-git=none` (and `allow-remote=none`), so `npm i -g git+https://…`
+  exits with `EALLOWGIT`; a tarball URL fails with `EALLOWREMOTE`. README and
+  AGENT-INSTALL now use the per-command `--allow-git=all` form and document a
+  zero-flag clone install (`npm i -g <clone>`, updates with `git pull`). Both
+  paths were verified on npm 12.0.1 / Node 26, including a replay verdict run
+  from the installed copy.
+
 ## [0.11.1] — 2026-10-25
 
 ### Fixed

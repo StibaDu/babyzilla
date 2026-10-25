@@ -281,8 +281,19 @@ completed safely**; check that your human's normal model works.
 Zero dependencies beyond Node, no Rust toolchain:
 
 ```sh
-npm i -g git+https://github.com/StibaDu/babyzilla.git
+npm i -g --allow-git=all git+https://github.com/StibaDu/babyzilla.git
 babyzilla stats
+```
+
+`--allow-git=all` is a per-command flag, not a permanent config change. npm 12
+sets `allow-git=none` and `allow-remote=none` by default, so a bare
+`npm i -g git+…` fails with `EALLOWGIT` (and a tarball URL with `EALLOWREMOTE`).
+If the flag is not acceptable on this machine, install from a clone instead —
+no flags needed, and it updates with `git pull`:
+
+```sh
+git clone https://github.com/StibaDu/babyzilla.git ~/.local/src/babyzilla
+npm i -g ~/.local/src/babyzilla
 ```
 
 Useful commands: `babyzilla show` (newest pack), `stats [--json]`,

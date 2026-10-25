@@ -111,7 +111,10 @@ opencode plugin add github:StibaDu/babyzilla
 Optional companion CLI (zero deps, needs Node ≥ 18):
 
 ```sh
-npm i -g git+https://github.com/StibaDu/babyzilla.git
+npm i -g --allow-git=all git+https://github.com/StibaDu/babyzilla.git
+# or, with no npm flags at all (works on every npm version):
+#   git clone https://github.com/StibaDu/babyzilla.git ~/.local/src/babyzilla
+#   npm i -g ~/.local/src/babyzilla
 babyzilla stats    # aggregate savings; also: show / verify / eval / prune
 babyzilla cost     # provider-side spend from OpenCode's usage records
 babyzilla models   # Ollama Cloud model knowledge base: caps, pricing, lanes (--audit)

@@ -322,7 +322,10 @@ for (let rep = 1; rep <= REPS; rep++) {
   const on = run.on;
   const mOff = measure(off.sid);
   const mOn = measure(on.sid);
-  results.push({ rep, off: mOff, on: mOn, hitOff: off.text.includes(marker), hitOn: on.text.includes(marker), dupOff: dupReads(off), dupOn: dupReads(on) });
+  // The leg order is part of the measurement: with identical fixtures the
+  // second leg hits the provider's prompt cache, so an unbalanced run reads
+  // as a huge fake effect. Record it so the consumer can insist on balance.
+  results.push({ rep, order: order.join(">"), off: mOff, on: mOn, hitOff: off.text.includes(marker), hitOn: on.text.includes(marker), dupOff: dupReads(off), dupOn: dupReads(on) });
   if (REPS > 1) console.log("");
 }
 

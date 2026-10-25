@@ -2,6 +2,38 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.10.1] — 2026-10-25
+
+### Fixed
+
+- **The first A/A noise measurements were invalid in two ways.** (1) A leg that
+  died after 2 requests (provider-side abort) was still scored against its
+  completed pair, recording a 44.09% "noise" floor (66.64% gate) that would
+  have frozen every keep decision. (2) Identical fixtures mean the second leg
+  of a pair reads the first leg's prompt cache — 96K → 52K uncached input in
+  the first complete pair — so a run with only one surviving leg order reports
+  ~40% "savings" that are pure warm-up; the second run produced 40.62%. Noise
+  samples now come only from marker-complete, work-matched reps with **both**
+  leg orders present (the per-order means cancel warm-up); an invalid run
+  records nothing and exits non-zero. The noise bench now defaults to 4 reps,
+  and `judgeVerify` defers a verdict whose payload has one order. Both bogus
+  samples were discarded locally. First honest measurement: **24.57% → floor
+  37.36%** (3 valid reps), i.e. the live agentic bench cannot resolve small
+  knob effects — such proposals are reverted by design (documented in README
+  and `bench/RESULTS.md`).
+- **A failed baseline leg no longer reverts a live knob.** `judgeVerify` treated
+  any missing marker as a quality failure, so a provider hiccup on the OFF leg
+  could revert a proposal that had real evidence behind it. A baseline-leg miss
+  now defers (retry scheduled, pending knob untouched); only an ON-leg miss —
+  baseline completed, proposal did not — is a quality verdict.
+
+### Tests
+
+- `noiseSample` contract: aborted/marker-missing legs never contribute; mixed
+  runs keep the valid reps (`test/selftune.test.mjs`).
+- `resolveVerify` deferral on baseline-leg failure; ON-leg failure still
+  reverts. Self-tuning suite: 20/20.
+
 ## [0.10.0] — 2026-10-25
 
 ### Added

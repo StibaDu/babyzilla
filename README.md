@@ -179,6 +179,12 @@ recorded) or freeze everything with `BABYZILLA_SELFTUNE_DISABLE=1`. Bench
 verification spends provider credits; it runs at most weekly and only when
 there is something to verify.
 
+The gate is deliberately hard to pass. On a multi-turn agentic task the A/A
+floor is large — the first honest measurement on this repo's bench shape was
+**24.6%** (uncached-input share swings with provider cache hits, not with the
+knob), which puts the bar at 37%. If a knob's effect cannot clear that, it is
+reverted and the loop says so: an unproven change is worse than no change.
+
 ## How it works
 
 The layers run in this order, cheapest first. None of them needs a model call

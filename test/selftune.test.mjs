@@ -21,7 +21,7 @@ import {
   readState, writeState, appendLedger, emptyState,
   clampValue, validProposal, allowlistFor, applyOverrides,
   createSelftune, buildSummaryData, noteRecallRendered,
-  judgeVerify, verifyPlan, noiseFloor, resolveVerify, manualRevert,
+  judgeVerify, verifyPlan, noiseFloor, noiseSample, resolveVerify, manualRevert,
 } from "../lib/selftune.mjs";
 import { SELF_LEARN_INSTRUCTIONS, buildAnalysisPrompt, parseAnalysis } from "../lib/analyze.mjs";
 
@@ -269,6 +269,27 @@ test("judgeVerify: pass needs marker, parity, and a cost win beyond the noise fl
   assert.ok(good.pct < 0);
   const noMarker = judgeVerify({ results: [mk(6, 0.02, false)] }, 1.0);
   assert.ok(!noMarker.ok && noMarker.reason.includes("marker"));
+  // Baseline leg failing is the instrument, not the proposal: defer, don't revert.
+  const offOnlyMiss = judgeVerify({
+    results: [
+      { hitOff: false, hitOn: true, off: { n: 2, sum: { cost: 0.0025 } }, on: { n: 11, sum: { cost: 0.0157 } } },
+    ],
+  }, 1.0);
+  assert.ok(offOnlyMiss.defer && !offOnlyMiss.ok, "OFF-leg abort must not count as a quality verdict");
+  // ON leg failing while baseline passed IS a quality signal.
+  const onOnlyMiss = judgeVerify({
+    results: [
+      { hitOff: true, hitOn: false, off: { n: 11, sum: { cost: 0.015 } }, on: { n: 11, sum: { cost: 0.011 } } },
+    ],
+  }, 1.0);
+  assert.ok(!onOnlyMiss.ok && !onOnlyMiss.defer && onOnlyMiss.reason.includes("marker"));
+  // A single leg order cannot separate the knob from prompt-cache warm-up.
+  const unbalanced = judgeVerify({
+    results: [
+      { rep: 1, order: "off>on", hitOff: true, hitOn: true, off: { n: 6, sum: { cost: 0.02 } }, on: { n: 6, sum: { cost: 0.01 } } },
+    ],
+  }, 1.0);
+  assert.ok(unbalanced.defer && unbalanced.reason.includes("unbalanced leg order"), "cache warm-up must not read as a win");
   const mismatch = judgeVerify({
     results: [
       { hitOff: true, hitOn: true, off: { n: 6, sum: { cost: 0.02 } }, on: { n: 6, sum: { cost: 0.01 } } },
@@ -280,6 +301,38 @@ test("judgeVerify: pass needs marker, parity, and a cost win beyond the noise fl
   assert.ok(unpriced.unpriced, "free-model legs cannot yield a verdict");
   const withinFloor = judgeVerify({ results: [mk(6, 0.02)] }, 15.0);
   assert.ok(!withinFloor.ok && withinFloor.reason.includes("floor"), "deltas inside noise are not wins");
+});
+
+test("noiseSample: only complete, order-balanced reps may set the floor", () => {
+  const pair = (rep, order, off, on, hit = true) => ({
+    rep, order, hitOff: hit, hitOn: hit,
+    off: { n: 11, sum: { cost: off } }, on: { n: 11, sum: { cost: on } },
+  });
+  // First real run: rep1's OFF leg died after 2 requests (no marker) while its
+  // pair completed the task — scoring it reported a 44% "noise" floor.
+  const aborted = {
+    rep: 1, order: "off>on", hitOff: false, hitOn: true,
+    off: { n: 2, sum: { cost: 0.0025 } }, on: { n: 11, sum: { cost: 0.0157 } },
+  };
+  // Second run: one complete rep only (the warm second leg reads 40% cheaper).
+  assert.ok(!noiseSample({ results: [aborted, pair(2, "on>off", 0.02, 0.021)] }).ok,
+    "one surviving order cannot cancel cache warm-up");
+
+  // Aborted rep dropped, both orders present: the ±warm-up deltas cancel.
+  const balanced = noiseSample({
+    results: [aborted, pair(2, "on>off", 0.02, 0.021), pair(3, "off>on", 0.02, 0.019)],
+  });
+  assert.ok(balanced.ok, balanced.reason);
+  assert.equal(balanced.reps, 2, "only complete reps contribute");
+  assert.equal(balanced.skipped, 1);
+  assert.ok(balanced.pct < 0.01, `warm-up must cancel, got ${balanced.pct}%`);
+
+  const allBad = noiseSample({ results: [aborted] });
+  assert.ok(!allBad.ok && allBad.reason.includes("no valid A/A rep"));
+  assert.ok(!noiseSample({ results: [] }).ok);
+  assert.ok(!noiseSample(null).ok);
+  const noMeta = noiseSample({ results: [pair(1, undefined, 0.02, 0.019)] });
+  assert.ok(!noMeta.ok && noMeta.reason.includes("leg-order"));
 });
 
 test("resolveVerify: keep on pass, revert on fail, defer on unpriced", async () => {
@@ -302,7 +355,10 @@ test("resolveVerify: keep on pass, revert on fail, defer on unpriced", async () 
     knobs: { stableMinTokens: 1800 },
     pending: { knob: "stableMinTokens", from: 2000, to: 1800, proposalTs: Date.now(), appliedTs: Date.now() },
   });
-  await resolveVerify({ root: root2, verdict: { results: [mk(6, 0.02, false)] } }); // marker miss
+  await resolveVerify({ root: root2, verdict: { results: [
+    // ON-leg marker miss (baseline completed) is a quality verdict: revert.
+    { hitOff: true, hitOn: false, off: { n: 6, sum: { cost: 0.02 } }, on: { n: 6, sum: { cost: 0.01 } } },
+  ] } });
   st = readState(root2);
   assert.equal(st.pending, null);
   assert.equal(st.counts.reverted, 1);
@@ -328,6 +384,29 @@ test("resolveVerify: keep on pass, revert on fail, defer on unpriced", async () 
   st = readState(root4);
   assert.ok(st.pending, "an unpriced bench must not revert live evidence");
   assert.equal(st.counts.verifyErrors, 1);
+});
+
+test("resolveVerify: an aborted baseline leg defers instead of reverting", async () => {
+  const root = freshRoot();
+  writeState(root, {
+    ...emptyState(),
+    knobs: { stableMinTokens: 1800 },
+    pending: { knob: "stableMinTokens", from: 2000, to: 1800, proposalTs: Date.now(), appliedTs: Date.now() },
+  });
+  const verdict = {
+    results: [
+      { hitOff: false, hitOn: true, off: { n: 2, sum: { cost: 0.0025 } }, on: { n: 11, sum: { cost: 0.0157 } } },
+      { hitOff: true, hitOn: true, off: { n: 11, sum: { cost: 0.015 } }, on: { n: 11, sum: { cost: 0.014 } } },
+    ],
+  };
+  const r = await resolveVerify({ root, verdict });
+  assert.ok(!r.ok);
+  const st = readState(root);
+  assert.ok(st.pending, "instrument failure must leave the provisional knob in place");
+  assert.equal(st.knobs.stableMinTokens, 1800);
+  assert.equal(st.counts.verifyErrors, 1);
+  assert.ok(st.lastTs.verify > 0, "retry is scheduled");
+  assert.ok(ledger(root).some((e) => e.kind === "verify-deferred"));
 });
 
 test("verifyPlan puts other overrides on both legs and diverges only the pending knob", () => {

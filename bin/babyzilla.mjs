@@ -854,8 +854,11 @@ function main() {
           break;
         }
         if (sub === "noise") {
-          out(`A/A baseline refresh (reps=${reps}, identical configs both legs)…\n`);
-          const n = runNoise({ root, repo, reps });
+          // 4 reps: an A/A floor needs BOTH leg orders, and one aborted leg
+          // invalidates its rep, so two reps are too often unbalanced.
+          const noiseReps = rest.includes("--reps") ? reps : 4;
+          out(`A/A baseline refresh (reps=${noiseReps}, identical configs both legs)…\n`);
+          const n = runNoise({ root, repo, reps: noiseReps });
           out(n.ok ? `noise = ${n.pct.toFixed(2)}% → floor ${n.floor.toFixed(2)}%\n` : `noise run failed: ${n.reason}\n`);
           process.exitCode = n.ok ? 0 : 1;
           break;

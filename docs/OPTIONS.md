@@ -143,6 +143,11 @@ The loop turns recorded telemetry into bounded, verified knob changes:
    leg). Kept only if the marker is found in every leg of every rep, step
    counts match, and the paired cost delta is cheaper and beyond the measured
    A/A noise floor. Fail → automatic revert. Every step in the ledger.
+   An aborted leg (no marker, different step count) is an instrument failure,
+   not evidence: A/A samples from such a run are discarded, and a failed
+   baseline leg defers verification instead of reverting the knob. A run also
+   needs both leg orders — identical fixtures make the second leg read the
+   first leg's prompt cache, so one order alone would read warm-up as savings.
 
 Prompts, contract text, model routing, compression algorithms and code are
 structurally out of reach — the analyst can only move numbers in this table:

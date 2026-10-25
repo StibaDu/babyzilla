@@ -196,3 +196,31 @@ marker sits past byte 2000 in every arm (7/8 marker MISS). Dump-shaped
 compression is covered by unit tests (`test/cheap.test.mjs`) and by live
 evidence (`193.4K → 189.9K` → now a ~99% cut, per the pipeline check run
 against the actual fixture bytes: `6258 → 87 tok`).
+
+## Verification bench (plugin-vs-plugin)
+
+`babyzilla selftune noise` runs the same harness with the plugin on **both**
+legs and no overrides, so every delta it finds is instrument noise. It is the
+gate the self-tuner must clear before keeping a knob.
+
+First honest measurement (4 reps, 2026-10-25): **24.57% → floor 37.36%**, from
+three marker-complete, work-matched reps.
+
+Two failed runs before that, both kept as regression tests:
+
+- **Aborted leg scored as data.** One leg died after 2 requests (provider
+  abort) while its pair completed; comparing their costs reported 44.09%
+  "noise". A leg without the task marker now never contributes.
+- **One surviving leg order.** With identical fixtures the second leg of a
+  pair reads the first leg's prompt cache — 96K → 52K uncached input in a
+  complete pair — so a run that loses one order reports ~40% "savings" that
+  are pure warm-up. The estimate is now the mean of per-order means, and a
+  run needs both orders (`off>on` and `on>off`); the noise bench defaults to
+  4 reps for that reason.
+
+Why the floor is large: cost here is dominated by **uncached input**, whose
+share depends on provider cache hits and on which tool calls the model chose
+that turn (11 requests per leg, output 1.2K–3.1K). Legs with identical configs
+ranged $0.0086–$0.0166. That is the honest resolution of this bench shape; a
+knob whose effect is smaller than that cannot be distinguished from cache
+weather, so it is reverted rather than kept on faith.

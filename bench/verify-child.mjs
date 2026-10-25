@@ -31,7 +31,7 @@ try {
   // A/A first when the floor is unmeasured — the verify judge then runs
   // against a real noise number instead of the conservative default.
   if (withNoise) {
-    const n = runNoise({ root, repo, reps: 2 });
+    const n = runNoise({ root, repo, reps: 4 });
     appendLedger(root, { kind: "noise-refresh", ok: n.ok, pct: n.pct ?? null });
   }
   const st = readState(root);

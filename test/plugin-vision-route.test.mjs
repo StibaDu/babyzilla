@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), "bz-vision-"));
 process.env.BABYZILLA_ROOT = path.join(root, "ctx");
@@ -65,7 +66,9 @@ test("vision-route: file attachment (file URL) triggers without wording", async 
   const { promptHook, syntheticCalls } = await loadPlugin();
   const ev = {
     sessionID: "ses_v2",
-    prompt: { text: "what is this?", files: [{ uri: `file://${p}` }] },
+    // Canonical file URI: on Windows `file://${p}` puts the drive letter in
+    // the URL host, which no path converter can round-trip.
+    prompt: { text: "what is this?", files: [{ uri: pathToFileURL(p).href }] },
   };
   await promptHook(ev);
   assert.equal(syntheticCalls.length, 1);

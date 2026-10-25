@@ -2,6 +2,18 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.8.1] — 2026-10-25
+
+### Fixed
+
+- Windows CI: the vision-router decoded file attachments via
+  `decodeURIComponent(url.pathname)`, which prepends a slash to Windows drive
+  paths (`file:///C:/…` → `/C:/…`), so the routing note never contained the
+  verbatim path. Path conversion now uses `fileURLToPath` (handles drive
+  letters and malformed-URL skips), and file pointers are built with
+  `pathToFileURL().href` — canonical on every platform — in
+  `lib/distill.mjs` and the vision-route test fixtures.
+
 ## [0.8.0] — 2026-10-25
 
 ### Added

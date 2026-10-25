@@ -26,7 +26,7 @@ import { exec as execCb, execFile as execFileCb } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { estTokens, compressToolText, compressToolResult, routeDistill, selectCompressibleParts, compactMessagesForRequest } from "./lib/text.mjs";
 import { writePage, pageHash } from "./lib/pages.mjs";
@@ -540,9 +540,16 @@ function imagePathsInFiles(files) {
     try {
       const u = new URL(uri);
       if (u.protocol !== "file:") continue;
-      const p = decodeURIComponent(u.pathname);
-      // file URLs from macOS drag-and-drop are pre-encoded; IMAGE_FILE_EXT on
-      // the decoded name keeps "Screenshot 2026-10-25 at 13.43.25.png" warm.
+      // fileURLToPath handles POSIX paths and Windows drive letters/unnamed
+      // host forms on every platform; a malformed file URL is not a path.
+      let p;
+      try {
+        p = fileURLToPath(u);
+      } catch {
+        continue;
+      }
+      // IMAGE_FILE_EXT on the decoded name keeps "Screenshot 2026-10-25 at
+      // 13.43.25.png" warm.
       if (IMAGE_FILE_EXT.test(p)) found.push(p);
     } catch {}
   }

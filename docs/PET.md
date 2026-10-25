@@ -137,37 +137,32 @@ the file.
 
 ## Thinking out loud
 
-On every request the pet can show one short line distilled from the model's own
-reasoning — the thought that led to the step about to run:
+On every request the pet shows one line of the model's **actual reasoning** — the
+best sentence of it, quoted as written:
 
 ```
-   ╭──────────────────────────╮
-   │  Read parser before pack │
-   ╰───────────────╮──────────╯
+   ╭──────────────────────────────╮
+   │  Hmm, wait: the alpha never  │
+   │  leaves zero, so the fade    │
+   │  never runs.                 │
+   ╰──────────────────╮───────────╯
                  · ·
 ```
 
-It is deliberately a **thought**, not a transcript: a quieter bubble, dots
-instead of a tail, and about two seconds on screen. `lib/pet-thought.mjs` does the
-reduction locally (no model call, no tokens): drop code, markdown, links and
-anything the pixel font cannot draw; keep one sentence; strip the throat-clearing
-("Let me…", "The user wants me to…"); clip at a word and admit the cut with `…`.
+It is deliberately a **thought**, not a transcript: a quieter bubble, dots instead
+of a tail, and a few seconds on screen. `lib/pet-thought.mjs` does the work locally
+(no model call, no tokens): drop code, markdown, links and anything the pixel font
+cannot draw; keep one sentence; remove the bookkeeping ("The user wants me to…");
+clip at a word and admit the cut with `…`.
 
-**It thinks in caveman.** The pet is a dinosaur with a small head and a small
-bubble, so the sentence is spoken bluntly: articles, copulas, auxiliaries and
-pronouns go, verbs are bared from a known list, and nothing that carries meaning
-is touched — `not`, `because`, numbers and names all stay.
+The sentence is chosen for **interest**, not position: a question, an aside, a
+"hmm" or a "wait" scores higher than the opening line, because the model's voice is
+the funny part. So the bubble quotes things like "Honestly this whole thing is
+suspicious: the alpha never changes" instead of a tidy summary of it.
 
-| reasoning | thought |
-|---|---|
-| I should read the parser before the pack. | Read parser before pack |
-| The tests are failing because the cache is stale. | Tests fail because cache stale |
-| It is not working yet, but I found the reason. | Not work yet, but me found reason |
-| The retired mark was stored in config.json. | Retire mark store in config.json |
-
-Unknown verbs are left as written rather than chopped into new words ("retir",
-"stor"), and a sentence made only of grammar comes back unchanged instead of
-leaving the pet silent.
+If you want the parrot instead of the thinker, `"petThoughts": "caveman"` drops the
+grammar and keeps the meaning ("Tests fail because cache stale"). It eats exactly
+the voice above, which is why it is not the default.
 
 Rules that keep it pleasant rather than spammy:
 
@@ -181,8 +176,8 @@ Rules that keep it pleasant rather than spammy:
 Try it without a session:
 
 ```sh
-babyzilla pet think "Read the parser before the pack"
-babyzilla pet say "Done."
+babyzilla pet think "Hmm, wait: the alpha never leaves zero."
+babyzilla pet think --caveman "I should read the parser before the pack."
 ```
 
 ## Removing a pet

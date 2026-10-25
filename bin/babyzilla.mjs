@@ -1442,9 +1442,9 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
         if (sub === "think" || sub === "say") {
           const text = rest.slice(rest.indexOf(sub) + 1).filter((a) => !a.startsWith("--")).join(" ").trim();
           if (!text) { out(`usage: babyzilla pet ${sub} "text"\n`); process.exitCode = 2; return; }
-          // what you test should be what the dino says: thoughts go through the same
-          // reducer as a real one. --raw keeps the words exactly as typed.
-          const line = sub === "think" && !rest.includes("--raw") ? cavemanLine(text) : text;
+          // verbatim by default (the voice is the point); --caveman previews the
+          // alternate register without editing config.
+          const line = sub === "think" && rest.includes("--caveman") ? cavemanLine(text) : text;
           petEmitLine({ kind: sub, text: line });
           out(`${sub === "think" ? "thought" : "said"}: ${line}\n`);
           // Proof, not faith: the app writes last-bubble.json when a bubble is on

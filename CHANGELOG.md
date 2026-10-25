@@ -2,6 +2,20 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.19.0] — 2026-10-25
+
+### Changed
+
+- **The bubble quotes the thinking instead of summarising it.** Thoughts are the
+  model's own sentence, verbatim: code, markdown and the "The user wants me to…"
+  bookkeeping are removed, emoji the font cannot draw are dropped, and the sentence
+  is picked for **interest** — a question, an aside, a "hmm" or a "wait" outranks the
+  opening line. That is the funny part, and a gist was throwing it away.
+- Caveman is now opt-in (`"petThoughts": "caveman"`, or `pet think --caveman`) rather
+  than the default. It reads well but it eats the voice this feature exists for.
+- A thought may now run to five bubble lines (~95 characters) instead of one short
+  clause, which is what quoting a real sentence needs.
+
 ## [0.18.0] — 2026-10-25
 
 ### Changed

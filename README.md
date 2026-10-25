@@ -143,10 +143,10 @@ It reads `~/.opencode/pet/events.jsonl`, which the plugin appends to on prompt,
 tool, compaction and error events. No sockets, no network, no daemon: if the pet
 is closed the plugin writes a few bytes. Turn it off with `"pet": false`.
 
-It can also **think out loud**: one short line per step, distilled locally from
-the model's own reasoning, said in caveman ("Read parser before pack") and shown
-in a quieter bubble (`babyzilla pet think "…"` to try it; `"petThoughts": false`
-to turn it off).
+It can also **think out loud**: one line of the model's actual reasoning per step,
+quoted verbatim — the aside, the "hmm, wait", the sentence where it notices the bug
+— shown in a quieter bubble (`babyzilla pet think "…"` to try it;
+`"petThoughts": false` to turn it off, `"caveman"` for the blunt register).
 
 A second look can be built from a sprite sheet and switched at runtime
 (`babyzilla pet packs`, `babyzilla pet use <name>`, or right-click → Pet); see

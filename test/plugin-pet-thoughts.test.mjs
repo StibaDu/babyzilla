@@ -66,9 +66,9 @@ test("pet thoughts: the newest reasoning becomes one short think event", async (
 
     const thought = events(dir).find((e) => e.kind === "think");
     assert.ok(thought, "a think event was emitted");
-    // one line, filler and code gone, spoken in caveman — the same reducer the pet uses
-    assert.equal(thought.text, "Let pet talk");
-    assert.ok(thought.text.length <= 56);
+    // the model's own sentence, verbatim — the same reducer the pet uses
+    assert.equal(thought.text, "I'll add a bubble next");
+    assert.ok(thought.text.length <= 95);
   } finally {
     delete process.env.BABYZILLA_PET_STATE;
   }

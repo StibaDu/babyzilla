@@ -116,14 +116,19 @@ test("bridge: appends valid JSONL, rotates, and never throws", async () => {
   process.env.BABYZILLA_PET_STATE = dir;
 });
 
-test("thoughts: reasoning becomes one small line, or nothing", () => {
-  // code and throat-clearing are not speech
+test("thoughts: the actual thinking is quoted, not paraphrased", () => {
+  // code and bookkeeping are not thinking; the model's own voice is kept
   assert.equal(
     gist("```js\nconst x = 1;\n```\nThe user wants me to make the pet talk. I'll add a bubble next."),
-    "Make pet talk",
+    "I'll add a bubble next",
   );
-  // markdown, links and urls are stripped, not spoken
-  assert.equal(gist("- Read [the docs](https://example.com/x) and fix it."), "Read docs and fix");
+  // markdown, links and urls are stripped, the words stay as written
+  assert.equal(gist("- Read [the docs](https://example.com/x) and fix it."), "Read the docs and fix it");
+  // the interesting sentence wins, not the first one: asides are the point
+  assert.equal(
+    gist("Checking the parser now. Hmm, wait — the alpha never leaves zero, so the fade never runs."),
+    "Hmm, wait the alpha never leaves zero, so the fade never runs",
+  );
   // long lines break on a word and admit the cut
   const long = gist("The quick brown fox jumps over the lazy dog and then keeps running past the fence into the field beyond", { max: 40 });
   assert.ok(long.length <= 40, `clipped to ${long.length}: ${long}`);
@@ -134,20 +139,18 @@ test("thoughts: reasoning becomes one small line, or nothing", () => {
   assert.equal(gist("   "), null);
   assert.equal(gist(null), null);
   // the bubble font cannot draw emoji: they must not reach it
-  assert.equal(gist("Fix the 🐛 bug in the parser"), "Fix bug in parser");
-  // a bare opener is not a thought; the filler is stripped, the content kept
+  assert.equal(gist("Fix the 🐛 bug in the parser"), "Fix the bug in the parser");
+  // a bare opener is not a thought
   assert.equal(gist("Sure."), null);
-  assert.equal(gist("Okay, so the parser is the problem."), "Parser problem");
 });
 
-test("thoughts: the dino speaks caveman, and stays understandable", () => {
+test("thoughts: caveman stays available, because sometimes it is the point", () => {
+  assert.equal(gist("The tests are failing because the cache is stale.", { style: "caveman" }), "Tests fail because cache stale");
   assert.equal(caveman("I should read the parser before the pack"), "me read parser before pack");
-  assert.equal(caveman("The tests are failing because the cache is stale"), "tests fail because cache stale");
   // a negation is meaning, not grammar: it must survive
   assert.equal(caveman("It is not working yet, but I found the reason"), "not work yet, but me found reason");
   // unknown verbs are left as written rather than mangled ("retir", "stor")
   assert.equal(caveman("The retired mark was stored in config.json"), "retire mark store in config.json");
-  assert.equal(caveman("I should have checked the bubble"), "me check bubble");
   // a sentence made only of grammar comes back unchanged instead of going silent
   assert.equal(caveman("the a an"), "the a an");
 });
@@ -172,13 +175,13 @@ test("thoughts: the CLI can make it think, and the bridge tags the kind", async 
   const dir = tmp();
   const env = { ...process.env, BABYZILLA_PET_STATE: dir, BABYZILLA_NO_UPDATE_CHECK: "1" };
   const out = await run(process.execPath, [BIN, "pet", "think", "read", "the", "parser"], { env });
-  // the CLI thinks in the same caveman register as a live session
-  assert.match(out.stdout, /thought: Read parser/);
+  // verbatim by default: what you type is what the dino thinks
+  assert.match(out.stdout, /thought: read the parser/);
   const lines = fs.readFileSync(path.join(dir, "events.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
-  assert.deepEqual({ kind: lines[0].kind, text: lines[0].text }, { kind: "think", text: "Read parser" });
-  // --raw keeps the words for scripted checks
-  const raw = await run(process.execPath, [BIN, "pet", "think", "--raw", "read", "the", "parser"], { env });
-  assert.match(raw.stdout, /thought: read the parser/);
+  assert.deepEqual({ kind: lines[0].kind, text: lines[0].text }, { kind: "think", text: "read the parser" });
+  // --caveman previews the alternate register without touching config
+  const blunt = await run(process.execPath, [BIN, "pet", "think", "--caveman", "read", "the", "parser"], { env });
+  assert.match(blunt.stdout, /thought: Read parser/);
 });
 
 test("cli: pet remove deletes a pet you are not wearing, and install restores it", async () => {

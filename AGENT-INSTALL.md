@@ -305,6 +305,12 @@ compares the price table with the provider's catalog), and
 `selftune verify` is free: it replays the compression pipeline deterministically
 (no model calls) to decide whether a provisional knob stays; add `--live` only
 if you want the dollar bench, which spends credits.
+
+Once a day the plugin also asks GitHub Releases for a newer version (one cached
+request, silent when offline). If one exists, the agent mentions it in one line
+and asks the human; only say yes if they do, then run `babyzilla update --yes`
+and tell them to restart opencode. Nothing is installed without their consent.
+For unattended machines set `BABYZILLA_NO_UPDATE_CHECK=1`.
 If npm install fails, skip — the CLI is optional; everything essential works
 without it.
 

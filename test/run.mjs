@@ -16,7 +16,13 @@ const files = fs
   .sort()
   .map((name) => path.join(dir, name));
 
-const child = spawn(process.execPath, ["--test", ...files], { stdio: "inherit" });
+// Tests never touch the update feed: the daily check is a network call, and a
+// test run should be deterministic and offline. plugin-update.test.mjs opts
+// back in with its own dead-port feed URL.
+const child = spawn(process.execPath, ["--test", ...files], {
+  stdio: "inherit",
+  env: { ...process.env, BABYZILLA_NO_UPDATE_CHECK: "1" },
+});
 child.on("exit", (code, signal) => {
   if (signal) process.kill(process.pid, signal);
   process.exit(code ?? 1);

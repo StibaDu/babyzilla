@@ -2,6 +2,40 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.12.0] — 2026-10-25
+
+### Added
+
+- **Daily update check, with consent.** Once per 24h BabyZilla asks GitHub
+  Releases for the newest tag (one unauthenticated request, cached in
+  `contextpacks/update.json`). If there is a newer version:
+  - the agent gets one synthetic note per day (across all sessions): mention it
+    in a single line, ask whether to update, and run `babyzilla update --yes`
+    only if the user agrees;
+  - the CLI appends a one-line `⬆ BabyZilla vX is available` notice after a
+    command (TTY only, never in `--json` output) and refreshes the cache in a
+    detached process, so a CLI-only machine also checks.
+  Nothing is ever installed without an explicit yes.
+- `babyzilla update [--check] [--yes] [--json]`: check now; on a git checkout,
+  `git pull --ff-only` after consent; otherwise print the exact install
+  commands and change nothing. Non-TTY runs never block on a prompt.
+- `lib/updates.mjs`: semver comparison (pre-release aware), 24h cache with a
+  1h retry backoff after failures, and a merge-write so a failed check never
+  erases the last known verdict or the notice stamps.
+- Opt out with `checkUpdates: false` or `BABYZILLA_NO_UPDATE_CHECK=1`
+  (the suite sets the latter so tests stay offline). `BABYZILLA_UPDATE_URL`
+  overrides the feed for mirrors and tests.
+
+### Notes
+
+- Offline is silent: a failed lookup is a timestamp, not an error, and the
+  previous "update available" verdict stays visible instead of flickering off.
+- Long-running opencode processes need no restart: the prompt hook refreshes a
+  stale cache in the background (never on the request path).
+- 11 new tests (216 total): version matrix, cache TTL/force/backoff, notice
+  throttle per surface, a real two-clone `git pull` update, the CLI against a
+  local feed, and the hook notice with `checkUpdates:false` and the kill switch.
+
 ## [0.11.2] — 2026-10-25
 
 ### Fixed

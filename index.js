@@ -23,7 +23,7 @@
 //     untouched, so OpenCode falls back to its normal compaction.
 
 import { exec as execCb, execFile as execFileCb } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { promises as fs, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
@@ -42,12 +42,20 @@ import { renderModules } from "./lib/eval.mjs";
 import { assemblePack } from "./lib/pack.mjs";
 import { createSelftune, applyOverrides as applySelftuneOverrides, readState as readSelftuneState, disabledReason as selftuneDisabled } from "./lib/selftune.mjs";
 import { SELF_LEARN_INSTRUCTIONS, normalizeModelRef } from "./lib/analyze.mjs";
+import {
+  checkForUpdate, readUpdateCache, shouldNotify, markNotified, agentUpdateNotice,
+  disabled as updatesDisabled, UPDATE_INTERVAL_MS,
+} from "./lib/updates.mjs";
 
 const execAsync = promisify(execCb);
 const execFileAsync = promisify(execFileCb);
 
 // Same override the bin honors, so tests and tooling can sandbox the data dir.
 const ROOT = process.env.BABYZILLA_ROOT || path.join(os.homedir(), ".opencode", "contextpacks");
+const PLUGIN_VERSION = (() => {
+  try { return JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version; }
+  catch { return null; }
+})();
 const JOURNAL_LIMIT_ENTRIES = 2000;
 // Tools whose results are safe to compress at the source. Shell output is
 // already handled by lowfat, so re-compressing it would only lose structure.
@@ -487,6 +495,18 @@ async function visionAgentAvailable(ctx, agentID) {
   }
 }
 
+// Tell the agent there is a newer release so it can ask the user. At most one
+// notice per day; the stamp is written only after the note actually landed.
+async function announceUpdate(ctx, sessionID) {
+  const cache = readUpdateCache(ROOT);
+  if (!shouldNotify(cache)) return false;
+  if (typeof ctx.session?.synthetic !== "function") return false;
+  await ctx.session.synthetic({ sessionID, text: agentUpdateNotice(cache) });
+  markNotified(ROOT);
+  log(`update notice sent: v${cache.current} → v${cache.latest}`);
+  return true;
+}
+
 async function sendVisionRouteNote(ctx, sessionID, paths) {
   if (typeof ctx.session?.synthetic !== "function") return false;
   const list = paths.map((p) => `- ${p}`).join("\n");
@@ -665,6 +685,17 @@ export default {
         applySelftuneOverrides(opts, readSelftuneState(ROOT), log);
       } catch (e) { log("selftune override load skipped:", e?.message ?? e); }
       SELFTUNE = createSelftune({ root: ROOT, opts, log });
+    }
+
+    // ---- daily update check (background, never blocks a turn) -------------
+    // One cached GitHub lookup per day. The prompt hook below only reads the
+    // cache, so a slow or offline network can never add latency to a turn.
+    if (opts.checkUpdates !== false && !updatesDisabled()) {
+      void checkForUpdate({ root: ROOT, current: PLUGIN_VERSION })
+        .then((r) => {
+          if (r?.ok && r.newer) log(`update available: v${r.current} → v${r.latest} (run: babyzilla update)`);
+        })
+        .catch(() => {});
     }
 
     // ---- journal capture (stats + raw bulk record) -------------------------
@@ -979,6 +1010,19 @@ export default {
           }
           prompt.files ??= [];
           if (!Array.isArray(prompt.files)) return;
+          // Daily update check + notice (v0.12). The cache is read every
+          // prompt (a small file); a stale one is refreshed in the background
+          // so a long-running opencode still checks daily, and the notice is
+          // sent at most once a day across sessions.
+          if (opts.checkUpdates !== false && !updatesDisabled()) {
+            try {
+              const cache = readUpdateCache(ROOT);
+              if (!cache?.ok || Date.now() - (cache.ts ?? 0) > UPDATE_INTERVAL_MS) {
+                void checkForUpdate({ root: ROOT, current: PLUGIN_VERSION }).catch(() => {});
+              }
+              await announceUpdate(ctx, sid);
+            } catch (e) { log("update notice skipped:", e?.message ?? e); }
+          }
           // Self-tuning loop (v0.10). The synchronous part here is cheap file
           // IO; the analysis cycle runs fire-and-forget behind an in-process
           // mutex — never inside a request and never blocking the turn.

@@ -6,11 +6,16 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { spawn } from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { sessionCosts, totals, defaultDbPath, openDb, hasTable, auditPrices } from "../lib/cost.mjs";
 import { readPage, prunePages } from "../lib/pages.mjs";
 import { extractProbes, scorePack, missingFactsModule } from "../lib/eval.mjs";
 import { loadDB, explain as explainModels } from "../lib/modeldb.mjs";
+import {
+  checkForUpdate, readUpdateCache, shouldNotify, markNotified, renderUpdateNotice,
+  applyUpdate, disabled as updatesDisabled, UPDATE_INTERVAL_MS, RETRY_AFTER_MS,
+} from "../lib/updates.mjs";
 import {
   renderStatus, runVerify as runVerifyBench, runReplayBench, verifyPlan, resolveVerify, runNoise,
   refreshBaseline, manualRevert, readState as readSelftuneState, noteRecallRendered,
@@ -766,6 +771,9 @@ Usage:
                                     score a pack against the transcript it replaced
   babyzilla prune [--older-than 2w] [--dry-run]
                                     remove old session packs (sessions untouched)
+  babyzilla update [--check] [--yes] [--json]
+                                    daily update check (cached 24h); with consent
+                                    runs 'git pull --ff-only' on a checkout
   babyzilla selftune [status|verify|noise|revert|baseline] [--live] [--reps N] [--json]
                                     self-tuning loop state; verify replays the pipeline
                                     deterministically against the pending proposal
@@ -777,6 +785,56 @@ Environment:
   BABYZILLA_ROOT=<dir>              data root (default ~/.opencode/contextpacks)
   OPENCODE_DB=<path>                OpenCode database for babyzilla cost/recall
 `;
+
+function pkgVersion() {
+  return JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+}
+
+function repoRoot() {
+  try { return path.dirname(path.dirname(fs.realpathSync(fileURLToPath(import.meta.url)))); }
+  catch { return path.dirname(path.dirname(fileURLToPath(import.meta.url))); }
+}
+
+/** Detached, silent refresh: never adds latency to the command being run. */
+function kickUpdateCheck() {
+  try {
+    const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "_update-check"], {
+      detached: true, stdio: "ignore", env: process.env,
+    });
+    child.unref();
+  } catch { /* no update check is never an error */ }
+}
+
+/** One pass over the cached verdict: refresh in the background, mention once a day. */
+function maybeUpdateNotice(cmd, rest, out) {
+  if (cmd === "update" || cmd === "_update-check" || updatesDisabled()) return;
+  if (rest.includes("--json")) return;
+  const root = packRoot();
+  const cache = readUpdateCache(root);
+  const stale = cache?.ok !== true || Date.now() - (cache.ts ?? 0) > UPDATE_INTERVAL_MS;
+  const backoff = Date.now() - (cache?.failTs ?? 0) < RETRY_AFTER_MS;
+  if (stale && !backoff) kickUpdateCheck();
+  if (!process.stdout.isTTY) return;
+  if (!shouldNotify(cache, Date.now(), "cliNoticeTs")) return;
+  out(`\n${renderUpdateNotice(cache)}\n`);
+  markNotified(root, Date.now(), "cliNoticeTs");
+}
+
+async function confirm(question) {
+  if (!process.stdin.isTTY) return false;
+  const readline = await import("node:readline/promises");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await rl.question(question)).trim().toLowerCase();
+    return answer === "y" || answer === "yes";
+  } catch {
+    // EOF or Ctrl-C while asking is a "no", not a crash.
+    process.stdout.write("\n");
+    return false;
+  } finally {
+    rl.close();
+  }
+}
 
 function main() {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -903,14 +961,64 @@ function main() {
         process.exitCode = 2;
         break;
       }
-      case "--help": case "-h": case "help": case "": out(HELP); break;
-      case "--version": case "-V": {
-        const { version } = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-        out(`babyzilla ${version}\n`);
+      case "update": {
+        const checkOnly = rest.includes("--check");
+        const assumeYes = rest.includes("--yes") || rest.includes("-y");
+        const asJson = rest.includes("--json");
+        const current = pkgVersion();
+        const repo = repoRoot();
+        void (async () => {
+          const res = await checkForUpdate({ root: packRoot(), current, force: true });
+          if (asJson) out(JSON.stringify({ ...res, repo }, null, 2) + "\n");
+          if (!res?.ok) {
+            if (!asJson) {
+              out(`could not check for updates${res?.error ? ` (${res.error})` : ""} — try again later\n`);
+            }
+            process.exitCode = 1;
+            return;
+          }
+          if (!res.newer) {
+            if (!asJson) out(`babyzilla ${current} is current (latest v${res.latest})\n`);
+            return;
+          }
+          if (!asJson) out(`update available: v${current} → v${res.latest}\n  ${res.url}\n`);
+          if (checkOnly) return;
+          let yes = assumeYes;
+          if (!yes) {
+            if (!process.stdin.isTTY) {
+              if (!asJson) out(`\nrun \`babyzilla update --yes\` to update, or: git -C ${repo} pull --ff-only\n`);
+              return;
+            }
+            yes = await confirm("Update now? [y/N] ");
+          }
+          if (!yes) { if (!asJson) out("not updating\n"); return; }
+          if (!asJson) out("updating…\n");
+          const done = await applyUpdate({ repo });
+          if (done.ok) {
+            const moved = done.before && done.after && done.before !== done.after;
+            out(moved
+              ? `updated ${done.before} → ${done.after} — restart opencode to load it\n`
+              : `already at ${done.after ?? current} (git pull found nothing new) — restart opencode if you just updated\n`);
+          } else if (done.kind === "git") {
+            out(`update failed: ${done.reason}\n`);
+            process.exitCode = 1;
+          } else {
+            out(`this copy is not a git checkout — update it with:\n  ${done.commands.join("\n  ")}\n`);
+            process.exitCode = 1;
+          }
+        })();
         break;
       }
+      case "_update-check": {
+        // Detached refresh target: quiet, self-throttling, exits when done.
+        void checkForUpdate({ root: packRoot(), current: pkgVersion() }).catch(() => {});
+        break;
+      }
+      case "--help": case "-h": case "help": case "": out(HELP); break;
+      case "--version": case "-V": out(`babyzilla ${pkgVersion()}\n`); break;
       default: out(`unknown command: ${cmd}\n\n${HELP}`); process.exitCode = 2;
     }
+    maybeUpdateNotice(cmd ?? "", rest, out);
   } catch (e) {
     out(`${c(YELLOW)}error:${c(RESET)} ${e.message}\n`);
     process.exitCode = 1;

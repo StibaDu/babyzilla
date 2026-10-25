@@ -116,6 +116,7 @@ npm i -g --allow-git=all git+https://github.com/StibaDu/babyzilla.git
 #   git clone https://github.com/StibaDu/babyzilla.git ~/.local/src/babyzilla
 #   npm i -g ~/.local/src/babyzilla
 babyzilla stats    # aggregate savings; also: show / verify / eval / prune
+babyzilla update   # check for a newer release (daily, cached); asks before updating
 babyzilla cost     # provider-side spend from OpenCode's usage records
 babyzilla models   # Ollama Cloud model knowledge base: caps, pricing, lanes (--audit)
 babyzilla selftune status   # self-tuning loop: knobs, pending proposal, floor
@@ -123,6 +124,23 @@ babyzilla recall 8c1f0b7a9d2e4c15   # exact original behind a paging marker / le
 babyzilla recall 8c1f0b7a9d2e4c15:120-180   # just those lines
 babyzilla retrieve src/app.js:120-160   # exact span, numbered
 ```
+
+### Updates
+
+Once a day BabyZilla asks GitHub Releases whether a newer version exists (one
+unauthenticated request, cached for 24h in `contextpacks/update.json`). If there
+is one, the agent mentions it in one line and asks whether to update; nothing is
+ever installed without your yes. The CLI says the same thing and can act on it:
+
+```sh
+babyzilla update          # check now, then ask
+babyzilla update --yes    # update a git checkout in place (git pull --ff-only)
+babyzilla update --check  # report only, change nothing
+```
+
+Turn it off with `"checkUpdates": false` or `BABYZILLA_NO_UPDATE_CHECK=1`; the
+check is offline-safe (a failed lookup is silent and retried an hour later) and
+sends no identifiers beyond a `babyzilla/<version>` user-agent.
 
 ## How do I know it's working?
 

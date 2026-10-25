@@ -181,7 +181,21 @@ babyzilla selftune verify --live [--reps N]  # dollar bench instead (spends cred
 babyzilla selftune noise [--reps N]    # refresh the A/A noise floor (spends credits)
 babyzilla selftune revert              # revert the pending proposal manually
 babyzilla selftune baseline            # recompute the emergency-revert baseline
+babyzilla update [--check] [--yes] [--json]
+                                       daily cached update check; asks before
+                                       pulling (git checkout only)
 ```
+
+## Update check
+
+| Option | Default | Meaning |
+|---|---|---|
+| `checkUpdates` | `true` | One GitHub Releases lookup per 24h, cached in `contextpacks/update.json`. When a newer release exists, the agent is told once a day to mention it and ask whether to update — nothing is applied without consent. `false` disables both the lookup and the notice. |
+
+`BABYZILLA_NO_UPDATE_CHECK=1` is an environment-level kill switch (same effect
+as `checkUpdates: false`), useful for CI. `BABYZILLA_UPDATE_URL` overrides the
+feed URL (tests, mirrors). A failed lookup keeps the last known verdict and
+retries in an hour; it never surfaces as an error or a stack trace.
 
 ## Changing options safely
 

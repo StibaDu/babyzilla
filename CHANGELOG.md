@@ -2,6 +2,19 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.21.0] — 2026-10-25
+
+### Added
+
+- **Three more pack animations, still no new art.** `pet/pack-animations.mjs` now also
+  derives `shake` (the sprite jerking sideways — failures), `stretch` (the body growing
+  up from its feet — waiting on a slow task) and `turn` (squeezed edge-on, then mirrored,
+  which reads as the dino rotating to face you when the agent needs an answer).
+- Wired through the pack's `expressions` map: `shell-fail`/`oops`/`conflict`/`offline` →
+  `shake`, `tool-task`/`subagent-wait`/`budget-low` → `stretch`, `tool-question`/`waiting`
+  → `turn`. The dino now has nine animations: idle, walk, jump, dash, nod, sway, shake,
+  stretch, turn.
+
 ## [0.20.0] — 2026-10-25
 
 ### Added

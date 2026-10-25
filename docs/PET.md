@@ -189,14 +189,17 @@ babyzilla pet think --caveman "They asked for this twice already."   # explicit
 
 ## More animations
 
-A pack can answer more states than idle/walk/jump through its `expressions` map,
-which points an expression id at an animation name:
+A pack can answer many states through its `expressions` map, which points an
+expression id at an animation name:
 
 ```json
-"expressions": { "thinking": "nod", "celebrate": "sway", "compressing": "dash" }
+"expressions": {
+  "thinking": "nod",      "celebrate": "sway",     "compressing": "dash",
+  "shell-fail": "shake",  "tool-question": "turn", "tool-task": "stretch"
+}
 ```
 
-`pet/pack-animations.mjs` adds three of them without repainting anything — the
+`pet/pack-animations.mjs` adds six of them without repainting anything — the
 palette, the pixel blocks and the baseline cannot drift, because every frame comes
 either from the artist's own sheet or from the pack's own idle frame:
 
@@ -206,12 +209,20 @@ node pet/pack-animations.mjs --pack ~/.opencode/pet/packs/lil-dino \
   --cell 32 --crop 4,0,24,24 --upscale 2 --row 2 --from-col 6
 ```
 
-- `dash` — the fourth row of the sheet the pack never imported (4 frames, dust and
-  all), copied cell-relative so the pose still rises where the artist drew it;
-- `nod` — the body squashing toward its feet, which reads as "yes, human";
-- `sway` — a shear that leaves the feet planted, for celebrating.
+| animation | frames | how it is made | answers |
+|---|---|---|---|
+| `dash` | 4 | the sheet row the pack never imported, copied cell-relative | `compressing`, `ship-it`, `self-tune` |
+| `nod` | 3 | the body squashing toward its feet | `thinking`, `listening`, `retrieve`, `tool-todo` |
+| `sway` | 3 | a shear that leaves the feet planted | `celebrate`, `shell-ok`, `pack-created` |
+| `shake` | 4 | the sprite jerking sideways, feet and all | `shell-fail`, `oops`, `conflict`, `offline` |
+| `stretch` | 3 | the body growing up from its feet | `tool-task`, `subagent-wait`, `budget-low` |
+| `turn` | 4 | squeezed edge-on, then mirrored | `tool-question`, `waiting` |
 
-`--remove` takes all three out again and leaves the pack as drawn.
+The `turn` is the one worth watching: frame 2 squashes the character to a sliver and
+frame 3 is the mirror image, so it reads as the dino rotating to face its human —
+which is exactly what it should do when the agent needs an answer from you.
+
+`--remove` takes all six out again and leaves the pack as drawn.
 
 ## Removing a pet
 

@@ -4,7 +4,8 @@
 //   1. frames the artist already drew but the pack never imported (the sheet's
 //      fourth row on this pack), copied cell-relative so they still line up;
 //   2. poses derived from the pack's own idle frame by geometry — a nod is a
-//      squash toward the feet, a sway is a shear that leaves the feet planted.
+//      squash toward the feet, a sway is a shear that leaves the feet planted,
+//      a shake is a tremble, a turn is a squeeze through edge-on to mirrored.
 //
 // Nothing here paints new art, so the palette, the 2x pixel blocks and the
 // baseline cannot drift:
@@ -41,20 +42,29 @@ const canvas = Number(pack.size ?? 48);
 const footRow = Number(arg("foot", 45));
 
 /** Animations this tool owns; everything else in the pack is the artist's. */
-const OWNED = { dash: 4, nod: 3, sway: 3 };
+const SIZES = { dash: 4, nod: 3, sway: 3, shake: 4, stretch: 3, turn: 4 };
 
 /** Which states each animation answers, so the pack shows more than idle. */
 const EXPRESSIONS = {
+  // busy, moving
   dash: ["compressing", "ship-it", "self-tune", "determined"],
-  nod: ["thinking", "listening", "retrieve", "recall", "tool-question"],
+  // paying attention to the human
+  nod: ["thinking", "listening", "retrieve", "recall", "tool-todo"],
+  // turning to face the human, because it needs an answer
+  turn: ["tool-question", "waiting"],
+  // something went wrong
+  shake: ["shell-fail", "oops", "conflict", "model-error", "offline", "rate-limited"],
+  // waiting on something slow, so it stretches instead of standing still
+  stretch: ["tool-task", "subagent-wait", "budget-low"],
+  // pleased with itself
   sway: ["celebrate", "shell-ok", "pack-created", "update-available"],
 };
 
-const FPS = { dash: 12, nod: 8, sway: 8 };
+const FPS = { dash: 12, nod: 8, sway: 8, shake: 14, stretch: 5, turn: 7 };
 
 function ownedFrames() {
-  return Object.keys(OWNED).flatMap((name) =>
-    Array.from({ length: OWNED[name] }, (_, i) => `${name}-${i + 1}`));
+  return Object.entries(SIZES).flatMap(([name, count]) =>
+    Array.from({ length: count }, (_, i) => `${name}-${i + 1}`));
 }
 
 function remove() {
@@ -63,18 +73,18 @@ function remove() {
     const file = path.join(sprites, `${id}.png`);
     if (fs.existsSync(file)) { fs.rmSync(file); gone++; }
   }
-  for (const name of Object.keys(OWNED)) {
+  for (const name of Object.keys(SIZES)) {
     delete pack.animations?.[name];
     delete pack.fps?.[name];
   }
   if (pack.expressions) {
     for (const [id, anim] of Object.entries(pack.expressions)) {
-      if (OWNED[anim]) delete pack.expressions[id];
+      if (SIZES[anim]) delete pack.expressions[id];
     }
     if (!Object.keys(pack.expressions).length) delete pack.expressions;
   }
   fs.writeFileSync(path.join(packDir, "pack.json"), `${JSON.stringify(pack, null, 2)}\n`);
-  console.log(`removed ${gone} frames: ${Object.keys(OWNED).join(", ")}`);
+  console.log(`removed ${gone} frames: ${Object.keys(SIZES).join(", ")}`);
 }
 
 if (args.includes("--remove")) {
@@ -85,7 +95,7 @@ if (args.includes("--remove")) {
 const base = decodePng(fs.readFileSync(path.join(sprites, `${pack.animations?.idle?.[0] ?? "idle-1"}.png`)));
 const palette = packPalette(
   fs.readdirSync(sprites)
-    .filter((f) => f.endsWith(".png") && !Object.keys(OWNED).some((n) => f.startsWith(`${n}-`)))
+    .filter((f) => f.endsWith(".png") && !Object.keys(SIZES).some((n) => f.startsWith(`${n}-`)))
     .map((f) => decodePng(fs.readFileSync(path.join(sprites, f)))),
 );
 
@@ -109,11 +119,14 @@ function resample(img, map) {
   return out;
 }
 
-/** Feet stay on `footRow`; the body above them shrinks toward it. */
+/**
+ * Feet stay on `footRow`; the body above them scales toward it.
+ * Below 1 the body squashes (and widens); above 1 it stretches (and narrows).
+ */
 function squash(img, factor) {
   const cx = canvas / 2;
   return resample(img, (x, y) => [
-    cx + (x - cx) / Math.max(0.2, 1 / factor),
+    cx + (x - cx) * factor,
     footRow - (footRow - y) / factor,
   ]);
 }
@@ -127,6 +140,21 @@ function shear(img, peak) {
   });
 }
 
+/** A tremble: the whole sprite jerks sideways, feet and all. */
+function shift(img, dx) {
+  return resample(img, (x, y) => [x - dx, y]);
+}
+
+/** Narrower only: what a body looks like when it turns edge-on. */
+function scaleX(img, factor) {
+  const cx = canvas / 2;
+  return resample(img, (x, y) => [cx + (x - cx) * factor, y]);
+}
+
+function mirror(img) {
+  return resample(img, (x, y) => [canvas - 1 - x, y]);
+}
+
 // ---- the artist's unused row -------------------------------------------------
 function importSheetRows() {
   const sheetPath = arg("sheet");
@@ -137,7 +165,7 @@ function importSheetRows() {
   const up = Number(arg("upscale", 2));
   const row = Number(arg("row", 2));
   const fromCol = Number(arg("from-col", 6));
-  const count = OWNED.dash;
+  const count = SIZES.dash;
 
   const frames = [];
   for (let i = 0; i < count; i++) {
@@ -157,6 +185,20 @@ function importSheetRows() {
   return frames;
 }
 
+// ---- poses, each one geometry on the artist's own pixels ---------------------
+const BUILT = {
+  // the body dipping toward its feet, not the sprite falling
+  nod: () => [0.94, 1.0, 0.97].map((f) => squash(base, f)),
+  // feet planted, head leaning
+  sway: () => [-2, 0, 2].map((p) => shear(base, p)),
+  // the jerky "no, that broke" tremble
+  shake: () => [2, -2, 2, -2].map((dx) => shift(base, dx)),
+  // reaching up: waiting on something slow without standing still
+  stretch: () => [1.0, 1.07, 1.03].map((f) => squash(base, f)),
+  // edge-on squeeze then mirrored: it turns to face its human
+  turn: () => [base, scaleX(base, 1.9), mirror(base), scaleX(base, 1.9)],
+};
+
 // ---- write ------------------------------------------------------------------
 const written = [];
 const dash = importSheetRows();
@@ -169,23 +211,15 @@ if (dash) {
   pack.animations.dash = dash.map((_, i) => `dash-${i + 1}`);
 }
 
-// a nod is the body dipping toward its feet, not the sprite falling
-const nodFactors = [0.94, 1.0, 0.97];
-nodFactors.forEach((factor, i) => {
-  const id = `nod-${i + 1}`;
-  fs.writeFileSync(path.join(sprites, `${id}.png`), encode(quantizeTo(squash(base, factor), palette)));
-  written.push(id);
-});
-pack.animations.nod = nodFactors.map((_, i) => `nod-${i + 1}`);
-
-// a sway keeps the feet planted and lets the head lean
-const swayPeaks = [-2, 0, 2];
-swayPeaks.forEach((peak, i) => {
-  const id = `sway-${i + 1}`;
-  fs.writeFileSync(path.join(sprites, `${id}.png`), encode(quantizeTo(shear(base, peak), palette)));
-  written.push(id);
-});
-pack.animations.sway = swayPeaks.map((_, i) => `sway-${i + 1}`);
+for (const [name, build] of Object.entries(BUILT)) {
+  const frames = build();
+  frames.forEach((frame, i) => {
+    const id = `${name}-${i + 1}`;
+    fs.writeFileSync(path.join(sprites, `${id}.png`), encode(quantizeTo(frame, palette)));
+    written.push(id);
+  });
+  pack.animations[name] = frames.map((_, i) => `${name}-${i + 1}`);
+}
 
 pack.fps = { ...(pack.fps ?? {}) };
 for (const [name, fps] of Object.entries(FPS)) if (pack.animations[name]) pack.fps[name] = fps;
@@ -197,6 +231,6 @@ for (const [anim, ids] of Object.entries(EXPRESSIONS)) {
 }
 
 fs.writeFileSync(path.join(packDir, "pack.json"), `${JSON.stringify(pack, null, 2)}\n`);
-console.log(`${written.length} frames written: ${Object.keys(OWNED).filter((n) => pack.animations[n]).join(", ")}`);
+console.log(`${written.length} frames written: ${Object.keys(SIZES).filter((n) => pack.animations[n]).join(", ")}`);
 
 function encode(img) { return encodePng(img.width, img.height, img.data); }

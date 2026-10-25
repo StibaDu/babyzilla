@@ -10,15 +10,22 @@ failing step.
 - Time: ~5 minutes. Cost: one small model call in Step 3 (uses the model your
   human already configured in OpenCode).
 - Requirement: **OpenCode v2.x** and **Node ≥ 18**.
-- What you will install: **one OpenCode plugin with five compression layers**
-  (Layer 1: session compaction via AI-distilled ContextPack modules; Layer 1b:
-  a hard per-request token budget, which also covers huge-window models like
-  Kimi K3; Layer 1c: proactive compaction so sessions do not grow to the
-  model's full window before Layer 1 runs; Layer 2: shell-command
-  pre-compression via the bundled lowfat integration, which needs a ~3 MB
-  binary; Layer 2b: source-level tool-result compression) + optionally a small
-  CLI. All data stays in
-  `~/.opencode/contextpacks/` on this machine.
+- What you will install: **one OpenCode plugin with seven compression layers**
+  (Layer 0.5: vision routing for text-only main models; Layer 1: session
+  compaction via AI-distilled ContextPack modules; Layer 1b: a hard
+  per-request token budget, which also covers huge-window models like Kimi K3;
+  Layer 1c: proactive compaction so sessions do not grow to the model's full
+  window before Layer 1 runs; Layer 2: shell-command pre-compression via the
+  bundled lowfat integration, which needs a ~3 MB binary; Layer 2b:
+  source-level, prefix-stable tool-result compression; Layer 3: the
+  deterministic ledger + `babyzilla recall` store) + optionally a small CLI.
+  All data stays in `~/.opencode/contextpacks/` on this machine.
+- The plugin also ships a **self-tuning loop**: it records per-session
+  telemetry locally (no model calls), and after a few sessions may spend one
+  cheap model call to propose *one numeric knob* — applied provisionally,
+  then kept or reverted by a local A/B bench. Defaults are conservative;
+  `"selfLearn": false` in options (or `BABYZILLA_SELFTUNE_DISABLE=1` in the
+  environment) disables it entirely, telemetry included.
 
 ---
 
@@ -280,8 +287,12 @@ babyzilla stats
 
 Useful commands: `babyzilla show` (newest pack), `stats [--json]`,
 `verify` (checks `path:line` pointers inside modules still resolve),
-`prune --older-than 2w --dry-run` (housekeeping). If npm install fails,
-skip — the CLI is optional; everything essential works without it.
+`prune --older-than 2w --dry-run` (housekeeping),
+`models` (Ollama Cloud model knowledge base: caps, pricing, lanes; `--audit`
+compares the price table with the provider's catalog), and
+`selftune status` (self-tuning loop state: knobs, pending proposal, counts).
+If npm install fails, skip — the CLI is optional; everything essential works
+without it.
 
 If you installed from a clone instead, link it so the `babyzilla recall <hash>`
 hints that appear in the transcript actually resolve:
@@ -311,9 +322,10 @@ babyzilla --version   # must print a version, not nothing
    relevant cold modules auto-attach to later prompts (max 2, 6K-token budget);
    every shell call the agent makes is pre-compressed by the lowfat layer (if
    installed); `/contextpack` in any OpenCode session shows live stats.
-4. Data location + removal: everything lives in `~/.opencode/contextpacks/`.
-   Uninstall: remove the plugin entry / `opencode plugin remove babyzilla`,
-   then `rm -rf ~/.opencode/contextpacks`.
+4. Data location + removal: everything lives in `~/.opencode/contextpacks/`
+   (packs, journals, and the `selftune/` telemetry + ledger). Uninstall:
+   remove the plugin entry / `opencode plugin remove babyzilla`, then
+   `rm -rf ~/.opencode/contextpacks`.
 
 ---
 
@@ -331,11 +343,16 @@ babyzilla --version   # must print a version, not nothing
 
 ## Privacy
 
-- The distillation call sends transcript text to **your human's configured
-  model provider** (that is inherent to AI summarization; set
-  `distillModel` in options to pin a specific cheaper model).
-- The journal stores the first 1200 characters of each tool output locally;
-  nothing is uploaded anywhere except the model call above.
+- Two kinds of model calls can leave the machine, both to **your human's
+  configured model provider**: (1) the compaction distillation call (inherent
+  to AI summarization; pin a cheaper model with `distillModel`), and (2) the
+  self-tuning analysis call — occasional, cheap, and only after several
+  sessions of new telemetry; it carries a compact summary of recorded session
+  statistics (token/cost totals, counts), never transcripts or file contents.
+  `"selfLearn": false` (or `BABYZILLA_SELFTUNE_DISABLE=1`) removes call (2).
+- The journal stores the first 1200 characters of each tool output locally,
+  and `selftune/sessions.jsonl` / `selftune/ledger.jsonl` record per-session
+  numbers locally. Nothing is uploaded anywhere except the model calls above.
 - All data is on-disk under `~/.opencode/contextpacks/` and can be deleted at
   any time. OpenCode's own session transcripts are never modified or deleted —
   BabyZilla replaces the summary view only; raw history is kept by OpenCode

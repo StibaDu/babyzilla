@@ -9,7 +9,7 @@
 
 [![tests](https://github.com/StibaDu/babyzilla/actions/workflows/test.yml/badge.svg)](https://github.com/StibaDu/babyzilla/actions/workflows/test.yml)
 
-**70–99% context compression for [OpenCode](https://opencode.ai) v2 — in six layers, one install.**
+**70–99% context compression for [OpenCode](https://opencode.ai) v2 — in seven layers, one install.**
 
 - **Layer 1 — Session compaction** (ContextPack): OpenCode's compaction
   summary is replaced by AI-distilled **context modules** — state, decisions,
@@ -41,7 +41,7 @@
   token-compact forms), so tool output enters the context pre-compressed.
 - **Layer 2b — Tool-result compression**: any large tool result is compacted
   *at the source*, before it is persisted and resent on every later turn.
-  Everything over `toolResultEagerMinTokens` (default 8K, ~1.2× a routine
+  Everything over `toolResultEagerTokens` (default 8K, ~1.2× a routine
   read) is paged by size — no tool-name allowlist to maintain — and results
   under the threshold stay inline for free. Head, tail, structural and error
   lines are kept; line numbers stay intact.
@@ -114,6 +114,8 @@ Optional companion CLI (zero deps, needs Node ≥ 18):
 npm i -g git+https://github.com/StibaDu/babyzilla.git
 babyzilla stats    # aggregate savings; also: show / verify / eval / prune
 babyzilla cost     # provider-side spend from OpenCode's usage records
+babyzilla models   # Ollama Cloud model knowledge base: caps, pricing, lanes (--audit)
+babyzilla selftune status   # self-tuning loop: knobs, pending proposal, noise floor
 babyzilla recall 8c1f0b7a9d2e4c15   # exact original behind a paging marker / ledger row
 babyzilla recall 8c1f0b7a9d2e4c15:120-180   # just those lines
 babyzilla retrieve src/app.js:120-160   # exact span, numbered
@@ -140,10 +142,42 @@ You do not have to trust a benchmark table — the plugin logs its own numbers.
    `babyzilla recall <handle>` returns the exact original text. If you ever
    cannot recover something, that is a bug — please open an issue with the
    handle.
+4. **The tuner stays visible.** With the self-tuning loop on (default),
+   `babyzilla selftune status` shows its knobs, any pending proposal, the
+   measured noise floor, and the decision counts — every change is also in
+   `~/.opencode/contextpacks/selftune/ledger.jsonl`.
 
 A realistic first-week result on a light install is a modest per-request saving
 and one compaction you barely noticed. The 98% figures are the ceiling for
 transcript-heavy sessions, not the expected median.
+
+## Does it tune itself?
+
+Yes, within strict limits — and every decision is visible:
+
+1. **Telemetry, free.** Each finished session gets one record in
+   `~/.opencode/contextpacks/selftune/sessions.jsonl`: billed tokens and cost
+   from OpenCode's own database, cache resets, recall round-trips, duplicate
+   tool calls, paging volume, distillation diet. No model calls.
+2. **One cheap analysis, occasionally.** After a few sessions of new
+   experience (default 4, ≥3 turns each) and at most once per ~20 hours, one
+   model call (`selflearnModel`, default: your session's model — free on
+   `opencode`-tier models) may propose **one numeric knob change** — inside a
+   hard clamp table, at most 35% per step. Prompts, routing, algorithms and
+   code are structurally out of reach.
+3. **Apply provisionally, then verify.** The change takes effect immediately
+   and is scheduled into the local A/B bench (`bench/ab-live.mjs`,
+   plugin-vs-plugin). It is kept only if the task marker is found in every
+   leg, step counts match, and the cost win beats the measured A/A noise
+   floor — otherwise it reverts automatically. A recall storm while a change
+   is provisional reverts it without waiting for a bench.
+4. **Everything lands in `selftune/ledger.jsonl`** — proposals, applies,
+   keeps, reverts, with reasons. `babyzilla selftune status` shows the state.
+
+Disable the loop entirely with `"selfLearn": false` (telemetry keeps being
+recorded) or freeze everything with `BABYZILLA_SELFTUNE_DISABLE=1`. Bench
+verification spends provider credits; it runs at most weekly and only when
+there is something to verify.
 
 ## How it works
 
@@ -173,11 +207,15 @@ except Layer 1.
    turn* above 32K tokens (`requestUserBulkMinTokens`) is condensed the same
    way — opening, constraint lines and closing kept verbatim, the rest paged
    behind a recall handle. The **live** user message is never touched.
-5. **Cache safety**: a rewrite that would save less than 12%
-   (`requestMinSavingsPct`) is rolled back instead of churning the provider's
-   prompt cache, and so is any rewrite that would push the request over the
-   model window. No compaction is required for any of this — which is what
-   makes it work on 1M-token models.
+5. **Cache safety: credits, not just tokens.** Rewrites are a pure function of
+   each part's own bytes — position-independent, monotone, byte-stable — so
+   compressing at arrival never changes already-sent history, and the
+   provider's prompt cache stays valid on later requests (`stablePrefix`, 2K
+   size gate). A rewrite that would save less than 12% of the request
+   (`requestMinSavingsPct`), or that would push it over the model window, is
+   rolled back rather than buying a few tokens with a full-price cache miss.
+   No compaction is required for any of this — which is what makes it work on
+   1M-token models.
 6. **Layer 1c, proactive compaction**: OpenCode's own compaction only fires
    near the model's context limit, so a 1M-token session can grow unbounded
    before Layer 1 ever runs. Once the context passes
@@ -220,6 +258,8 @@ per-project library that outlives individual sessions.
 
 - [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) — the measured head-to-head
   against Headroom (same model, same files, four rounds).
+- [`bench/RESULTS.md`](bench/RESULTS.md) — live plugin-vs-plugin A/B results,
+  including the cache-reset and noise-floor findings that shaped v0.10.
 - [`examples/tool-result-compression.md`](examples/tool-result-compression.md) —
   Layer 2b, before/after, with measured token counts.
 - [`examples/real-pack/`](examples/real-pack/) — a real pack produced for a
@@ -246,10 +286,13 @@ per-project library that outlives individual sessions.
   stream, so it does not care which tools you have — a stock install with the
   built-in `read`/`grep`/`shell` tools is the normal case. There is nothing to
   connect: no MCP servers, no Cloudflare (or any other) account, no vector
-  database, no embeddings, no proxy, no daemon. The one network call it makes
-  is the distillation request to the model provider you already configured.
+  database, no embeddings, no proxy, no daemon. The only network calls it
+  makes are model calls to the provider you already configured: the
+  compaction distillation, and — unless you set `selfLearn: false` — the
+  occasional self-tuning analysis (a compact summary of recorded statistics,
+  never transcripts).
 - Distillation sends transcript text to your configured model provider.
-  Journals, module files, and stats stay on disk in
+  Journals, module files, `selftune/` telemetry and stats stay on disk in
   `~/.opencode/contextpacks/` — delete anytime (`babyzilla prune` or
   `rm -rf`).
 

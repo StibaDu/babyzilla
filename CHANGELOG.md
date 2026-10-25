@@ -2,7 +2,7 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.10.0] — 2026-10-25
 
 ### Added
 
@@ -99,6 +99,13 @@ All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
   all recorded spend now reconciles at 1.00x. Audited from per-request rows
   (`session_message`), not the `session` aggregate, whose token columns do not
   reconcile with the cost it records.
+- **Docs/code drift, two real cases.** The eager size gate was documented as
+  `toolResultEagerMinTokens` while the code read `toolResultEagerTokens` — a
+  config copied from the old docs was silently inert. `toolResultEagerTokens`
+  is now the documented name and the old spelling is accepted as an alias.
+  Separately, `requestMinBudgetTokens` shipped as `10000` while README,
+  OPTIONS and the library fallback all promised `12000`; the default now
+  matches the documented floor (the conservative direction).
 
 ## [0.8.1] — 2026-10-25
 

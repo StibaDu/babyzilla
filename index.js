@@ -199,7 +199,10 @@ const defaults = {
   // applies to 1M-token windows, and the floor below prevents over-compression.
   requestTargetRatio: 0.08,
   // never shrink a request below this, even when the ratio says so.
-  requestMinBudgetTokens: 10_000,
+  // 12K floor matches lib/text.mjs's own fallback and the documented value
+  // (the code shipped 10K while README/OPTIONS promised 12K; the floor is a
+  // safety minimum, so docs and code now agree on the conservative side).
+  requestMinBudgetTokens: 12_000,
   // below this, leave the request alone even if the budget is smaller.
   requestMinTokens: 20_000,
   // Prefix-stable mode: compress each tool result once, when it arrives, and
@@ -814,7 +817,9 @@ async function compressOlderToolResults(ctx, sessionID, opts) {
     : selectCompressibleParts(messages, opts.toolResultProtectRecent ?? 3, COMPRESSIBLE_TOOLS, {
         protectTurn: opts.toolResultProtectTurn !== false,
         dedupe: true,
-        eagerMinTokens: opts.toolResultEagerTokens ?? null,
+        // toolResultEagerMinTokens is the name docs used before v0.10; accept
+        // it so configs copied from the old README keep working.
+        eagerMinTokens: opts.toolResultEagerTokens ?? opts.toolResultEagerMinTokens ?? null,
       });
   // The request shape carries no message ids, so the recall handle is a
   // content hash of the exact original text, written to the page store.
@@ -825,7 +830,7 @@ async function compressOlderToolResults(ctx, sessionID, opts) {
     const name = String(part.name ?? part.tool ?? "").toLowerCase();
     const min = COMPRESSIBLE_TOOLS.has(name)
       ? (opts.toolResultMinTokens ?? 4000)
-      : (opts.toolResultEagerTokens ?? opts.toolResultMinTokens ?? 4000);
+      : (opts.toolResultEagerTokens ?? opts.toolResultEagerMinTokens ?? opts.toolResultMinTokens ?? 4000);
     const ref = writePage(ROOT, textOfPart(part), { sessionID });
     n += compressToolResult(part, { ...opts, toolResultMinTokens: min }, (tool, before, after) => {
       try { SELFTUNE?.noteCompression(sessionID, tool, before, after); } catch { /* telemetry only */ }

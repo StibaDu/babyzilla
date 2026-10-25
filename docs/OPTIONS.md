@@ -34,7 +34,7 @@ hot-reload on config change):
         "evalMaxChars": 400000,
         "distillBudgetTokens": 0,
         "toolResultCompression": true,
-        "toolResultEagerMinTokens": 8000,
+        "toolResultEagerTokens": 8000,
         "toolResultProtectRecent": 3,
         "toolResultProtectTurn": true,
         "proactiveCompactRatio": 0.35,
@@ -89,7 +89,7 @@ once.)
 | `requestElideReasoning` | `true` | Blank old reasoning text. Signed/encrypted reasoning blocks are never touched. |
 | `toolResultCompression` | `true` | Layer 2b — compress large `read` / `grep` / `glob` results **at the source**, before they are persisted and resent on every later turn. Keeps the head, the tail, and every structural or diagnostic line; line numbers stay intact so exact ranges remain readable. |
 | `toolResultMinTokens` | `4000` | Only tool results above this estimated token count are compressed. Small reads are kept verbatim: compressing them costs more in re-reads than it saves. |
-| `toolResultEagerMinTokens` | `8000` | Layer 2b — when no tool allowlist is configured (or for tools outside it), any single tool result whose estimated tokens exceed this is compressed at the source, whatever tool produced it: `shell` / `execute` / MCP tools included. The result is paged through `babyzilla recall`, never deleted. `0` restores the fixed tool-name allowlist. Small results stay inline — the median tool output is far under this. |
+| `toolResultEagerTokens` | `8000` | Layer 2b — when no tool allowlist is configured (or for tools outside it), any single tool result whose estimated tokens exceed this is compressed at the source, whatever tool produced it: `shell` / `execute` / MCP tools included. The result is paged through `babyzilla recall`, never deleted. `0` restores the fixed tool-name allowlist. Small results stay inline — the median tool output is far under this. (Older docs called this `toolResultEagerMinTokens`; that name is still accepted as an alias.) |
 | `toolResultHeadLines` | `40` | Verbatim lines kept from the start of a compressed tool result. Any single line longer than ~240 chars is folded (head + fold note + tail) even when kept, and dump-shaped results — minified JSON, bundled JS, one-line command output — fall back to a character window (head ~3K chars / tail ~1.2K chars), so "few huge lines" no longer means "uncompressed". |
 | `toolResultTailLines` | `20` | Verbatim lines kept from the end of a compressed tool result. |
 | `toolResultProtectRecent` | `3` | Number of most-recent tool results kept **verbatim**. Compression applies to older results only, so the agent keeps working from the content it just fetched instead of re-reading it. |

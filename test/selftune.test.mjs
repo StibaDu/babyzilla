@@ -364,6 +364,9 @@ test("noise floor formula and manual revert", async () => {
 test("finalize closes a session record with repeats, paging, distill and recall counts", async () => {
   const { inst } = makeInstance(TMP);
   const sid = nextSid();
+  // The first prompt seeds the session's start clock; recalls are counted
+  // from here (real recalls happen during the session, after it started).
+  await inst.onPrompt({ sid, model: null, callText: () => '{"noop":true}' });
   inst.noteToolUse(sid, "read", "alpha beta same");
   inst.noteToolUse(sid, "read", "alpha beta same"); // duplicate
   inst.noteToolUse(sid, "read", "different content");
@@ -373,7 +376,7 @@ test("finalize closes a session record with repeats, paging, distill and recall 
   noteRecallRendered(TMP, "abc123");
   const rec = await inst.finalize(sid);
   assert.ok(rec, "record returned");
-  assert.equal(rec.turns, 0, "turns counted by onPrompt");
+  assert.equal(rec.turns, 1, "turns counted by onPrompt");
   assert.equal(rec.requests, undefined, "no DB → no billing fields at all (not zeros)");
   assert.equal(rec.recalls, 1);
   assert.deepEqual(rec.repeats.map((r) => r.n), [2], "the duplicate call is visible");
@@ -404,9 +407,12 @@ test("emergency revert fires on a recall storm while a knob is provisional", asy
     pending: { knob: "stableMinTokens", from: 2000, to: 1800, proposalTs: Date.now(), appliedTs: Date.now() },
     baseline: { recallsPerTurn: 0, sampleTurns: 50, updatedTs: new Date().toISOString() },
   });
-  for (let i = 0; i < 4; i++) noteRecallRendered(root, `h${i}`); // 4 ≥ floor 3
   const { inst } = makeInstance(root);
   const sid = nextSid();
+  // The first prompt seeds the session's start clock (real recalls happen
+  // during the session, after it started).
+  await inst.onPrompt({ sid, model: null, callText: () => '{"noop":true}' });
+  for (let i = 0; i < 4; i++) noteRecallRendered(root, `h${i}`); // 4 ≥ floor 3
   await inst.onPrompt({ sid, model: null, callText: () => '{"noop":true}' });
   const st = readState(root);
   assert.equal(st.pending, null);
@@ -420,9 +426,11 @@ test("emergency revert fires on a recall storm while a knob is provisional", asy
     ...emptyState(),
     pending: { knob: stableKnob(), from: 2000, to: 1800, proposalTs: Date.now(), appliedTs: Date.now() },
   });
-  noteRecallRendered(root2, "one");
   const inst2 = makeInstance(root2).inst;
-  await inst2.onPrompt({ sid: nextSid(), model: null, callText: () => '{"noop":true}' });
+  const sid2 = nextSid();
+  await inst2.onPrompt({ sid: sid2, model: null, callText: () => '{"noop":true}' });
+  noteRecallRendered(root2, "one");
+  await inst2.onPrompt({ sid: sid2, model: null, callText: () => '{"noop":true}' });
   assert.ok(readState(root2).pending, "a single recall must not pull the plug");
 });
 

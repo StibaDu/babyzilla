@@ -296,6 +296,23 @@ test("pack builder: a sheet becomes coherent, complete animations", async (t) =>
   const frames = fs.readdirSync(path.join(out, "sprites")).map((f) => f.replace(/\.png$/, ""));
   const declared = new Set(Object.values(pack.animations).flat());
   assert.deepEqual(frames.filter((f) => !declared.has(f)), [], "no orphan frames");
+
+  // --remove must return the pack to exactly the animations its artist drew
+  const before = pack.animations.idle.concat(pack.animations.walk, pack.animations.jump);
+  await run(process.execPath, [path.join(ROOT, "pet/pack-expressions.mjs"), "--pack", out, "--remove"],
+    { env: { ...process.env, BABYZILLA_NO_UPDATE_CHECK: "1" } });
+  pack = JSON.parse(fs.readFileSync(path.join(out, "pack.json"), "utf8"));
+  assert.deepEqual(Object.keys(pack.animations).sort(), ["idle", "jump", "walk"], "only the artist's animations remain");
+  assert.equal(pack.expressions, undefined, "the expression map is gone");
+  const after = fs.readdirSync(path.join(out, "sprites")).map((f) => f.replace(/\.png$/, "")).sort();
+  assert.deepEqual(after, [...before].sort(), "the original frames are untouched, the faces are gone");
+  assert.deepEqual(pack.fps, { idle: 6, walk: 12, jump: 12 }, "frame rates are the pack's own again");
+
+  // and it is idempotent: running it twice is not an error
+  await run(process.execPath, [path.join(ROOT, "pet/pack-expressions.mjs"), "--pack", out, "--remove"],
+    { env: { ...process.env, BABYZILLA_NO_UPDATE_CHECK: "1" } });
+  pack = JSON.parse(fs.readFileSync(path.join(out, "pack.json"), "utf8"));
+  assert.deepEqual(Object.keys(pack.animations).sort(), ["idle", "jump", "walk"]);
 });
 
 test("cli: pet packs lists the built-in pet, and use rejects unknown names", async () => {

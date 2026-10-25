@@ -2,6 +2,21 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.16.2] — 2026-10-25
+
+### Added
+
+- **`pack-expressions.mjs --remove`.** Faces are a layer on top of a pack, not part
+  of it, so taking them back out is a command: it deletes the face frames, their
+  animations and the `expressions` map, and leaves `pack.json` and every frame the
+  artist drew untouched. Running it twice is a no-op, and the test suite now proves
+  both the round trip and the idempotence.
+
+### Changed
+
+- The Lil Dino pack is back to its three animations (idle/walk/jump); reactions use
+  the pre-0.16 heuristic again (a jump for energetic ids, idle otherwise).
+
 ## [0.16.1] — 2026-10-25
 
 ### Fixed

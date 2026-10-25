@@ -74,6 +74,18 @@ Because the colours are derived from the pack rather than hardcoded, the same
 edits work on any pack that has an ink/shade/light/white relationship, and cannot
 silently blank a frame whose palette differs.
 
+Faces are **opt-in**, and one command takes them back out:
+
+```sh
+node pet/pack-expressions.mjs --pack ~/.opencode/pet/packs/lil-dino --remove
+```
+
+That deletes the face frames, the animations and the `expressions` map and leaves
+exactly the animations the pack's artist drew — nothing else in `pack.json` and no
+frame is touched. Restart the pet (`babyzilla pet use <name>`) to reload it. A
+pack without faces reacts the way it always did: its walk cycle, a jump for
+`party`-style events, idle otherwise.
+
 Packs built from someone else's sheet are not ours to redistribute: the builder
 writes them to `~/.opencode/pet/packs/`, and the repo ignores
 `assets/pet/packs/`.

@@ -1,4 +1,4 @@
-// Add expression animations to a pack that has none, by editing its own pixels.
+// Add or remove expression animations for a pack, by editing its own pixels.
 //
 // Generated art cannot hold a 15x13 character at 512px — img2img either drifts the
 // design or melts the pose — so an expressive pack is authored the way pixel pets
@@ -6,10 +6,12 @@
 // derived from a single frame of the pack, so the character cannot change.
 //
 //   node pet/pack-expressions.mjs --pack ~/.opencode/pet/packs/lil-dino
+//   node pet/pack-expressions.mjs --pack ~/.opencode/pet/packs/lil-dino --remove
 //
-// Writes blink/happy/angry/surprised/hurt/sleep animations, keeps the existing
-// idle/walk/jump, and records an expression map so each of the 100 expression ids
-// selects the face that fits it.
+// Writes blink/happy/angry/surprised/hurt, keeps the existing idle/walk/jump, and
+// records an expression map so each of the 100 expression ids selects the face
+// that fits it. `--remove` takes all of that back out and leaves the pack with
+// nothing but the animations its artist drew.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +34,41 @@ const arg = (name, fallback = null) => {
 const packDir = path.resolve(String(arg("pack") ?? path.join(ROOT, "assets/pet/packs/lil-dino")).replace(/^~/, process.env.HOME));
 const pack = JSON.parse(fs.readFileSync(path.join(packDir, "pack.json"), "utf8"));
 const sprites = path.join(packDir, "sprites");
+
+/** The faces this tool owns, plus the one it used to write. */
+const FACES = ["blink", "happy", "angry", "surprised", "hurt", "sleep"];
+const faceFrame = (id) => FACES.some((face) => new RegExp(`^${face}-\\d+$`).test(id));
+
+// ---------------------------------------------------------------------------
+// --remove: put the pack back to what its artist drew. The faces are data, so
+// undoing them must be a command, not a manual deletion someone does half of.
+// ---------------------------------------------------------------------------
+if (arg("remove")) {
+  const removed = FACES.filter((face) => pack.animations?.[face]);
+  for (const face of removed) delete pack.animations[face];
+  for (const key of ["expressions"]) delete pack[key];
+  for (const face of FACES) if (pack.fps) delete pack.fps[face];
+  if (pack.fps && Object.keys(pack.fps).length === 0) delete pack.fps;
+
+  const keep = new Set(Object.values(pack.animations ?? {}).flat());
+  let deleted = 0;
+  for (const file of fs.readdirSync(sprites)) {
+    const id = file.replace(/\.png$/, "");
+    if (!faceFrame(id) || keep.has(id)) continue;
+    fs.rmSync(path.join(sprites, file));
+    deleted++;
+  }
+
+  fs.writeFileSync(path.join(packDir, "pack.json"), JSON.stringify(pack, null, 2) + "\n");
+  const left = Object.entries(pack.animations ?? {}).map(([name, frames]) => `${name}:${frames.length}`);
+  console.log(
+    removed.length
+      ? `removed ${removed.join(", ")} (${deleted} frames) → ${left.join(" ")}`
+      : `no faces to remove → ${left.join(" ")}`,
+  );
+  process.exit(0);
+}
+
 
 /** The pack's frames are 2x upscales of this grid; read and write the grid. */
 const SCALE = 2;
@@ -225,10 +262,8 @@ pack.fps = { ...(pack.fps ?? {}), blink: 6, happy: 6, angry: 10, surprised: 10, 
 // in the pack, and the installer copies them.
 const keep = new Set(Object.values(pack.animations).flat());
 for (const file of fs.readdirSync(sprites)) {
-  if (!file.endsWith(".png")) continue;
-  const id = file.slice(0, -4);
-  const isFace = /^(blink|happy|angry|surprised|hurt|sleep|sad)-/.test(id);
-  if (isFace && !keep.has(id)) fs.rmSync(path.join(sprites, file));
+  const id = file.replace(/\.png$/, "");
+  if (faceFrame(id) && !keep.has(id)) fs.rmSync(path.join(sprites, file));
 }
 
 fs.writeFileSync(path.join(packDir, "pack.json"), JSON.stringify(pack, null, 2) + "\n");

@@ -58,11 +58,17 @@ node pet/pack-expressions.mjs --pack ~/.opencode/pet/packs/lil-dino
 ```
 
 This derives the pack's palette from its own frames, then writes `blink`,
-`happy`, `angry`, `surprised`, `hurt` and `sleep` by editing the eye, the brow and
-the tooth row of the idle frame, each with a 1px beat so it holds up when looped.
-It also records an `expressions` map from every one of the 100 expression ids to
-the face that fits — `celebrate` gets the grin, `oops` the X eye, `sleep` the
-closed one — and the app plays that face for the duration of the reaction.
+`happy`, `angry`, `surprised` and `hurt` by editing the eye, brow and mouth of the
+idle frame, each with a 1px beat so it holds up when looped. It also records an
+`expressions` map from every one of the 100 expression ids to the face that
+fits — `celebrate` gets the grin, `oops` the X eye, `sleep` the closed one — and
+the app plays that face for the duration of the reaction.
+
+At 24x24 the **mouth** carries an expression; a 2x2 eye cannot. So each face
+changes the silhouette of the grin (a second open row with teeth, a flat
+clenched line, a hole) or adds a brow, rather than nudging the eye. Two faces
+were dropped after review instead of shipped: a separate `sleep` was
+indistinguishable from `blink`, and a "corner raised" smile read as a flat line.
 
 Because the colours are derived from the pack rather than hardcoded, the same
 edits work on any pack that has an ink/shade/light/white relationship, and cannot

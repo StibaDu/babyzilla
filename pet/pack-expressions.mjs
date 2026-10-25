@@ -141,37 +141,43 @@ const base = readGrid(path.join(sprites, "idle-1.png"), roles);
 // row at y=17; the mouth opens into the dark row below it at y=18.
 const faces = {};
 
-faces.blink = clone(base);
-rect(faces.blink, 12, 12, 13, 12, "L");
-rect(faces.blink, 12, 13, 13, 13, "k");
+// The mouth is what carries an expression at this size; a 2x2 eye cannot. So each
+// face changes the silhouette of the grin (or opens it) and adds a brow, rather
+// than nudging the eye and hoping.
+//
+//   eye white (13,12) · pupil (12,13) · nostril (17..18,12..13)
+//   tooth row  y=17, x=11..18 · mouth interior y=18, x=11..17 · head x=8..19
 
-// closed, contented eyes plus a grin that lifts at both corners: distinct from a
-// blink, which keeps the flat mouth
+faces.blink = clone(base);
+rect(faces.blink, 12, 12, 13, 12, "L");   // lid
+rect(faces.blink, 12, 13, 13, 13, "k");   // closed slit
+
+// A grin is a second silhouette, not a nudged line: the mouth opens two rows and
+// keeps its teeth, which is unmistakably different from every other face.
 faces.happy = clone(base);
-rect(faces.happy, 12, 12, 13, 12, "L");
-rect(faces.happy, 12, 13, 13, 13, "k");
-// both corners stay inside the outline: x=19 is the black edge
-put(faces.happy, 11, 16, "c"); put(faces.happy, 18, 16, "c");
+put(faces.happy, 12, 13, "k");
+rect(faces.happy, 11, 17, 16, 17, "c");   // teeth
+rect(faces.happy, 11, 18, 16, 18, "k");   // open mouth under them
+put(faces.happy, 10, 16, "k"); put(faces.happy, 17, 17, "k");
 
 faces.angry = clone(base);
-// brow low over the eye, pupil pushed forward, teeth still showing (a snarl)
+// brow low over the eye, pupil forward, teeth gone: a snarl
 put(faces.angry, 11, 11, "k"); put(faces.angry, 12, 11, "k"); put(faces.angry, 13, 11, "L");
 put(faces.angry, 13, 12, "k"); put(faces.angry, 12, 13, "k");
+rect(faces.angry, 11, 17, 18, 17, "d");
+put(faces.angry, 11, 18, "k"); put(faces.angry, 17, 18, "k");
 
 faces.surprised = clone(base);
+// wide eye and an open mouth: a hole, not a line of teeth
 rect(faces.surprised, 12, 11, 13, 12, "c");
-put(faces.surprised, 12, 13, "k"); put(faces.surprised, 13, 13, "k");
-rect(faces.surprised, 12, 18, 16, 18, "k");
+put(faces.surprised, 13, 13, "k");
+rect(faces.surprised, 12, 17, 15, 18, "k");
 
 faces.hurt = clone(base);
+// one eye screwed shut, the grin broken in the middle
 put(faces.hurt, 12, 12, "k"); put(faces.hurt, 13, 13, "k");
 put(faces.hurt, 13, 12, "L"); put(faces.hurt, 12, 13, "L");
-
-faces.sleep = clone(base);
-rect(faces.sleep, 12, 12, 13, 12, "L");
-rect(faces.sleep, 12, 13, 13, 13, "k");
-rect(faces.sleep, 18, 6, 20, 6, "g");
-put(faces.sleep, 19, 7, "g");
+put(faces.hurt, 14, 17, "k"); put(faces.hurt, 16, 17, "k");
 
 // ── animations ───────────────────────────────────────────────────────────────
 // Each is the face plus a 1px beat, so it holds up when the app loops it for the
@@ -179,10 +185,9 @@ put(faces.sleep, 19, 7, "g");
 const animations = {
   blink: [faces.blink, faces.blink],
   happy: [faces.happy, shifted(faces.happy, 0, -1)],
-  angry: [faces.angry, shifted(faces.angry, -1, 0), shifted(faces.angry, 1, 0)],
-  surprised: [shifted(faces.surprised, 0, -1), faces.surprised],
+  angry: [faces.angry, shifted(faces.angry, 0, -1)],
+  surprised: [faces.surprised, shifted(faces.surprised, 0, -1)],
   hurt: [faces.hurt, shifted(faces.hurt, 1, 0)],
-  sleep: [faces.sleep, shifted(faces.sleep, 0, 1), faces.sleep],
 };
 
 for (const [name, frames] of Object.entries(animations)) {
@@ -197,14 +202,14 @@ for (const [name, frames] of Object.entries(animations)) {
 
 // ── which expression gets which face ─────────────────────────────────────────
 const CATEGORY = {
-  sleep: ["sleep", "zzz", "doze", "groggy", "yawn", "coffee", "morning-stretch", "wake-startled", "sit", "stretch"],
+  // closed eyes double as the sleeping face: at this size a "sleep" variant was
+  // indistinguishable from a blink, so there is no point shipping both
+  blink: ["blink", "sleep", "zzz", "doze", "groggy", "yawn", "coffee", "sit"],
   happy: ["happy", "celebrate", "party", "dance", "wave", "poke", "love", "ship-it", "success", "eureka",
     "cake", "high-five", "proud", "roar", "rubber-duck", "glitch", "self-tune", "pack-created"],
   angry: ["angry", "error", "shell-fail", "stuck", "confused", "determined", "test-fail", "model-error", "budget-full"],
   surprised: ["surprised", "update-available", "eureka", "wake-startled", "budget-low", "tool-webfetch"],
   hurt: ["hurt", "oops", "segfault", "offline", "rate-limited", "conflict", "retry", "shrug"],
-  // only a genuine blink closes the eyes; thinking/listening should look awake
-  blink: ["blink"],
 };
 const face = {};
 for (const [anim, ids] of Object.entries(CATEGORY)) for (const id of ids) face[id] = anim;
@@ -214,7 +219,17 @@ const known = new Set(EXPRESSIONS.map((e) => e.id));
 const map = {};
 for (const e of EXPRESSIONS) map[e.id] = face[e.id] ?? "idle";
 pack.expressions = map;
-pack.fps = { ...(pack.fps ?? {}), blink: 8, happy: 8, angry: 14, surprised: 10, hurt: 10, sleep: 3 };
+pack.fps = { ...(pack.fps ?? {}), blink: 6, happy: 6, angry: 10, surprised: 10, hurt: 10 };
+
+// A face that was dropped must not leave frames behind: the app loads every PNG
+// in the pack, and the installer copies them.
+const keep = new Set(Object.values(pack.animations).flat());
+for (const file of fs.readdirSync(sprites)) {
+  if (!file.endsWith(".png")) continue;
+  const id = file.slice(0, -4);
+  const isFace = /^(blink|happy|angry|surprised|hurt|sleep|sad)-/.test(id);
+  if (isFace && !keep.has(id)) fs.rmSync(path.join(sprites, file));
+}
 
 fs.writeFileSync(path.join(packDir, "pack.json"), JSON.stringify(pack, null, 2) + "\n");
 const missing = EXPRESSIONS.filter((e) => !known.has(e.id));

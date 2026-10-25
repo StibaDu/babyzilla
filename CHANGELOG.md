@@ -2,6 +2,20 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.16.1] — 2026-10-25
+
+### Fixed
+
+- **The first pack faces did not read.** Reviewing the frames as a viewer sees
+  them (a 2x2 eye, a 1px nudge) showed most of them were unreadable noise. Rewritten
+  around what actually carries an expression at 24x24 — the mouth: `happy` opens a
+  second row with teeth, `angry` flattens the tooth row and adds a 2px brow,
+  `surprised` replaces it with a hole, `hurt` breaks the grin and screws one eye
+  shut. `sleep` is gone (it was a blink with cosmetic changes) and its expressions
+  now use the closed-eye face; a floating `z` pixel that read as debris is gone.
+- Orphan frames from dropped faces are deleted instead of lingering in the pack
+  (the app loads every PNG and the installer copies them).
+
 ## [0.16.0] — 2026-10-25
 
 ### Added

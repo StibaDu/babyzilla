@@ -271,7 +271,7 @@ test("pack builder: a sheet becomes coherent, complete animations", async (t) =>
   await run(process.execPath, [path.join(ROOT, "pet/pack-expressions.mjs"), "--pack", out],
     { env: { ...process.env, BABYZILLA_NO_UPDATE_CHECK: "1" } });
   pack = JSON.parse(fs.readFileSync(path.join(out, "pack.json"), "utf8"));
-  for (const face of ["blink", "happy", "angry", "surprised", "hurt", "sleep"]) {
+  for (const face of ["blink", "happy", "angry", "surprised", "hurt"]) {
     assert.ok(pack.animations[face]?.length >= 2, `${face} animation exists`);
     for (const frame of pack.animations[face]) {
       const img = decodePng(fs.readFileSync(path.join(out, "sprites", `${frame}.png`)));
@@ -289,9 +289,13 @@ test("pack builder: a sheet becomes coherent, complete animations", async (t) =>
   }
   // the interesting faces must actually be reachable, not just present
   const used = new Set(Object.values(pack.expressions));
-  for (const face of ["happy", "angry", "surprised", "hurt", "sleep"]) {
+  for (const face of ["blink", "happy", "angry", "surprised", "hurt"]) {
     assert.ok(used.has(face), `some expression selects ${face}`);
   }
+  // a dropped face must not leave frames behind
+  const frames = fs.readdirSync(path.join(out, "sprites")).map((f) => f.replace(/\.png$/, ""));
+  const declared = new Set(Object.values(pack.animations).flat());
+  assert.deepEqual(frames.filter((f) => !declared.has(f)), [], "no orphan frames");
 });
 
 test("cli: pet packs lists the built-in pet, and use rejects unknown names", async () => {

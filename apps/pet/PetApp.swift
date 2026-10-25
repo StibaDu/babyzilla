@@ -427,6 +427,33 @@ final class PetController: NSObject {
     private(set) var hidden = false
     /// For the headless switch test: a hidden pet must have stopped ticking.
     var isTicking: Bool { timer != nil }
+    /// Headless hook: send the pet at a point, past the edge if need be.
+    func walkHeadless(toX target: CGFloat) {
+        expressionUntil = .distantPast
+        bubbleUntil = .distantPast
+        bubbleView.alpha = 0
+        bubbleVisible = false
+        walkPauseUntil = .distantPast
+        targetX = target
+    }
+    var facing: Bool { facingRight }
+
+    /// Headless hooks for the wall test: put the pet near an edge, then let the
+    /// normal movement code walk it into the wall.
+    func placeHeadless(near edge: String) {
+        let (lo, hi) = boundsX()
+        x = edge == "right" ? hi - 24 : lo + 24
+        targetX = nil
+        vx = 0
+    }
+
+    func probeHeadless() -> String {
+        let (lo, hi) = boundsX()
+        return String(format: "x=%.1f facing=%@ atRight=%@ atLeft=%@ target=%@",
+                      x, facingRight ? "right" : "left",
+                      x >= hi - 0.5 ? "yes" : "no", x <= lo + 0.5 ? "yes" : "no",
+                      targetX == nil ? "none" : "set")
+    }
     private var lastEventAt = Date.distantPast
     /// The model is working if events keep arriving; no event for 8s = idle again.
     private var active: Bool { busy || Date().timeIntervalSince(lastEventAt) < 8 }
@@ -546,11 +573,22 @@ final class PetController: NSObject {
         window.setFrameOrigin(NSPoint(x: x - side / 2, y: floorY))
     }
 
-    private func clampX() {
-        let screen = screenForPet()
-        let vf = screen.visibleFrame
+    /// The furthest left and right the pet's centre may go.
+    private func boundsX() -> (lo: CGFloat, hi: CGFloat) {
+        let vf = screenForPet().visibleFrame
         let half = CGFloat(spriteSize * config.scale) / 2
-        x = min(max(x, vf.minX + half + 8), vf.maxX - half - 8)
+        return (vf.minX + half + 8, vf.maxX - half - 8)
+    }
+
+    /// Pulls the pet back onto the floor. Returns true when an edge stopped it —
+    /// the caller needs that to turn it around instead of letting it march into
+    /// the wall with its nose against the screen.
+    @discardableResult
+    private func clampX() -> Bool {
+        let (lo, hi) = boundsX()
+        let before = x
+        x = min(max(x, lo), hi)
+        return x != before
     }
 
     // ── ticking ──────────────────────────────────────────────────────────────
@@ -656,20 +694,39 @@ final class PetController: NSObject {
         let before = x
         if let target = targetX {
             let dx = target - x
+            let towardRight = dx > 0
             let speed: CGFloat = 74
             let step = min(abs(dx), speed * CGFloat(dt))
-            x += dx > 0 ? step : -step
-            facingRight = dx > 0
-            if abs(dx) < 1.5 {
+            x += towardRight ? step : -step
+            facingRight = towardRight
+            let hitEdge = clampX()
+            if hitEdge || abs(target - x) < 1.5 {
                 targetX = nil
-                walkPauseUntil = now.addingTimeInterval(Double.random(in: 1.2...4.0))
+                if hitEdge {
+                    // The wall ended the walk, not the target: turn around, face
+                    // the room and take a breather before choosing somewhere new.
+                    facingRight = !towardRight
+                    walkPauseUntil = now.addingTimeInterval(Double.random(in: 0.9...2.0))
+                } else {
+                    walkPauseUntil = now.addingTimeInterval(Double.random(in: 1.2...4.0))
+                }
             }
-            clampX()
         } else {
             x += vx * CGFloat(dt)
-            clampX()
+            if clampX() {
+                // thrown into a wall: bounce, do not stick to it
+                vx = -vx * 0.45
+                facingRight = vx > 0
+            }
             vx *= 0.90
             if abs(vx) < 2 { vx = 0 }
+        }
+        // Standing at an edge with nowhere to go (after a drag, a throw or a pause):
+        // face the room, so it never idles staring into the screen edge.
+        if targetX == nil, abs(vx) < 2 {
+            let (lo, hi) = boundsX()
+            if x >= hi - 0.5, facingRight { facingRight = false }
+            else if x <= lo + 0.5, !facingRight { facingRight = true }
         }
         // The animation is a consequence of the displacement, never an intention:
         // blocked movement means a still pet, not a dino running on the spot.
@@ -711,7 +768,8 @@ final class PetController: NSObject {
                 // amble toward the pointer, but only if it is on this screen
                 let mouse = NSEvent.mouseLocation
                 if screenForPet().visibleFrame.contains(mouse) {
-                    targetX = min(max(mouse.x, screen.visibleFrame.minX + 60), screen.visibleFrame.maxX - 60)
+                    let (lo, hi) = boundsX()
+                    targetX = min(max(mouse.x, lo), hi)
                 }
             } else if roll < 0.74 {
                 // likewise: the hop frames come from vy/lift, not an expression
@@ -826,7 +884,7 @@ final class PetController: NSObject {
         if id != lastRendered {
             lastRendered = id
             currentImage = lib.image(id)
-            trace(["ev": "frame", "id": id])
+            trace(["ev": "frame", "id": id, "facing": facingRight])
             view.needsDisplay = true
         }
     }
@@ -868,7 +926,7 @@ final class PetController: NSObject {
         if id != lastRendered {
             lastRendered = id
             currentImage = lib.image(id)
-            trace(["ev": "frame", "id": id])
+            trace(["ev": "frame", "id": id, "facing": facingRight])
             view.needsDisplay = true
         }
     }
@@ -1296,6 +1354,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A pet turned off from the menu bar stays off across logins: the login
         // item runs this binary, so it is the process that has to remember.
         if controller?.hidden == true { refreshStatusItem() }
+        if CommandLine.arguments.contains("--edge-test") {
+            // The wall turn cannot be seen without the screen, so the pet is put
+            // next to each edge and asked to walk through it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) { [weak self] in
+                guard let self, let c = self.controller else { print("no controller"); exit(1) }
+                c.placeHeadless(near: "right")
+                c.walkHeadless(toX: 99_999)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    print("right edge: \(c.probeHeadless())")
+                    c.placeHeadless(near: "left")
+                    c.walkHeadless(toX: -99_999)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        print("left edge:  \(c.probeHeadless())")
+                        exit(0)
+                    }
+                }
+            }
+        }
         if CommandLine.arguments.contains("--toggle-test") {
             // Headless proof that the switch is wired to the windows, not just to
             // a menu title: the menu bar itself cannot be read without permissions.

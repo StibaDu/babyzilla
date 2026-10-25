@@ -2,6 +2,20 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.25.0] — 2026-10-25
+
+### Fixed
+
+- **The pet turned into the wall and stayed there.** Walking toward a screen edge was
+  clamped silently: `x` stopped, `targetX` stayed set, and the dino stood with its nose
+  against the edge facing outwards, forever. The wall now ends the walk — it flips to
+  face the room, pauses a beat, and picks a new target. Standing at an edge with
+  nowhere to go (after a drag, a throw or a pause) also faces inward, and a thrown pet
+  bounces off the edge instead of sticking to it. Cursor-following targets are clamped
+  to the pet's own floor bounds rather than the raw screen.
+- `--edge-test` proves it headlessly: `right edge: x=1840 facing=left`, `left edge:
+  x=80 facing=right`.
+
 ## [0.24.0] — 2026-10-25
 
 ### Added

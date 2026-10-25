@@ -100,6 +100,10 @@ writes them to `~/.opencode/pet/packs/`, and the repo ignores
   one cycle per stride, so the feet can never skate under a body that is not
   moving. If a bubble or a tool call freezes the pet mid-stride, the animation
   freezes with it (it stands and listens) instead of running on the spot.
+- **Turns at the wall.** A walk that runs into the screen edge ends at the wall: the
+  pet flips to face the room, pauses, then picks somewhere else. Standing at an edge
+  with nowhere to go — after a drag, a throw or a pause — it faces inward too, and a
+  pet thrown into the edge bounces off it instead of sticking.
 - **Reacts.** A prompt makes it listen, a tool call changes its face per tool,
   a failure makes it wince, compaction has it squeezing something, an available
   update makes it hold up a gift.

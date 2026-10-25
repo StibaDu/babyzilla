@@ -6,6 +6,33 @@ All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
 ### Added
 
+- **Character-window compression for dump-shaped outputs.** The line-based
+  compressor gave up on minified JSON, bundled JS and one-line command dumps
+  (a live session measured `193.4K → 189.9K tok, 2% smaller` on a 193K-token
+  prompt). Two fixes: kept lines longer than ~240 chars are folded, and
+  few-huge-lines results go through a character window (~3K head/~1.2K tail
+  chars). Deterministic and byte-stable like the rest of the stable path.
+- **Distill diet (`distillBudgetDefault`, default 16K).** The distillation
+  call billed its own tokens per compaction, and the derived cap was 48K
+  (40% of the window). One compaction of a dump-heavy session was an
+  uncached ~48K-token bill by itself, on the same credits as the session.
+  Now capped at 16K; small-window models still clamp to 40% of the window;
+  explicit `distillBudgetTokens` unchanged.
+- **Cheaper size gate: `stableMinTokens` default 4000 → 2000.** Results in
+  the 2-4K-token range are exactly the steady-state tail that re-bills
+  uncached on every request.
+- **Cache-reset telemetry in `bench/ab-live.mjs`** (`cache resets` /
+  `wasted on resets` rows, `lib/cost.mjs` `cacheResets`): requests whose
+  cached prefix read falls below a previous best are now counted and
+  attributed to the provider, so ambient evictions stop looking like
+  tuning opportunities.
+- **Evidence: the request-#2 spike is not plugin content.** Rep 2 of the
+  10×24KB run bills 11.1K uncached / 3.2K cached at request #2 while the
+  plugin-visible payload there is ~1K (one compressed result + tool call).
+  The rest is the provider cache warming over the system+schema prefix.
+  The contract note (once, ~230 tokens) and module attaches (≤6K, gated on
+  trigger keywords) are confirmed small.
+
 - **Prefix-stable compression (`stablePrefix`, default on).** Tool results are
   compressed from their own bytes only, at request-build time, and never
   revisited — so an already-sent prefix serialises identically on every later

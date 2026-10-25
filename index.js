@@ -33,7 +33,7 @@ import { writePage, pageHash } from "./lib/pages.mjs";
 import {
   fmt, dirSlug,
   TOOL_RESULT_HEAD_CHARS, TOOL_RESULT_TAIL_CHARS,
-  reduceForDistill, distillInputBudget, DISTILL_INSTRUCTIONS, distillationPrompt,
+  reduceForDistill, distillInputBudget, DISTILL_INSTRUCTIONS, distillationPrompt, USER_BUDGET_TOKENS,
   parseModules, moduleFileFor, buildSummary,
 } from "./lib/distill.mjs";
 import { libraryIndex } from "./lib/library.mjs";
@@ -138,6 +138,11 @@ const defaults = {
   visionAgent: "vision",
   // below this many estimated transcript tokens, native compaction is fine.
   minRawTokens: 4000,
+  // cap on the transcript fed to the distiller when the window is unknown or
+  // larger than this (small-window models still clamp to 40% of their window).
+  // Was derived at 48K; at uncached input price one compaction of a
+  // dump-heavy session was billing ~48K tokens on its own.
+  distillBudgetDefault: 16_000,
   // layer 2: rewrite shell commands through the `lowfat` binary before
   // execution, so tool output enters the context pre-compressed.
   toolCompression: true,
@@ -198,11 +203,20 @@ const defaults = {
   // In stable mode the request hook is a valve only: it runs when the prompt
   // reaches this share of the model window (cache cost beats a hard failure).
   stableOverflowRatio: 0.9,
+  // Size gate for stable compression. Results below this stay verbatim: those
+  // are the ones an agent acts on immediately, and paging them out buys a
+  // recall round-trip. Was 4000 (inherited from toolResultMinTokens);
+  // medium results in the 2-4K range are exactly the steady-state tail that
+  // keeps re-billing uncached.
+  stableMinTokens: 2000,
   // never let one request exceed this fraction of the model's context window
   // (system prompt and tool schemas are not counted, so leave headroom).
   requestMaxPromptRatio: 0.5,
   // transcript tokens fed to the distiller; 0 = derive from the model window
-  // (40% of it, capped at 48K). Set explicitly for a pinned small distiller.
+  // clamped by `distillBudgetDefault` (16K). Set explicitly for a pinned small
+  // distiller. `distillModel` can point at your cheapest competent model;
+  // pinning it is deliberate — generation is retried with the session model
+  // only when the pinned call fails outright.
   distillBudgetTokens: 0,
   // newest N messages are always sent verbatim.
   requestProtectRecent: 6,
@@ -1002,6 +1016,7 @@ export default {
           const reduced = reduceForDistill(extracted.text, distillInputBudget({
             windowTokens: distillWindow,
             explicit: opts.distillBudgetTokens,
+            defaultBudget: opts.distillBudgetDefault ?? USER_BUDGET_TOKENS,
           }));
 
           const prevIdx = await readIndex(event.sessionID);

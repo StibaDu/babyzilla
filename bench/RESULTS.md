@@ -157,3 +157,42 @@ but it now lands in the cheap tier instead of destroying the cache.
   `execute.after` never reaches the wire (compression logged 6.4K→2.5K while
   the request stayed raw). The honoured hook is `session.hook("context")`,
   which is where the stable rewrite now lives.
+
+## Cost levers on top of stable compression (10×24KB prose, 6 reps)
+
+Levers: character-window/folding compressor, `stableMinTokens` 4000→2000,
+distill cap 48K→16K (`distillBudgetDefault`). Same fixture, alternating legs.
+
+| metric | OFF | ON | delta |
+|---|---|---|---|
+| prompt tokens | 715.8K | 349.5K | **−51.2%** |
+| uncached input | 164.9K | 71.8K | **−56.5%** |
+| peak request ctx | 119.0K | 51.1K | −57.1% |
+| **credits** | **$0.0271** | **$0.0129** | **−52.4%** |
+| task completed | 5/6 | 5/6 | — |
+
+Clean paired reps (11 steps, marker found in both arms):
+
+- r1 `$0.0338 → $0.0158`, r4 `$0.0205 → $0.0157`, r5 `$0.0359 → $0.0101`,
+  r6 `$0.0336 → $0.0163` — mean ≈ **−50%**, on top of the previous run's
+  identical −46.6% (r2/r3 this run are one-armed task bailouts and are
+  excluded from conditioning).
+
+Caveats recorded so the numbers cannot be over-read:
+
+- rerun variance: OFF's own median moved $0.0310 → $0.0271 between runs of
+  the same fixture; per-rep pairwise legs are the only fair comparison.
+- `cache resets` / `wasted on resets` rows (new) attribute provider-side
+  prefix evictions; the big 30–55K uncached spikes of the stable3 run are
+  evictions, not rewrites — byte-stability of the prefix was verified above.
+
+## Invalid instrument: the dump fixture
+
+`--dump 1` (10×24KB single-line JSON) is **not usable as a cost benchmark**:
+OpenCode's `read` tool truncates a single line to its first 2000 characters
+(model-visible, both arms), so the file bodies never reach the 2000-token
+compression gate — the context hook was correctly silent, and the buried
+marker sits past byte 2000 in every arm (7/8 marker MISS). Dump-shaped
+compression is covered by unit tests (`test/cheap.test.mjs`) and by live
+evidence (`193.4K → 189.9K` → now a ~99% cut, per the pipeline check run
+against the actual fixture bytes: `6258 → 87 tok`).

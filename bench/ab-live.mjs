@@ -14,6 +14,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { cacheResets } from "../lib/cost.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name, def) => {
@@ -24,6 +25,9 @@ const opt = (name, def) => {
 const MODEL = opt("model", "ollama-cloud/deepseek-v4.1-flash:1017");
 const NFILES = Number(opt("files", 10));
 const KB = Number(opt("kb", 14));
+// `--dump 1` makes each file one enormous line of JSON: the shape that used to
+// defeat line-based compression entirely (few huge lines → no lines to drop).
+const DUMP = opt("dump", null) === "1";
 const WORK = opt("work", path.join(os.tmpdir(), `bz-ab-${Date.now()}`));
 const CONFIG_SRC = path.join(os.homedir(), ".config", "opencode");
 const REPO = path.resolve(new URL("..", import.meta.url).pathname);
@@ -78,7 +82,12 @@ function makeFiles() {
         `species=${marker} confirmed by two independent passes over sector 9.`,
       );
     }
-    files.push({ id, body: lines.join("\n") + "\n" });
+    // Dump mode: one line per file, as if the tool returned minified JSON —
+    // the shape that motivated the character-window compressor.
+    const body = DUMP
+      ? `${JSON.stringify({ file: id, format: "jsonl-minified", events: lines })}\n`
+      : lines.join("\n") + "\n";
+    files.push({ id, body });
   }
   return { files, marker, markerFile: String(markerAt).padStart(2, "0") };
 }
@@ -238,7 +247,7 @@ if (RATIO !== null) OVER.requestTargetRatio = Number(RATIO);
 const cfgOnDir = Object.keys(OVER).length ? makeOnConfig(OVER) : null;
 
 const REPS = Number(opt("reps", 1));
-console.log(`\nfixture  ${NFILES} files x ${KB}KB · marker ${marker} in ${markerFile}.txt`);
+console.log(`\nfixture  ${NFILES} files x ${KB}KB${DUMP ? " (single-line JSON dumps)" : ""} · marker ${marker} in ${markerFile}.txt`);
 console.log(`model    ${MODEL}`);
 console.log(`reps     ${REPS}`);
 console.log(`on-opts  ${JSON.stringify(OVER)}`);
@@ -311,6 +320,11 @@ row("peak request ctx", (m) => m.peak);
 row("cost ($)", (m) => m.sum.cost, 4);
 row("cost per request ($)", (m) => m.sum.cost / m.n, 5);
 row("tokens per request", (m) => prompts(m) / m.n);
+// Provider-side prefix evictions: our prefixes are byte-stable, so a drop in
+// cached-read between requests is the provider dropping its end. Visible here
+// so we stop attributing it to the plugin (and stop tuning against it).
+row("cache resets", (m) => cacheResets(m.reqs).count);
+row("wasted on resets", (m) => cacheResets(m.reqs).wasted);
 
 console.log(`\nsuccess-only medians (task completed: off ${nOkOff}/${REPS}, on ${nOkOn}/${REPS})`);
 allRow("requests", (m) => m.n);

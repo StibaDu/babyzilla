@@ -115,7 +115,7 @@ npm i -g git+https://github.com/StibaDu/babyzilla.git
 babyzilla stats    # aggregate savings; also: show / verify / eval / prune
 babyzilla cost     # provider-side spend from OpenCode's usage records
 babyzilla models   # Ollama Cloud model knowledge base: caps, pricing, lanes (--audit)
-babyzilla selftune status   # self-tuning loop: knobs, pending proposal, noise floor
+babyzilla selftune status   # self-tuning loop: knobs, pending proposal, floor
 babyzilla recall 8c1f0b7a9d2e4c15   # exact original behind a paging marker / ledger row
 babyzilla recall 8c1f0b7a9d2e4c15:120-180   # just those lines
 babyzilla retrieve src/app.js:120-160   # exact span, numbered
@@ -165,25 +165,30 @@ Yes, within strict limits — and every decision is visible:
    `opencode`-tier models) may propose **one numeric knob change** — inside a
    hard clamp table, at most 35% per step. Prompts, routing, algorithms and
    code are structurally out of reach.
-3. **Apply provisionally, then verify.** The change takes effect immediately
-   and is scheduled into the local A/B bench (`bench/ab-live.mjs`,
-   plugin-vs-plugin). It is kept only if the task marker is found in every
-   leg, step counts match, and the cost win beats the measured A/A noise
-   floor — otherwise it reverts automatically. A recall storm while a change
-   is provisional reverts it without waiting for a bench.
+3. **Apply provisionally, then verify by replay.** The change takes effect
+   immediately. After a grace window (24h of live signals), the real
+   compression pipeline (`bench/replay.mjs`) is run twice over a fixed
+   transcript — baseline knobs versus the proposal. Prompt bytes are a pure
+   function of the transcript and the knobs, so the verdict is **exact, free
+   and repeatable**: no model calls, no credits, no provider weather. Kept
+   only if prompt tokens fall, every rewritten result keeps its recall
+   handle, already-sent bytes stay byte-identical, the live user ask survives,
+   and the knob stays within 35% of its documented default — otherwise it
+   reverts. A recall storm while a change is provisional reverts it without
+   waiting for any bench.
 4. **Everything lands in `selftune/ledger.jsonl`** — proposals, applies,
    keeps, reverts, with reasons. `babyzilla selftune status` shows the state.
 
 Disable the loop entirely with `"selfLearn": false` (telemetry keeps being
-recorded) or freeze everything with `BABYZILLA_SELFTUNE_DISABLE=1`. Bench
-verification spends provider credits; it runs at most weekly and only when
-there is something to verify.
+recorded) or freeze everything with `BABYZILLA_SELFTUNE_DISABLE=1`. Routine
+verification is free; `babyzilla selftune verify --live` still runs the
+dollar bench when you want task-quality evidence, and that one spends credits.
 
-The gate is deliberately hard to pass. On a multi-turn agentic task the A/A
-floor is large — the first honest measurement on this repo's bench shape was
-**24.6%** (uncached-input share swings with provider cache hits, not with the
-knob), which puts the bar at 37%. If a knob's effect cannot clear that, it is
-reverted and the loop says so: an unproven change is worse than no change.
+Why replay instead of the dollar bench: the live A/B measures cost, and on a
+multi-turn agentic task that number is dominated by provider cache hits — the
+first honest A/A run measured a **24.6% noise floor**, so no safe knob could
+ever clear the gate. `bench/RESULTS.md` keeps those numbers; the replay
+answers the question the knobs actually ask.
 
 ## How it works
 

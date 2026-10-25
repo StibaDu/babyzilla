@@ -2,6 +2,49 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.11.0] — 2026-10-25
+
+### Changed
+
+- **Verification is now a deterministic replay, so good knobs can actually be
+  kept.** The dollar bench measured a 24.6% A/A noise floor on this task shape
+  (v0.10.1), which meant no safe knob could ever clear the gate and the loop
+  could only revert. `bench/replay.mjs` runs the real compression pipeline
+  (`lib/text.mjs`) twice over a fixed 18-step transcript — baseline knobs
+  versus the proposal — and compares prompt bytes, which are a pure function
+  of transcript + knobs. Exact, repeatable, free: no model calls, no credits.
+  Keep requires: prompt tokens fall (or peak context does), neither metric
+  worse by more than 2%, all guards hold, and the knob stays within 35% of its
+  documented default (anti-ratchet). `selftune verify --live` still runs the
+  dollar bench for end-to-end quality evidence.
+- The planner runs the replay inline after the 24h grace window, so a
+  provisional knob is settled by evidence instead of waiting on a noisy bench.
+  `distillBudgetDefault` is excluded from the default allowlist: a smaller
+  budget always feeds fewer tokens, but the summary-quality loss is invisible
+  to both benches, so the loop must not move it.
+- The analysis prompt now states the replay objective and passes the live A/A
+  floor as context only.
+
+### Fixed
+
+- **The live user's message could be condensed as "historical bulk".** The
+  bulk-user gate excluded `i >= turnStart`, but `turnStart` is the index
+  *after* the newest user message, so the message the agent was answering was
+  eligible. A fresh 40K-token paste was rewritten on the first request.
+- **User prose was compressed like a tool dump.** `compactPart` applied
+  line-based structural trimming to every text ref, so a single-line 100KB
+  user message collapsed to its first 240 characters — the ask deleted. Prose
+  now gets head+tail characters only; tool output keeps structural trimming.
+  Both are covered by the replay's `liveUserKeepsEnds` guard.
+
+### Added
+
+- `bench/replay.mjs` + `judgeReplay`: deterministic verification with
+  recoverability, prefix-stability and live-user guards; 2 new tests
+  (22 in the self-tuning suite, 205 overall).
+- `lib/defaults.mjs`: plugin defaults moved into a pure module so the replay
+  measures the real configuration instead of a drifting copy.
+
 ## [0.10.1] — 2026-10-25
 
 ### Fixed

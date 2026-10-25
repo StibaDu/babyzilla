@@ -108,7 +108,7 @@ once.)
 | `proactiveCompactRatio` | `0.35` | Fraction of the model's context window that triggers a proactive compaction. `0.35` compacts a 1M-token Kimi K3 session at ~367K; `0` disables by ratio (the floor still applies). |
 | `proactiveCompactMinTokens` | `120000` | Absolute floor for proactive compaction, so small-window models are untouched. |
 | `proactiveCompactCooldownMs` | `600000` | Minimum gap between two proactive compactions for the same session. Prevents a `/compact` on every step if a compaction produces little reduction. |
-| `selfLearn` | `true` | Self-tuning loop (v0.10). Per-session telemetry is always recorded (plain file appends, no model calls); when this is on, a cheap analysis call may also propose **one numeric knob change** after `selfLearnSessions` new sessions and `selfLearnIntervalHours` hours. Proposals are applied provisionally, verified by a marker-gated bench run, then kept or reverted. `false` stops the loop but keeps telemetry. |
+| `selfLearn` | `true` | Self-tuning loop. Per-session telemetry is always recorded (plain file appends, no model calls); when this is on, a cheap analysis call may also propose **one numeric knob change** after `selfLearnSessions` new sessions and `selfLearnIntervalHours` hours. Proposals are applied provisionally, verified by a deterministic replay of the compression pipeline, then kept or reverted. `false` stops the loop but keeps telemetry. |
 | `selflearnModel` | `null` | Model for the analysis call. `null` = the session's own model (session-scoped route — free on `opencode`-tier models). Set `{"providerID":"…","id":"…"}` to pin a cheap analyst. Distinct from `distillModel` so the two roles can use different models. |
 | `selfLearnSessions` | `4` | Finalized sessions (≥3 turns each) of new experience required between two analysis calls. |
 | `selfLearnIntervalHours` | `20` | Minimum hours between analyses — loop cadence, not a rate limit. |
@@ -138,16 +138,22 @@ The loop turns recorded telemetry into bounded, verified knob changes:
    ≤ 35% step, allowlist via `selfLearnKnobs`. The change merges into the
    running options immediately and persists in `selftune/state.json`; the
    decision lands in `selftune/ledger.jsonl`.
-4. **Verify** — after the grace/throttle windows the `bench/ab-live.mjs` harness
-   runs plugin-vs-plugin (baseline values on the OFF leg, proposal on the ON
-   leg). Kept only if the marker is found in every leg of every rep, step
-   counts match, and the paired cost delta is cheaper and beyond the measured
-   A/A noise floor. Fail → automatic revert. Every step in the ledger.
-   An aborted leg (no marker, different step count) is an instrument failure,
-   not evidence: A/A samples from such a run are discarded, and a failed
-   baseline leg defers verification instead of reverting the knob. A run also
-   needs both leg orders — identical fixtures make the second leg read the
-   first leg's prompt cache, so one order alone would read warm-up as savings.
+4. **Verify** — after the grace/throttle windows, `bench/replay.mjs` runs the
+   real compression pipeline twice over a fixed transcript: baseline knobs
+   versus the proposal. Prompt bytes are a pure function of transcript + knobs,
+   so this is exact, free and repeatable (no model calls, no provider noise).
+   Kept only if prompt tokens fall, every rewritten result keeps its recall
+   handle, already-sent bytes stay byte-identical, the live user ask survives,
+   and the knob stays within 35% of its documented default. Fail → revert.
+   Every step in the ledger.
+
+   `babyzilla selftune verify --live` runs the dollar bench
+   (`bench/ab-live.mjs`, plugin-vs-plugin, spends credits) instead. That one
+   measures task quality end-to-end, but on a multi-turn agentic task its A/A
+   noise floor can be tens of percent (see `bench/RESULTS.md`), so it is not
+   the routine gate. A/A samples only count from marker-complete, work-matched
+   reps with both leg orders present; a failed baseline leg defers instead of
+   reverting the knob.
 
 Prompts, contract text, model routing, compression algorithms and code are
 structurally out of reach — the analyst can only move numbers in this table:
@@ -159,7 +165,7 @@ structurally out of reach — the analyst can only move numbers in this table:
 | `toolResultTailLines` | 5 | 60 | verbatim tail |
 | `toolResultMinTokens` | 1200 | 12000 | compress-at-source threshold |
 | `toolResultEagerTokens` | 4000 | 30000 | eager any-tool threshold |
-| `distillBudgetDefault` | 8000 | 48000 | transcript budget fed to the distiller |
+| `distillBudgetDefault` | 8000 | 48000 | transcript budget fed to the distiller — **manual only**: a smaller budget always feeds fewer tokens, but the quality loss is invisible to the replay and too noisy for the dollar bench, so the loop never proposes it |
 | `requestMinSavingsPct` | 5 | 30 | per-request rewrite acceptance floor |
 
 Live quality guard: while a knob is provisional, a recall-rate storm
@@ -170,7 +176,8 @@ CLI:
 
 ```sh
 babyzilla selftune status              # state, pending proposal, counts, floor
-babyzilla selftune verify [--reps N]   # run the marker-gated bench now (spends credits)
+babyzilla selftune verify              # deterministic replay verdict (free, exact)
+babyzilla selftune verify --live [--reps N]  # dollar bench instead (spends credits)
 babyzilla selftune noise [--reps N]    # refresh the A/A noise floor (spends credits)
 babyzilla selftune revert              # revert the pending proposal manually
 babyzilla selftune baseline            # recompute the emergency-revert baseline

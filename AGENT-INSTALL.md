@@ -291,6 +291,9 @@ Useful commands: `babyzilla show` (newest pack), `stats [--json]`,
 `models` (Ollama Cloud model knowledge base: caps, pricing, lanes; `--audit`
 compares the price table with the provider's catalog), and
 `selftune status` (self-tuning loop state: knobs, pending proposal, counts).
+`selftune verify` is free: it replays the compression pipeline deterministically
+(no model calls) to decide whether a provisional knob stays; add `--live` only
+if you want the dollar bench, which spends credits.
 If npm install fails, skip — the CLI is optional; everything essential works
 without it.
 

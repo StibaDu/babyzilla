@@ -21,7 +21,7 @@ import {
   readState, writeState, appendLedger, emptyState,
   clampValue, validProposal, allowlistFor, applyOverrides,
   createSelftune, buildSummaryData, noteRecallRendered,
-  judgeVerify, verifyPlan, noiseFloor, noiseSample, resolveVerify, manualRevert,
+  judgeVerify, judgeReplay, verifyPlan, noiseFloor, noiseSample, resolveVerify, manualRevert,
 } from "../lib/selftune.mjs";
 import { SELF_LEARN_INSTRUCTIONS, buildAnalysisPrompt, parseAnalysis } from "../lib/analyze.mjs";
 
@@ -118,7 +118,8 @@ test("the analysis prompt carries knobs+clamps+sessions and demands one-line JSO
     noiseFloorPct: 2.5,
   });
   assert.ok(prompt.includes("stableMinTokens: current=2000 min=800 max=6000"));
-  assert.ok(prompt.includes("Noise floor") && prompt.includes("2.5%"));
+  assert.ok(prompt.includes("Live A/A noise floor") && prompt.includes("2.5%"));
+  assert.ok(prompt.includes("replayed through the real compression pipeline"));
   assert.ok(prompt.includes("cost=$0.0210") && prompt.includes("recalls=2") && prompt.includes("paged=read:5x-5.0K"));
   assert.ok(prompt.includes('{"noop":true'));
   assert.ok((prompt.match(/Respond with EXACTLY ONE JSON object/g) ?? []).length === 1);
@@ -140,7 +141,7 @@ function seedSessions(root, n) {
   fs.writeFileSync(path.join(root, "selftune", "sessions.jsonl"), lines.join("\n") + "\n");
 }
 
-function makeInstance(root, opts = {}) {
+function makeInstance(root, opts = {}, extra = {}) {
   const options = { ...OPTS_BASE(), ...opts };
   const logs = [];
   const inst = createSelftune({
@@ -149,6 +150,9 @@ function makeInstance(root, opts = {}) {
     log: (m) => logs.push(String(m)),
     dbPath: path.join(root, "does-not-exist.db"), // cost lookup bails: no host DB
     repoDir: path.dirname(TMP),
+    // Replay runs are injected: tests must not spawn the real bench, and the
+    // verdict path is what is under test here.
+    replay: extra.replay ?? (() => ({ base: null, prop: null })),
   });
   return { inst, options, logs };
 }
@@ -226,9 +230,14 @@ test("cycle: trigger gates (sessions count, interval, env freeze) all hold", asy
   delete process.env.BABYZILLA_SELFTUNE_DISABLE;
 });
 
-test("cycle: while pending, no analysis runs; due pending schedules a verify", async () => {
+test("cycle: while pending, no analysis runs; a due pending is replayed and kept or reverted", async () => {
   await pendingCycleResult(TMP, null);
-  const { inst, logs } = makeInstance(TMP);
+  const guards = { recoverable: true, prefixStable: true, liveUserKeepsEnds: true };
+  const replay = () => ({
+    base: { peak: 10_000, total: 100_000, guards },
+    prop: { peak: 9_500, total: 80_000, guards },
+  });
+  const { inst, logs } = makeInstance(TMP, {}, { replay });
   const st = readState(TMP);
   const knob = "stableMinTokens";
   st.knobs[knob] = 1800;
@@ -247,16 +256,18 @@ test("cycle: while pending, no analysis runs; due pending schedules a verify", a
   const r2 = await inst.maybeCycle({ sessionID: nextSid(), callText: () => '{"noop":true}' });
   assert.equal(r2.status, "pending-await-verify");
 
-  // last verify 8 days ago → now a background bench is scheduled
+  // last verify 8 days ago → the deterministic replay decides now
   const s3 = readState(TMP);
   s3.lastTs.verify = Date.now() - 8 * 86400_000;
   writeState(TMP, s3);
   const r3 = await inst.maybeCycle({ sessionID: nextSid(), callText: () => '{"noop":true}' });
-  assert.equal(r3.status, "verify-scheduled");
-  assert.ok(ledger(TMP).some((e) => e.kind === "verify-scheduled"));
-  assert.ok(logs.some((l) => l.includes("verification bench spawned")));
-  // scheduling did not disturb the pending proposal
-  assert.ok(readState(TMP).pending);
+  assert.equal(r3.status, "kept");
+  const done = readState(TMP);
+  assert.equal(done.pending, null, "a kept proposal stops being provisional");
+  assert.equal(done.knobs.stableMinTokens, 1800);
+  assert.equal(done.counts.kept, 1);
+  assert.ok(ledger(TMP).some((e) => e.kind === "verify-replay" && e.ok === true));
+  assert.ok(logs.some((l) => l.includes("KEEP") || l.includes("replay")));
 });
 
 // ── bench verdict judging ───────────────────────────────────────────────────
@@ -333,6 +344,64 @@ test("noiseSample: only complete, order-balanced reps may set the floor", () => 
   assert.ok(!noiseSample(null).ok);
   const noMeta = noiseSample({ results: [pair(1, undefined, 0.02, 0.019)] });
   assert.ok(!noMeta.ok && noMeta.reason.includes("leg-order"));
+});
+
+test("judgeReplay: exact byte verdicts, guards, and the anti-ratchet drift cap", () => {
+  const guards = { recoverable: true, prefixStable: true, liveUserKeepsEnds: true };
+  const base = { peak: 10_000, total: 100_000, guards };
+  const win = judgeReplay({ base, prop: { peak: 9_900, total: 90_000, guards } });
+  assert.ok(win.ok, win.reason);
+  assert.ok(win.peakPct > 0 && win.totalPct > 0);
+
+  const noop = judgeReplay({ base, prop: { peak: 10_000, total: 100_000, guards } });
+  assert.ok(!noop.ok && noop.reason.includes("no win"), "an inert knob is not a win");
+
+  const worse = judgeReplay({ base, prop: { peak: 11_000, total: 101_000, guards } });
+  assert.ok(!worse.ok && worse.reason.includes("got worse"), "more tokens is never kept");
+
+  const broken = judgeReplay({ base, prop: { peak: 9_000, total: 80_000, guards: { ...guards, prefixStable: false } } });
+  assert.ok(!broken.ok && broken.reason.includes("prefixStable"));
+
+  // Beyond 35% from the documented default the replay cannot prove safety:
+  // revert (not defer) so the loop is not pinned by an unprovable proposal.
+  const drift = judgeReplay({ base, prop: { peak: 9_000, total: 80_000, guards }, knob: "toolResultHeadLines", to: 20 });
+  assert.ok(!drift.ok && drift.reason.includes("documented default") && !drift.defer);
+  const within = judgeReplay({ base, prop: { peak: 9_900, total: 90_000, guards }, knob: "toolResultHeadLines", to: 30 });
+  assert.ok(within.ok, within.reason);
+
+  assert.ok(!judgeReplay({ base: null, prop: null }).ok, "a missing payload is not a verdict");
+});
+
+test("resolveVerify: a replay verdict keeps or reverts without a live bench", async () => {
+  const guards = { recoverable: true, prefixStable: true, liveUserKeepsEnds: true };
+  const pending = () => ({
+    ...emptyState(),
+    knobs: { stableMinTokens: 1800 },
+    pending: { knob: "stableMinTokens", from: 2000, to: 1800, proposalTs: Date.now(), appliedTs: Date.now() },
+  });
+  const root = freshRoot();
+  writeState(root, pending());
+  const kept = await resolveVerify({
+    root,
+    verdict: { kind: "replay", base: { peak: 10_000, total: 100_000, guards }, prop: { peak: 9_000, total: 80_000, guards }, knob: "stableMinTokens", to: 1800 },
+  });
+  assert.ok(kept.ok, kept.reason);
+  let st = readState(root);
+  assert.equal(st.pending, null);
+  assert.equal(st.counts.kept, 1);
+  assert.equal(st.knobs.stableMinTokens, 1800);
+
+  const root2 = freshRoot();
+  writeState(root2, pending());
+  const lost = await resolveVerify({
+    root: root2,
+    verdict: { kind: "replay", base: { peak: 10_000, total: 100_000, guards }, prop: { peak: 10_400, total: 101_000, guards }, knob: "stableMinTokens", to: 1800 },
+  });
+  assert.ok(!lost.ok);
+  st = readState(root2);
+  assert.equal(st.pending, null);
+  assert.equal(st.counts.reverted, 1);
+  assert.equal(st.knobs.stableMinTokens, 2000, "a losing proposal restores the prior value");
 });
 
 test("resolveVerify: keep on pass, revert on fail, defer on unpriced", async () => {

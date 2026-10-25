@@ -199,9 +199,16 @@ against the actual fixture bytes: `6258 → 87 tok`).
 
 ## Verification bench (plugin-vs-plugin)
 
-`babyzilla selftune noise` runs the same harness with the plugin on **both**
-legs and no overrides, so every delta it finds is instrument noise. It is the
-gate the self-tuner must clear before keeping a knob.
+The self-tuner's routine gate is **not** this harness: it is the deterministic
+replay in `bench/replay.mjs`, which runs the real compression pipeline over a
+fixed transcript and compares prompt bytes exactly (free, no model calls, no
+provider noise). This section records why: the dollar bench cannot resolve the
+knobs the tuner moves.
+
+`babyzilla selftune noise` runs this harness with the plugin on **both** legs
+and no overrides, so every delta it finds is instrument noise. It remains
+available (`selftune verify --live`, `selftune noise`) for end-to-end task
+quality evidence.
 
 First honest measurement (4 reps, 2026-10-25): **24.57% → floor 37.36%**, from
 three marker-complete, work-matched reps.
@@ -223,4 +230,33 @@ share depends on provider cache hits and on which tool calls the model chose
 that turn (11 requests per leg, output 1.2K–3.1K). Legs with identical configs
 ranged $0.0086–$0.0166. That is the honest resolution of this bench shape; a
 knob whose effect is smaller than that cannot be distinguished from cache
-weather, so it is reverted rather than kept on faith.
+weather.
+
+## Replay bench (the routine gate)
+
+`bench/replay.mjs` replays a fixed 18-step transcript (routine reads, log
+dumps, a single-line 30K-token JSON dump, a repeated read, a 44K-token
+historical paste, and the 1.5–2.5K band that the stable threshold decides)
+through `lib/text.mjs` — the same functions the plugin calls — and reports
+prompt tokens before/after, plus guards (recoverability, prefix stability,
+live-user survival).
+
+Measured on the shipped corpus (deterministic, so these are exact):
+
+| Proposal | prompt tokens | peak request | verdict |
+|---|---|---|---|
+| `toolResultHeadLines` 40 → 26, tail 20 → 13 | **−18.2%** | −0.8% | keep |
+| `toolResultHeadLines` 40 → 30 | **−6.2%** | +1.1% (within the 2% tolerance) | keep |
+| `stableMinTokens` 2000 → 1500 | +1.1% | **+7.8%** | revert |
+| `stableMinTokens` 2000 → 2600 | ±0% | ±0% | revert |
+| `requestMinSavingsPct` 12 → 30 | ±0% | ±0% | revert |
+
+The `stableMinTokens` 1500 row is the interesting one: compressing more at
+arrival leaves less for the request hook to save, the 12% rewrite gate then
+skips the 44K paste, and the request gets *bigger*. A dollar-only bench would
+have called that noise; the replay resolves it exactly and reverts.
+
+Knobs whose effect the replay cannot see (`distillBudgetDefault`, and the
+name-allowlist thresholds while `stablePrefix` is on) are inert by
+construction: they produce ±0% and are reverted rather than kept on faith.
+`distillBudgetDefault` is excluded from the default allowlist for that reason.

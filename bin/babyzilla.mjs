@@ -12,7 +12,7 @@ import { readPage, prunePages } from "../lib/pages.mjs";
 import { extractProbes, scorePack, missingFactsModule } from "../lib/eval.mjs";
 import { loadDB, explain as explainModels } from "../lib/modeldb.mjs";
 import {
-  renderStatus, runVerify as runVerifyBench, verifyPlan, resolveVerify, runNoise,
+  renderStatus, runVerify as runVerifyBench, runReplayBench, verifyPlan, resolveVerify, runNoise,
   refreshBaseline, manualRevert, readState as readSelftuneState, noteRecallRendered,
   buildSummaryData,
 } from "../lib/selftune.mjs";
@@ -766,10 +766,12 @@ Usage:
                                     score a pack against the transcript it replaced
   babyzilla prune [--older-than 2w] [--dry-run]
                                     remove old session packs (sessions untouched)
-  babyzilla selftune [status|verify|noise|revert|baseline] [--reps N] [--json]
-                                    self-tuning loop state; verify runs the marker-gated
-                                    bench against the pending proposal; noise refreshes
-                                    the A/A floor; revert undoes the pending knob
+  babyzilla selftune [status|verify|noise|revert|baseline] [--live] [--reps N] [--json]
+                                    self-tuning loop state; verify replays the pipeline
+                                    deterministically against the pending proposal
+                                    (--live runs the dollar bench instead); noise
+                                    refreshes the live A/A floor; revert undoes the
+                                    pending knob
 
 Environment:
   BABYZILLA_ROOT=<dir>              data root (default ~/.opencode/contextpacks)
@@ -845,12 +847,35 @@ function main() {
         if (sub === "verify") {
           const plan = verifyPlan(root);
           if (!plan.pending) { out("nothing pending — nothing to verify\n"); break; }
-          out(`verifying ${plan.pending.knob} ${plan.pending.from} → ${plan.pending.to} (reps=${reps}, live bench, marker-gated)…\n`);
-          const runR = runVerifyBench({ root, repo, reps, setoffs: plan.setoffs, sets: plan.sets });
-          void Promise.resolve(resolveVerify({ root, verdict: runR.payload, log: console.error, reps })).then((judged) => {
-            out(`verdict: ${judged.ok ? "PASS — kept" : "FAIL — reverted"} — ${judged.reason}\n`);
-            process.exitCode = judged.ok ? 0 : 1;
-          });
+          const pending = plan.pending;
+          if (rest.includes("--live")) {
+            // Dollar bench: honest about task quality, too noisy for small
+            // knobs (see bench/RESULTS.md), and it spends credits.
+            out(`verifying ${pending.knob} ${pending.from} → ${pending.to} (reps=${reps}, live bench, marker-gated)…\n`);
+            const runR = runVerifyBench({ root, repo, reps, setoffs: plan.setoffs, sets: plan.sets });
+            void Promise.resolve(resolveVerify({ root, verdict: runR.payload, log: console.error, reps })).then((judged) => {
+              out(`verdict: ${judged.ok ? "PASS — kept" : "FAIL — reverted"} — ${judged.reason}\n`);
+              process.exitCode = judged.ok ? 0 : 1;
+            });
+          } else {
+            // Deterministic replay: exact prompt-byte comparison, no credits.
+            out(`replaying ${pending.knob} ${pending.from} → ${pending.to} (deterministic pipeline, no model calls)…\n`);
+            const res = runReplayBench({ repo, setoffs: plan.setoffs, sets: plan.sets });
+            void Promise.resolve(resolveVerify({
+              root,
+              verdict: { kind: "replay", base: res?.base ?? null, prop: res?.prop ?? null, knob: pending.knob, to: pending.to },
+              log: console.error,
+            })).then((judged) => {
+              out(`verdict: ${judged.ok ? "PASS — kept" : "FAIL — reverted"} — ${judged.reason}\n`);
+              if (judged.peakPct != null) {
+                const peakWord = judged.peakPct >= 0
+                  ? `${judged.peakPct.toFixed(1)}% smaller`
+                  : `${Math.abs(judged.peakPct).toFixed(1)}% larger`;
+                out(`         prompt tokens ${judged.totalPct.toFixed(1)}% fewer, peak ${peakWord}\n`);
+              }
+              process.exitCode = judged.ok ? 0 : 1;
+            });
+          }
           break;
         }
         if (sub === "noise") {

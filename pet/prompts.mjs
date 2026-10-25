@@ -19,12 +19,28 @@ export const NEGATIVE =
 export const masterPrompt = () =>
   `${BASE}, neutral friendly expression, arms relaxed at its sides, mouth closed in a small smile, ${STYLE}`;
 
+/**
+ * Walk frames cannot use BASE: it pins "perfectly symmetric design", which is
+ * exactly what stops the model from moving a leg. This variant drops that phrase
+ * and is conditioned on the master, so the design stays and only the pose moves.
+ */
+export const WALK_BASE =
+  "a cute baby Godzilla kaiju hatchling, chunky pear shaped body, mint green skin, " +
+  "cream coloured belly with four horizontal plate ridges, a row of dark teal triangular dorsal plates " +
+  "along its back and thick tail, short stubby legs with three toes, two small arms, " +
+  "big round white eyes with amber irises and large black pupils, tiny white fangs, soft pink blush cheeks, " +
+  "front view, full body, standing on two feet, walking";
+
+export const walkPrompt = (delta) => `${WALK_BASE}, ${delta}, ${STYLE}`;
+
 /** Locomotion frames: generated from the master, legs and lean only. */
 export const LOCOMOTION = [
-  { id: "walk-1", delta: "left leg lifted forward, right leg back, body leaning forward, arms swinging" },
-  { id: "walk-2", delta: "both legs together under the body, mid stride, slight bounce up" },
-  { id: "walk-3", delta: "right leg lifted forward, left leg back, body leaning forward, arms swinging" },
-  { id: "walk-4", delta: "both legs together under the body, mid stride, slight bounce down" },
+  // A four-beat march, front view: step, settle, opposite step, settle. Each
+  // frame is conditioned on the master so the body cannot drift.
+  { id: "walk-1", walk: true, delta: "left knee lifted high toward its belly, right leg planted straight, body tilted a little to the right, arms out for balance" },
+  { id: "walk-2", walk: true, delta: "both feet flat on the ground, knees slightly bent, body at its lowest, arms hanging down" },
+  { id: "walk-3", walk: true, delta: "right knee lifted high toward its belly, left leg planted straight, body tilted a little to the left, arms out for balance" },
+  { id: "walk-4", walk: true, delta: "both feet flat on the ground, standing tall, arms slightly away from the body" },
   { id: "run-1", delta: "running fast, both legs stretched wide, body leaning far forward, arms back" },
   { id: "run-2", delta: "running fast, legs tucked under body mid air, tail straight back" },
   { id: "run-3", delta: "running fast, opposite leg stretch, body low, arms pumping" },

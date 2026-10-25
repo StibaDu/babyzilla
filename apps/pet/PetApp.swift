@@ -14,7 +14,7 @@ import Foundation
 // ── config ───────────────────────────────────────────────────────────────────
 
 struct PetConfig: Codable {
-    var scale: Int = 3
+    var scale: Int = 2
     var x: Double? = nil            // last position, in global screen coords
     var y: Double? = nil
     var chattiness: String = "normal"   // quiet | normal | chatty
@@ -319,6 +319,8 @@ final class PetController: NSObject {
     private var lastBlink = Date()
     private var movingFrame: String? = nil
     private var walkClock: TimeInterval = 0
+    private var walkLift: CGFloat = 0
+    private var walkSquash: CGFloat = 0
     private var lastRendered = ""
     private var lastExprAt = Date.distantPast
 
@@ -354,7 +356,7 @@ final class PetController: NSObject {
         self.data = data
         self.lib = lib
         self.spriteSize = data.size
-        PixelFont.scale = CGFloat(max(2, config.scale - 1))
+        PixelFont.scale = CGFloat(config.scale <= 1 ? 1 : (config.scale >= 4 ? 3 : 2))
         super.init()
         buildWindows()
         observeEvents()
@@ -552,15 +554,35 @@ final class PetController: NSObject {
     private func stepFrames(dt: Double) {
         let reacting = Date() < expressionUntil
         if reacting {
+            // a reaction plays standing still, on the ground
             movingFrame = nil
+            walkLift = 0
+            walkSquash = 0
         } else if lift > 0.5 || vy > 40 {
             movingFrame = vy > 120 ? "loco-hop-1" : "loco-hop-2"
         } else if targetX != nil || abs(vx) > 2 {
+            // It hops, it does not walk. The art has no stride — the legs are
+            // planted in every front-view sprite, so a "walk cycle" just skates.
+            // A four-beat hop (crouch, rise, apex, land) keeps the feet off the
+            // ground for most of each step, and the cadence follows distance so
+            // the ground never slides under it.
+            let side = CGFloat(spriteSize * config.scale)
+            let hopTime = max(0.30, (side * 0.22) / max(25, abs(vx)))
             walkClock += dt
-            let frame = (Int(walkClock / 0.15) % 4) + 1
-            movingFrame = "loco-walk-\(frame)"
+            switch Int(walkClock / (hopTime / 4)) % 4 {
+            case 0: // crouch, loaded
+                movingFrame = "loco-hop-1"; walkLift = 0; walkSquash = 0.5
+            case 1: // push off, standing tall
+                movingFrame = "loco-walk-4"; walkLift = side * 0.04; walkSquash = 0
+            case 2: // apex — the only beat with the arms-up pose
+                movingFrame = "loco-hop-2"; walkLift = side * 0.065; walkSquash = 0
+            default: // land, knees bent
+                movingFrame = "loco-walk-2"; walkLift = 0; walkSquash = 0
+            }
         } else {
             movingFrame = nil
+            walkLift = 0
+            walkSquash = 0
         }
         let id = renderId
         if id != lastRendered {
@@ -588,6 +610,13 @@ final class PetController: NSObject {
         case "pop": break
         default: break
         }
+        // while a locomotion frame is showing, the art already carries the
+        // vertical motion — an extra breathing bob would double it
+        if movingFrame != nil { bob = 0 }
+        if walkSquash > 0 {
+            sy = min(sy, 1 - walkSquash * 0.10)
+            sx = max(sx, 1 + walkSquash * 0.08)
+        }
         if squash > 0 {
             sy = 1 - squash * 0.28
             sx = 1 + squash * 0.22
@@ -595,7 +624,7 @@ final class PetController: NSObject {
         var jitter: CGFloat = 0
         if currentMotion == "shake" { jitter = sin(CGFloat(time) * 40) * CGFloat(config.scale) * 0.7 }
 
-        let feetY = floorY + lift
+        let feetY = floorY + lift + walkLift
         window.setFrameOrigin(NSPoint(x: x - side / 2 + jitter, y: feetY))
         if view.frame.size.width != side {
             view.frame = NSRect(x: 0, y: 0, width: side, height: side)
@@ -605,7 +634,7 @@ final class PetController: NSObject {
         renderScaleY = sy
 
         // bubble follows the head, sized from the text it actually holds
-        let bubbleW: CGFloat = 260
+        let bubbleW: CGFloat = max(200, side * 1.35)
         let bubbleH = max(40, BubbleView.measure(bubbleView.text, width: bubbleW).height)
         bubble.setFrame(NSRect(x: x - bubbleW / 2, y: feetY + side + bob - 6, width: bubbleW, height: bubbleH), display: false)
         bubbleView.frame = NSRect(x: 0, y: 0, width: bubbleW, height: bubbleH)
@@ -703,7 +732,7 @@ final class PetController: NSObject {
         menu.addItem(title)
         menu.addItem(.separator())
 
-        for scale in [2, 3, 4] {
+        for scale in [1, 2, 3] {
             let item = NSMenuItem(title: "Size \(scale)×", action: #selector(setScale(_:)), keyEquivalent: "")
             item.target = self
             item.tag = scale

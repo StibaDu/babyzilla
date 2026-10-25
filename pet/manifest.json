@@ -2304,9 +2304,9 @@
     },
     "loco-walk-1": {
       "seed": 7,
-      "prompt": "a cute baby Godzilla kaiju hatchling, chunky pear shaped body, mint green skin, cream coloured belly with four horizontal plate ridges, a row of dark teal triangular dorsal plates along its back and thick tail, short stubby legs with three toes, two small arms, big round white eyes with amber irises and large black pupils, tiny white fangs, soft pink blush cheeks, perfectly symmetric design, front view, full body, standing on two feet, left leg lifted forward, right leg back, body leaning forward, arms swinging, neutral focused face, 16-bit pixel art, SNES era game sprite, hard 3 tone cel shading, chunky readable shapes, bold 2 pixel black outline, limited 16 colour palette, flat colours, no gradients, no anti-aliasing, isolated on a solid pure magenta background",
-      "ref": null,
-      "strength": null,
+      "prompt": "a cute baby Godzilla kaiju hatchling, chunky pear shaped body, mint green skin, cream coloured belly with four horizontal plate ridges, a row of dark teal triangular dorsal plates along its back and thick tail, short stubby legs with three toes, two small arms, big round white eyes with amber irises and large black pupils, tiny white fangs, soft pink blush cheeks, front view, full body, standing on two feet, walking, left knee lifted high toward its belly, right leg planted straight, body tilted a little to the right, arms out for balance, 16-bit pixel art, SNES era game sprite, hard 3 tone cel shading, chunky readable shapes, bold 2 pixel black outline, limited 16 colour palette, flat colours, no gradients, no anti-aliasing, isolated on a solid pure magenta background",
+      "ref": "assets/pet/raw/master.png",
+      "strength": 0.55,
       "raw": "assets/pet/raw/loco-walk-1.png",
       "sprite": "assets/pet/sprites/loco-walk-1.png",
       "stats": {
@@ -2322,14 +2322,14 @@
         },
         "borderClean": true
       },
-      "ms": 33216,
-      "at": "2026-10-25T19:43:11.020Z"
+      "ms": 17951,
+      "at": "2026-10-25T20:04:43.238Z"
     },
     "loco-walk-2": {
       "seed": 7,
-      "prompt": "a cute baby Godzilla kaiju hatchling, chunky pear shaped body, mint green skin, cream coloured belly with four horizontal plate ridges, a row of dark teal triangular dorsal plates along its back and thick tail, short stubby legs with three toes, two small arms, big round white eyes with amber irises and large black pupils, tiny white fangs, soft pink blush cheeks, perfectly symmetric design, front view, full body, standing on two feet, both legs together under the body, mid stride, slight bounce up, neutral focused face, 16-bit pixel art, SNES era game sprite, hard 3 tone cel shading, chunky readable shapes, bold 2 pixel black outline, limited 16 colour palette, flat colours, no gradients, no anti-aliasing, isolated on a solid pure magenta background",
-      "ref": null,
-      "strength": null,
+      "prompt": "a cute baby Godzilla kaiju hatchling, chunky pear shaped body, mint green skin, cream coloured belly with four horizontal plate ridges, a row of dark teal triangular dorsal plates along its back and thick tail, short stubby legs with three toes, two small arms, big round white eyes with amber irises and large black pupils, tiny white fangs, soft pink blush cheeks, front view, full body, standing on two feet, walking, both feet flat on the ground, knees slightly bent, body at its lowest, arms hanging down, 16-bit pixel art, SNES era game sprite, hard 3 tone cel shading, chunky readable shapes, bold 2 pixel black outline, limited 16 colour palette, flat colours, no gradients, no anti-aliasing, isolated on a solid pure magenta background",
+      "ref": "assets/pet/raw/master.png",
+      "strength": 0.55,
       "raw": "assets/pet/raw/loco-walk-2.png",
       "sprite": "assets/pet/sprites/loco-walk-2.png",
       "stats": {
@@ -2345,14 +2345,14 @@
         },
         "borderClean": true
       },
-      "ms": 30646,
-      "at": "2026-10-25T19:43:41.672Z"
+      "ms": 17707,
+      "at": "2026-10-25T20:05:00.956Z"
     },
     "loco-walk-3": {
       "seed": 7,
-      "prompt": "a cute baby Godzilla kaiju hatchling, chunky pear shaped body, mint green skin, cream coloured belly with four horizontal plate ridges, a row of dark teal triangular dorsal plates along its back and thick tail, short stubby legs with three toes, two small arms, big round white eyes with amber irises and large black pupils, tiny white fangs, soft pink blush cheeks, perfectly symmetric design, front view, full body, standing on two feet, right leg lifted forward, left leg back, body leaning forward, arms swinging, neutral focused face, 16-bit pixel art, SNES era game sprite, hard 3 tone cel shading, chunky readable shapes, bold 2 pixel black outline, limited 16 colour palette, flat colours, no gradients, no anti-aliasing, isolated on a solid pure magenta background",
-      "ref": null,
-      "strength": null,
+      "prompt": "a cute baby Godzilla kaiju hatchling, chunky pear shaped body, mint green skin, cream coloured belly with four horizontal plate ridges, a row of dark teal triangular dorsal plates along its back and thick tail, short stubby legs with three toes, two small arms, big round white eyes with amber irises and large black pupils, tiny white fangs, soft pink blush cheeks, front view, full body, standing on two feet, walking, right knee lifted high toward its belly, left leg planted straight, body tilted a little to the left, arms out for balance, 16-bit pixel art, SNES era game sprite, hard 3 tone cel shading, chunky readable shapes, bold 2 pixel black outline, limited 16 colour palette, flat colours, no gradients, no anti-aliasing, isolated on a solid pure magenta background",
+      "ref": "assets/pet/raw/master.png",
+      "strength": 0.55,
       "raw": "assets/pet/raw/loco-walk-3.png",
       "sprite": "assets/pet/sprites/loco-walk-3.png",
       "stats": {
@@ -2368,14 +2368,14 @@
         },
         "borderClean": true
       },
-      "ms": 30923,
-      "at": "2026-10-25T19:44:12.596Z"
+      "ms": 16723,
+      "at": "2026-10-25T20:05:17.693Z"
     },
     "loco-walk-4": {
       "seed": 7,
-      "prompt": "a cute baby Godzilla kaiju hatchling, chunky pear shaped body, mint green skin, cream coloured belly with four horizontal plate ridges, a row of dark teal triangular dorsal plates along its back and thick tail, short stubby legs with three toes, two small arms, big round white eyes with amber irises and large black pupils, tiny white fangs, soft pink blush cheeks, perfectly symmetric design, front view, full body, standing on two feet, both legs together under the body, mid stride, slight bounce down, neutral focused face, 16-bit pixel art, SNES era game sprite, hard 3 tone cel shading, chunky readable shapes, bold 2 pixel black outline, limited 16 colour palette, flat colours, no gradients, no anti-aliasing, isolated on a solid pure magenta background",
-      "ref": null,
-      "strength": null,
+      "prompt": "a cute baby Godzilla kaiju hatchling, chunky pear shaped body, mint green skin, cream coloured belly with four horizontal plate ridges, a row of dark teal triangular dorsal plates along its back and thick tail, short stubby legs with three toes, two small arms, big round white eyes with amber irises and large black pupils, tiny white fangs, soft pink blush cheeks, front view, full body, standing on two feet, walking, both feet flat on the ground, standing tall, arms slightly away from the body, 16-bit pixel art, SNES era game sprite, hard 3 tone cel shading, chunky readable shapes, bold 2 pixel black outline, limited 16 colour palette, flat colours, no gradients, no anti-aliasing, isolated on a solid pure magenta background",
+      "ref": "assets/pet/raw/master.png",
+      "strength": 0.55,
       "raw": "assets/pet/raw/loco-walk-4.png",
       "sprite": "assets/pet/sprites/loco-walk-4.png",
       "stats": {
@@ -2391,8 +2391,8 @@
         },
         "borderClean": true
       },
-      "ms": 30783,
-      "at": "2026-10-25T19:44:43.379Z"
+      "ms": 16363,
+      "at": "2026-10-25T20:05:34.056Z"
     },
     "loco-run-1": {
       "seed": 7,

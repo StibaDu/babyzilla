@@ -2,6 +2,29 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.14.2] — 2026-10-25
+
+### Changed
+
+- **Smaller by default.** 2× (128 px) instead of 3×; the right-click sizes are
+  now 1× / 2× / 3×, and the speech bubble scales with the pet instead of sitting
+  at a fixed 260 px.
+- **It hops instead of walking.** The four "walk" frames were pinned by the
+  prompt — `front view, perfectly symmetric design` makes it impossible to move
+  a leg — so all four came out with identical legs, and cycling them was a
+  twitching statue sliding across the screen. Travel is now a four-beat hop
+  (crouch → push → apex → land) whose cadence is derived from distance travelled,
+  so the feet leave the ground and nothing skates. The idle breathing bob is
+  suppressed while a locomotion frame is showing, so the two motions do not add.
+
+### Added
+
+- `walkPrompt`: a walk variant without the symmetry phrase, conditioned on the
+  master, for frames whose legs must differ.
+- 1 new test (250 total): every `loco-*` sprite named in the Swift app must exist
+  as art, and every catalogue expression must have a sprite — a typo would
+  otherwise fall back to `idle` and read as a broken animation.
+
 ## [0.14.1] — 2026-10-25
 
 ### Fixed

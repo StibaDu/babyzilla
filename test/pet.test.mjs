@@ -207,6 +207,22 @@ test("install: never kills a pet that belongs to another state dir", async (t) =
   assert.doesNotThrow(() => process.kill(decoy.pid, 0), "the pet in the other state dir is still alive");
 });
 
+test("app: every sprite it asks for exists", (t) => {
+  // The Swift app names sprites as string literals; a typo would silently fall
+  // back to idle and look like a bug in the animation, not in the art.
+  const swift = fs.readFileSync(path.join(ROOT, "apps/pet/PetApp.swift"), "utf8");
+  const ids = new Set(swift.match(/"loco-[a-z0-9-]+"/g)?.map((s) => s.slice(1, -1)) ?? []);
+  assert.ok(ids.size > 0, "the app references locomotion frames");
+  const built = new Set(fs.existsSync(SPRITES)
+    ? fs.readdirSync(SPRITES).filter((f) => f.endsWith(".png")).map((f) => f.slice(0, -4)) : []);
+  const missing = [...ids].filter((id) => !built.has(id));
+  assert.deepEqual(missing, [], `missing locomotion sprites: ${missing.join(", ")}`);
+  // and the catalogue the app renders from agrees with the art
+  const data = JSON.parse(fs.readFileSync(path.join(ROOT, "assets/pet/pet-data.json"), "utf8"));
+  const absent = data.expressions.filter((e) => !built.has(e.id)).map((e) => e.id);
+  assert.deepEqual(absent, [], `expressions with no sprite: ${absent.join(", ")}`);
+});
+
 test("data file: matches the catalogue", (t) => {
   const file = path.join(ROOT, "assets/pet/pet-data.json");
   if (!fs.existsSync(file)) return t.skip("pet-data.json not built");

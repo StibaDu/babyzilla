@@ -19,7 +19,10 @@ the first time it builds. After that the app is a normal bundle in
 ## What it does
 
 - **Lives on the floor.** It sits above the Dock (`visibleFrame`, not the raw
-  screen), wanders, pauses, turns at the edges, and hops.
+  screen), wanders, pauses, turns at the edges, and hops. While it travels it
+  *hops* rather than walks: the front-view sprites have planted legs, so a walk
+  cycle can only skate. The hop cadence follows distance, not the clock, so the
+  ground never slides under it.
 - **Reacts.** A prompt makes it listen, a tool call changes its face per tool,
   a failure makes it wince, compaction has it squeezing something, an available
   update makes it hold up a gift.
@@ -78,7 +81,10 @@ Turn it off with the plugin option `"pet": false`, or the environment variable
 | eggs | 10 | `glitch`, `roar`, `segfault`, `rubber-duck` |
 
 Motion is procedural — `bob`, `pop`, `shake`, `float`, `still` — so 100
-expressions are 100 sprites, not 800 animation frames.
+expressions are 100 sprites, not 800 animation frames. Travel uses a four-beat
+hop (crouch, push, apex, land) drawn from the locomotion frames.
+
+Size is 2× by default (128 px); right-click the pet for 1×, 2× or 3×.
 
 ## Art pipeline
 

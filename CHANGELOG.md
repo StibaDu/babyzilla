@@ -2,6 +2,25 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.27.0] — 2026-10-25
+
+### Added
+
+- **A much bigger, more varied voice.** Every mood now has eleven asides and four
+  short grunts instead of three or four lines: angry gets cave proverbs
+  (`Rocks not this stubborn.` `Me count to ten. Not work.`), teasing gets the human
+  doing the watching (`Dino do work. Human watch.` `Human hold rock wrong.`), bored
+  gets `Human loop. Dino yawn.` and `Me carve tally. Many marks.`
+- **Asides can lead as well as trail.** A short grunt opens about a third of
+  bubbles (`Hmph. Parser broken again…`); a longer aside closes them. A thought that
+  already opens with a grunt never gets a second one stacked in front of it.
+- **No evidence still means a voice.** Sentences with no mood words used to get
+  nothing; they now get a neutral aside (`Dino work.` `Me look. Me look more.`) — the
+  dino comments on its day without claiming a feeling it cannot back up.
+- **One in nine thoughts stays bare**, so the voice does not become a formula, and
+  **equally alive sentences now rotate** by the reasoning block instead of always
+  quoting the first of the ties.
+
 ## [0.26.0] — 2026-10-25
 
 ### Added

@@ -197,28 +197,43 @@ model's own sentence, picked for interest (a question, an aside, a "wait"):
 The dino is allowed an opinion. It is not allowed a fantasy: the **content** is
 always the model's own sentence, reduced; only the **tone** is the pet's. So the
 mood is read off words that are already in the sentence, and a mood with no
-evidence is not shown at all.
+evidence is never put on.
 
-| evidence in the sentence | what it says | examples of the tag |
+| evidence in the sentence | mood | some of what it says |
 |---|---|---|
-| `broken`, `fails`, `wrong`, `why`, `regression` | angry | `Me angry.` `Dino patience gone.` |
-| `hmm`, `wait`, `unclear`, `weird` | confused | `Me confused.` `Human word strange.` |
-| `again`, `twice`, `keeps`, `still`, `same` | bored | `Same rock again.` `Human again.` |
-| `pass`, `fixed`, `done`, `green` | smug | `Dino right.` `Good human.` |
-| the human asked for something (`wants`, `asked`, `keeps`) | teasing | `Human ask much.` `Dino listen. Maybe.` |
+| `broken`, `fails`, `wrong`, `why`, `regression` | angry | `Me angry.` `Human owe dino rock.` `Me count to ten. Not work.` |
+| `hmm`, `wait`, `unclear`, `weird` | confused | `Me confused.` `Human speak upside down.` `Dino blink.` |
+| `again`, `twice`, `keeps`, `still`, `same` | bored | `Same rock again.` `Human loop. Dino yawn.` `Me carve tally. Many marks.` |
+| `pass`, `fixed`, `done`, `green` | smug | `Dino right.` `Dino one. Bug zero.` `Human learn from dino.` |
+| the human asked for something (`wants`, `asked`, `keeps`) | teasing | `Human ask much.` `Dino do work. Human watch.` `Dino listen. Maybe.` |
+| no evidence at all | *(none)* | `Dino work.` `Me look. Me look more.` — it comments on its day, not on you |
+
+**Variety is structural, not just a long list.** Each mood has a pool of eleven
+asides and a pool of four short grunts, and the same machinery moves between them:
+
+- **Placement.** A short grunt can open the bubble (`Hmph. Parser broken again…`)
+  about a third of the time; a longer aside trails it. A thought that already opens
+  with a grunt (`Hmm, wait…`) never gets a second one stacked in front of it.
+- **Ties rotate.** When two sentences are equally alive, which one is quoted comes
+  from the reasoning block as a whole, so two similar steps don't say the same thing.
+- **One in nine stays bare.** No aside at all: an aside every single time is a tic,
+  not a voice.
+- **Mood ≠ silence.** Without mood evidence the dino still speaks, but in a neutral
+  register (`Dino note.` `Another rock.`) — it never performs a feeling it cannot
+  back up.
 
 Anger is not only written: an angry thought also asks the app for `conflict`, which
 the pack's expressions map turns into the shaking animation. The dino trembles at
 the bug it is complaining about.
 
-**Rawr.** About one thought in twenty-three is a plain `Rawr!` instead of a mood
-tag — deterministic per sentence (so a test can never flake), unless a caller passes
-its own `random`. It is deliberately unrelated to the mood: a dino that only roars
-when it is cross is a dino you can predict.
+**Rawr.** About one thought in twenty-three is a plain `Rawr!` instead of an aside,
+in front or behind the thought — deterministic per sentence (so a test can never
+flake), unless a caller passes its own `random`. It is deliberately unrelated to the
+mood: a dino that only roars when it is cross is a dino you can predict.
 
-The tag is attached so it cannot be clipped away: the thought is clipped to make
-room for it, never the other way round. `"petThoughts": "verbatim"` is a quote, so
-it gets no tone at all.
+The aside is attached so it cannot be clipped away: the thought is clipped to make
+room for it, never the other way round. `"petThoughts": "verbatim"` is a quote, so it
+gets no tone at all.
 
 Rules that keep it pleasant rather than spammy:
 

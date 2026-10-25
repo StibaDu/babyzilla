@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { EXPRESSIONS, byId, CATEGORIES } from "../pet/expressions.mjs";
-import { caveman, gist, latestThought, readMood, thought } from "../lib/pet-thought.mjs";
+import { caveman, gist, latestThought, readMood, thought, voice } from "../lib/pet-thought.mjs";
 import {
   TOOL_EXPRESSION, toolExpression, outcomeExpression, compactionExpression,
   budgetExpression, updateExpression, errorExpression, sessionSummary,
@@ -158,11 +158,13 @@ test("thoughts: caveman mechanics, including what it must not eat", () => {
 });
 
 test("thoughts: the mood is read off the words, never invented", () => {
-  // evidence in the sentence -> a short attitude tag, appended to the thought
-  assert.deepEqual(
-    { text: thought("The parser is broken again and the user asked twice already.").text },
-    { text: "Parser broken again and human ask twice already. Me angry." },
-  );
+  let said = thought("The parser is broken again and the user asked twice already.");
+  assert.equal(said.mood, "angry");
+  // the content is still the model's sentence, reduced...
+  assert.match(said.text, /Parser broken again and human ask twice already/);
+  // ...and only the aside is the pet's, taken from that mood's own pool
+  assert.ok([...voice.angry.open, ...voice.angry.close].includes(said.aside), said.aside);
+
   assert.equal(readMood("The parser is broken again"), "angry");
   assert.equal(readMood("The user keeps asking for a smaller bubble"), "bored");
   assert.equal(readMood("Hmm, the cache is stale"), "confused");
@@ -170,27 +172,69 @@ test("thoughts: the mood is read off the words, never invented", () => {
   assert.equal(readMood("The user wants a bigger pet"), "tease");
   // no evidence, no mood: the dino does not perform feelings it cannot back up
   assert.equal(readMood("I should read the code first"), null);
-  assert.equal(thought("I should read the code first.").mood, null);
-  assert.equal(thought("I should read the code first.").text, "Me read code first");
-  // and it never invents content: the words are the model's, only the tag is the pet's
-  const angry = thought("The parser is broken again and the user asked twice already.");
-  assert.ok(angry.text.startsWith("Parser broken again"), angry.text);
+  said = thought("I should read the code first.", { random: () => 0.5 });
+  assert.equal(said.mood, null);
+  // ...but it still has a voice: a neutral aside, never a made-up feeling
+  assert.ok([...voice.flat.open, ...voice.flat.close].includes(said.aside), said.aside);
+  assert.match(said.text, /Me read code first/);
 });
 
-test("thoughts: Rawr is rare, and the tag cannot be clipped away", () => {
+test("thoughts: asides lead as well as trail, and never stack on a grunt", () => {
+  const moods = {
+    angry: "The parser is broken again and the user asked twice.",
+    bored: "The user keeps asking for a smaller bubble again.",
+    confused: "Hmm, wait, the cache is stale.",
+    smug: "The tests pass now.",
+    tease: "The user wants a bigger pet.",
+    flat: "I should read the code first.",
+  };
+  const lead = [];
+  const trail = [];
+  for (const [mood, sentence] of Object.entries(moods)) {
+    // fixed rolls: this test is about placement, not about the two rare paths
+    const said = thought(sentence, { random: () => 0.5 });
+    const where = said.text.startsWith(`${said.aside} `) ? "lead" : "trail";
+    if (where === "lead") lead.push(mood); else trail.push(mood);
+    // placement is one axis, mood is the other: a leading aside must be an opener
+    if (where === "lead") assert.ok(voice[mood].open.includes(said.aside), said.aside);
+    else assert.ok(voice[mood].close.includes(said.aside), said.aside);
+    // and the thought itself is never swallowed by its own attitude
+    assert.ok(said.text.length <= 95, `${said.text.length}: ${said.text}`);
+  }
+  assert.ok(lead.length > 0 && trail.length > 0, `all one placement: ${lead}/${trail}`);
+  // a sentence that already opens with a grunt never gets a second one in front
+  const grunt = thought("Hmm, wait, the cache is stale.", { random: () => 0.5 });
+  assert.ok(voice.confused.close.includes(grunt.aside), grunt.aside);
+  // every aside fits a bubble on its own
+  for (const [mood, pool] of Object.entries(voice)) {
+    for (const line of [...pool.open, ...pool.close]) {
+      assert.ok(line.length <= 34, `${mood}: ${line}`);
+      assert.match(line, /[.!?]$/, `${mood}: ${line}`);
+    }
+    assert.equal(new Set([...pool.open, ...pool.close]).size, pool.open.length + pool.close.length, `${mood}: duplicate aside`);
+  }
+});
+
+test("thoughts: Rawr is rare, the aside cannot be clipped away, and some lines stay bare", () => {
   // deterministic by default: same sentence, same answer, so nothing flakes
   const a = thought("Hmm, the cache is stale.");
   assert.equal(a.text, thought("Hmm, the cache is stale.").text);
-  // a caller may force it (and tests do), which is the only randomness there is
-  assert.equal(thought("Hmm, the cache is stale.", { random: () => 0.001 }).text, "Hmm cache stale. Rawr!");
+  // a caller may force the roar (which is the only randomness there is)
+  assert.equal(thought("Hmm, the cache is stale.", { random: () => 0.001 }).text, "Rawr! Hmm cache stale");
   assert.equal(thought("Hmm, the cache is stale.", { random: () => 0.9 }).rawr, false);
+  // one thought in nine says nothing extra, so the voice does not become a formula
+  const rolls = [0.9, 0.01];
+  const bare = thought("Hmm, the cache is stale.", { random: () => rolls.shift() });
+  assert.equal(bare.aside, null);
+  assert.equal(bare.text, gist("Hmm, the cache is stale."));
   // a long thought clips its body, never its attitude
   const long = thought("The parser is broken again and the user asked twice already and the whole thing is still failing", { max: 60 });
   assert.ok(long.text.length <= 60, `${long.text.length}: ${long.text}`);
-  // whichever tag the hash picked, it is an angry one and it survived intact
-  assert.match(long.text, /(?:Me angry|Dino patience gone|Human test dino|Bug make dino mad)\.$/);
+  assert.ok(long.text.endsWith(` ${long.aside}`), long.text);
+  assert.ok([...voice.angry.open, ...voice.angry.close].includes(long.aside), long.aside);
   // verbatim is a quote: the persona keeps its opinions out of it
   assert.equal(thought("The user keeps asking.", { style: "verbatim" }).text, "The user keeps asking");
+  assert.equal(thought("The user keeps asking.", { style: "verbatim" }).aside, null);
 });
 
 test("thoughts: only the newest assistant reasoning is used", () => {
@@ -214,9 +258,11 @@ test("thoughts: the CLI can make it think, and the bridge tags the kind", async 
   const env = { ...process.env, BABYZILLA_PET_STATE: dir, BABYZILLA_NO_UPDATE_CHECK: "1" };
   const out = await run(process.execPath, [BIN, "pet", "think", "read", "the", "parser"], { env });
   // caveman by default, exactly as the dino says it in a session
-  assert.match(out.stdout, /thought: Read parser/);
+  assert.match(out.stdout, /thought: .*Read parser/);
+  assert.doesNotMatch(out.stdout, /the parser/, "caveman drops the article");
   const lines = fs.readFileSync(path.join(dir, "events.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
-  assert.deepEqual({ kind: lines[0].kind, text: lines[0].text }, { kind: "think", text: "Read parser" });
+  assert.equal(lines[0].kind, "think");
+  assert.match(lines[0].text, /Read parser/);
   // --raw keeps the words as typed
   const exact = await run(process.execPath, [BIN, "pet", "think", "--raw", "read", "the", "parser"], { env });
   assert.match(exact.stdout, /thought: read the parser/);

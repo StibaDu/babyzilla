@@ -192,6 +192,34 @@ model's own sentence, picked for interest (a question, an aside, a "wait"):
    ╰──────────────────╮───────────╯
 ```
 
+### Mood
+
+The dino is allowed an opinion. It is not allowed a fantasy: the **content** is
+always the model's own sentence, reduced; only the **tone** is the pet's. So the
+mood is read off words that are already in the sentence, and a mood with no
+evidence is not shown at all.
+
+| evidence in the sentence | what it says | examples of the tag |
+|---|---|---|
+| `broken`, `fails`, `wrong`, `why`, `regression` | angry | `Me angry.` `Dino patience gone.` |
+| `hmm`, `wait`, `unclear`, `weird` | confused | `Me confused.` `Human word strange.` |
+| `again`, `twice`, `keeps`, `still`, `same` | bored | `Same rock again.` `Human again.` |
+| `pass`, `fixed`, `done`, `green` | smug | `Dino right.` `Good human.` |
+| the human asked for something (`wants`, `asked`, `keeps`) | teasing | `Human ask much.` `Dino listen. Maybe.` |
+
+Anger is not only written: an angry thought also asks the app for `conflict`, which
+the pack's expressions map turns into the shaking animation. The dino trembles at
+the bug it is complaining about.
+
+**Rawr.** About one thought in twenty-three is a plain `Rawr!` instead of a mood
+tag — deterministic per sentence (so a test can never flake), unless a caller passes
+its own `random`. It is deliberately unrelated to the mood: a dino that only roars
+when it is cross is a dino you can predict.
+
+The tag is attached so it cannot be clipped away: the thought is clipped to make
+room for it, never the other way round. `"petThoughts": "verbatim"` is a quote, so
+it gets no tone at all.
+
 Rules that keep it pleasant rather than spammy:
 
 - **one thought per step**, 2.6s throttle, and never the same line twice;

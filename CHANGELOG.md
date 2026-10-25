@@ -2,6 +2,29 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.26.0] — 2026-10-25
+
+### Added
+
+- **The dino has opinions about its human, and moods.** Every thought keeps the
+  model's own words as its content; the tone is read off evidence already in the
+  sentence — `broken`/`fails`/`why` → angry, `again`/`twice`/`keeps` → bored,
+  `hmm`/`wait` → confused, `pass`/`fixed` → smug, and a human who keeps asking →
+  teasing. No evidence, no mood: it does not perform feelings it cannot back up,
+  and it never invents a fact to have one.
+- Tags are short caveman asides appended to the thought (`Human keep ask for smaller
+  bubble. Human again.`), attached so they can never be the part that gets clipped.
+- **Anger is visible, not just written**: an angry thought also emits `conflict`,
+  which the pack's expressions map turns into the shaking animation.
+- **`Rawr!`** lands on roughly one thought in twenty-three, unrelated to the mood.
+  Deterministic per sentence by default (a test can never flake); pass `random` to
+  make it genuinely surprising.
+
+### Fixed
+
+- `babyzilla … | head` printed an EPIPE stack trace instead of exiting; a closed pipe
+  now exits quietly.
+
 ## [0.25.0] — 2026-10-25
 
 ### Fixed

@@ -66,8 +66,8 @@ test("pet thoughts: the newest reasoning becomes one short think event", async (
 
     const thought = events(dir).find((e) => e.kind === "think");
     assert.ok(thought, "a think event was emitted");
-    // the pet's blunt opinion of its human — the same reducer the app shows
-    assert.equal(thought.text, "Human want me let pet talk");
+    // the pet's blunt opinion of its human, plus the mood read off the sentence
+    assert.equal(thought.text, "Human want me let pet talk. Human ask much.");
     assert.ok(thought.text.length <= 95);
   } finally {
     delete process.env.BABYZILLA_PET_STATE;
@@ -98,6 +98,28 @@ test("pet thoughts: off means silence, and no reasoning means no event", async (
       model: { id: "test-model", limit: { context: 200_000 } },
     });
     assert.equal(events(dir2).filter((e) => e.kind === "think").length, 0, "nothing to narrate");
+  } finally {
+    delete process.env.BABYZILLA_PET_STATE;
+  }
+});
+
+test("pet thoughts: an angry sentence makes the dino visibly cross, and a rare Rawr is allowed", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bz-think-mood-"));
+  process.env.BABYZILLA_PET_STATE = dir;
+  try {
+    const handlers = await loadPlugin({}, dir);
+    await handlers.get("context")({
+      sessionID: "ses_mood",
+      messages: reasoningTurn("The parser is broken again and the user asked twice already."),
+      model: { id: "test-model", limit: { context: 200_000 } },
+    });
+    const emitted = events(dir);
+    const thought = emitted.find((e) => e.kind === "think");
+    assert.equal(thought.text, "Parser broken again and human ask twice already. Me angry.");
+    // mood is not only written on the bubble: the pack's expressions map turns
+    // `conflict` into the shake animation
+    const expr = emitted.find((e) => e.kind === "expr" && e.id === "conflict");
+    assert.ok(expr, "an angry thought also asks the pet to tremble");
   } finally {
     delete process.env.BABYZILLA_PET_STATE;
   }

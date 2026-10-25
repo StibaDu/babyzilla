@@ -8,6 +8,11 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+// `babyzilla pet status | head` closes the pipe; a stack trace is not an answer
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (error) => { if (error.code === "EPIPE") process.exit(0); });
+}
 import { sessionCosts, totals, defaultDbPath, openDb, hasTable, auditPrices } from "../lib/cost.mjs";
 import { readPage, prunePages } from "../lib/pages.mjs";
 import { extractProbes, scorePack, missingFactsModule } from "../lib/eval.mjs";
@@ -20,7 +25,7 @@ import {
   inspectConfig, planSetup, probe, applyConfig, locateConfig, configCandidates,
 } from "../lib/setup.mjs";
 import { emit as petEmit, petDir as petStateDir, eventsPath } from "../lib/pet.mjs";
-import { cavemanLine } from "../lib/pet-thought.mjs";
+import { thought as thoughtLine } from "../lib/pet-thought.mjs";
 import { EXPRESSIONS, byId as expressionById } from "../pet/expressions.mjs";
 import {
   renderStatus, runVerify as runVerifyBench, runReplayBench, verifyPlan, resolveVerify, runNoise,
@@ -1445,7 +1450,9 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
           // what you test should be what the dino says: caveman by default,
           // exactly as in a session. --raw keeps the words as typed.
           const raw = rest.includes("--raw") || rest.includes("--verbatim");
-          const line = sub === "think" && !raw ? cavemanLine(text) : text;
+          // the CLI goes through the same reducer as a live thought, mood tag and all
+          const reduced = sub === "think" && !raw ? thoughtLine(text) : null;
+          const line = reduced?.text ?? text;
           petEmitLine({ kind: sub, text: line });
           out(`${sub === "think" ? "thought" : "said"}: ${line}\n`);
           // Proof, not faith: the app writes last-bubble.json when a bubble is on

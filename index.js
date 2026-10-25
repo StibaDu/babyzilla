@@ -47,7 +47,7 @@ import {
   disabled as updatesDisabled, UPDATE_INTERVAL_MS,
 } from "./lib/updates.mjs";
 import { petEnabled, expr as petExpr, say as petSay, think as petThink } from "./lib/pet.mjs";
-import { gist as petGist, latestThought } from "./lib/pet-thought.mjs";
+import { thought as petThoughtText, latestThought } from "./lib/pet-thought.mjs";
 import { toolExpression, outcomeExpression, compactionExpression, budgetExpression, updateExpression } from "./lib/pet-map.mjs";
 
 const execAsync = promisify(execCb);
@@ -691,12 +691,15 @@ export default {
       if (!petThrottled("think", 2600)) return;
       // caveman by default: the pet's opinion of its human, bluntly. "verbatim"
       // keeps the model's own sentences instead.
-      const line = petGist(latestThought(messages), {
+      const said = petThoughtText(latestThought(messages), {
         style: opts.petThoughts === "verbatim" ? "verbatim" : "caveman",
       });
-      if (!line || line === lastThought) return;
-      lastThought = line;
-      petThink(line);
+      if (!said || said.text === lastThought) return;
+      lastThought = said.text;
+      petThink(said.text);
+      // The mood is not only written: an angry dino trembles where the pack has a
+      // pose for it (the expressions map turns `conflict` into `shake`).
+      if (said.mood === "angry") petExpr("conflict", 1.4);
     };
     const petThrottled = (key, ms) => {
       const now = Date.now();

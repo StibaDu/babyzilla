@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { EXPRESSIONS, byId, CATEGORIES } from "../pet/expressions.mjs";
-import { caveman, gist, latestThought } from "../lib/pet-thought.mjs";
+import { caveman, gist, latestThought, readMood, thought } from "../lib/pet-thought.mjs";
 import {
   TOOL_EXPRESSION, toolExpression, outcomeExpression, compactionExpression,
   budgetExpression, updateExpression, errorExpression, sessionSummary,
@@ -155,6 +155,42 @@ test("thoughts: caveman mechanics, including what it must not eat", () => {
   // unknown verbs are left as written rather than mangled ("retir", "stor")
   assert.equal(caveman("The retired mark was stored in config.json"), "retire mark store in config.json");
   assert.equal(caveman("the a an"), "the a an");
+});
+
+test("thoughts: the mood is read off the words, never invented", () => {
+  // evidence in the sentence -> a short attitude tag, appended to the thought
+  assert.deepEqual(
+    { text: thought("The parser is broken again and the user asked twice already.").text },
+    { text: "Parser broken again and human ask twice already. Me angry." },
+  );
+  assert.equal(readMood("The parser is broken again"), "angry");
+  assert.equal(readMood("The user keeps asking for a smaller bubble"), "bored");
+  assert.equal(readMood("Hmm, the cache is stale"), "confused");
+  assert.equal(readMood("The tests pass now"), "smug");
+  assert.equal(readMood("The user wants a bigger pet"), "tease");
+  // no evidence, no mood: the dino does not perform feelings it cannot back up
+  assert.equal(readMood("I should read the code first"), null);
+  assert.equal(thought("I should read the code first.").mood, null);
+  assert.equal(thought("I should read the code first.").text, "Me read code first");
+  // and it never invents content: the words are the model's, only the tag is the pet's
+  const angry = thought("The parser is broken again and the user asked twice already.");
+  assert.ok(angry.text.startsWith("Parser broken again"), angry.text);
+});
+
+test("thoughts: Rawr is rare, and the tag cannot be clipped away", () => {
+  // deterministic by default: same sentence, same answer, so nothing flakes
+  const a = thought("Hmm, the cache is stale.");
+  assert.equal(a.text, thought("Hmm, the cache is stale.").text);
+  // a caller may force it (and tests do), which is the only randomness there is
+  assert.equal(thought("Hmm, the cache is stale.", { random: () => 0.001 }).text, "Hmm cache stale. Rawr!");
+  assert.equal(thought("Hmm, the cache is stale.", { random: () => 0.9 }).rawr, false);
+  // a long thought clips its body, never its attitude
+  const long = thought("The parser is broken again and the user asked twice already and the whole thing is still failing", { max: 60 });
+  assert.ok(long.text.length <= 60, `${long.text.length}: ${long.text}`);
+  // whichever tag the hash picked, it is an angry one and it survived intact
+  assert.match(long.text, /(?:Me angry|Dino patience gone|Human test dino|Bug make dino mad)\.$/);
+  // verbatim is a quote: the persona keeps its opinions out of it
+  assert.equal(thought("The user keeps asking.", { style: "verbatim" }).text, "The user keeps asking");
 });
 
 test("thoughts: only the newest assistant reasoning is used", () => {

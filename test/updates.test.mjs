@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import http from "node:http";
 import { execFile, execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import {
@@ -187,5 +188,5 @@ test("cli: update --check reports the release from the feed, and fails loudly of
 });
 
 function fileURL(rel) {
-  return path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", rel);
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", rel);
 }

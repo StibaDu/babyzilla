@@ -2,6 +2,23 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.13.1] — 2026-10-25
+
+### Fixed
+
+- **Windows: permission rules never matched.** `permission` values are written
+  with `/` (`~/.opencode/contextpacks/**`) while a Windows home is
+  `C:\Users\x`, so the inspector compared `\.opencode\` against `/.opencode/`
+  and reported "not allowed" for a rule it had just written — the wizard would
+  re-add the same rule on every run (and the self-test disagreed with itself).
+  Separators are now normalized on both sides, and written patterns always use
+  `/`.
+- **Windows: `babyzilla` on PATH was reported as missing.** npm installs
+  `babyzilla.cmd` (and `.exe`/`.ps1`) there, never a bare `babyzilla`.
+- Test fixes for Windows: file modes are meaningless there (the atomic-write
+  test now skips the mode check), and `test/updates.test.mjs` built its path
+  from `URL.pathname`, producing `D:\D:\a\...` instead of `D:\a\...`.
+
 ## [0.13.0] — 2026-10-25
 
 ### Added

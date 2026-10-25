@@ -35,6 +35,8 @@ test("wildcards, home expansion and last-match-wins", () => {
   assert.equal(globMatch("git", "git status"), false);
   assert.equal(globMatch("a?c", "abc"), true);
   assert.equal(expandHome("~/x/**", "/h"), "/h/x/**");
+  // Windows config values arrive with backslashes; permissions are written with "/".
+  assert.equal(globMatch("C:/Users/me/.opencode/**", "C:\\Users\\me\\.opencode\\x.md"), true);
   assert.equal(resolveRule({ "*": "ask", "git *": "allow" }, "git status"), "allow");
   assert.equal(resolveRule({ "*": "ask", "git *": "allow" }, "rm -rf /"), "ask");
   assert.equal(resolveRule("allow", "anything"), "allow");
@@ -168,7 +170,9 @@ test("applyConfig writes atomically and keeps a backup", () => {
   const res = applyConfig({ file, text: '{\n  "a": 2\n}\n', now: 1_700_000_000_000 });
   assert.equal(fs.readFileSync(file, "utf8"), '{\n  "a": 2\n}\n');
   assert.equal(fs.readFileSync(res.backup, "utf8"), '{\n  "a": 1\n}\n');
-  assert.equal(fs.statSync(file).mode & 0o777, 0o644, "mode preserved");
+  if (process.platform !== "win32") {
+    assert.equal(fs.statSync(file).mode & 0o777, 0o644, "mode preserved");
+  }
 });
 
 test("probe proves the data dir, compression and recall on this machine", () => {

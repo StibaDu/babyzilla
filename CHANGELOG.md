@@ -2,6 +2,32 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.30.0] — 2026-10-25
+
+### Added
+
+- **The OpenPets catalog is wired in.** [openpets.dev](https://openpets.dev) publishes
+  1312 pets as `pet.json` + a 192x208 atlas; `babyzilla pet catalog` browses them
+  (search, `--featured`, `--originals`, `--json`), `babyzilla pet add <id>` installs
+  one, and `pet add --originals` installs all 79 OpenPets originals. The list is
+  cached for a day in `~/.opencode/pet/catalog.v3.json`; art is only downloaded when
+  you ask for it.
+- **`pet add` takes anything**: a catalog id, a zip, a zip URL, a package folder, or
+  a git URL (which installs every pet inside it). `--voice` and `--as` override the
+  personality and the name; four downloads run at a time.
+- **Two atlas generations**: V1 is the 8x9 sheet, V2 adds two rows of
+  look-direction cells. The crop and the animations ignore the extra rows, so a V2
+  pet imports exactly like a V1 one (`pack.json` records which it was).
+- **Five more house voices** — `chirpy`, `deadpan`, `gruff`, `regal`, `robot` — so a
+  catalog pet is never voiceless and never a caveman. Each imported pet gets one
+  from its own id (deterministic, so it always sounds like itself); unmistakable
+  characters are pinned (`hoodie-cat` → `deadpan`, `luna-techbot` → `robot`).
+- **`pet/pet-package.mjs`**: one place that turns a package into a pack (crop,
+  downscale, expressions, voice, attribution), shared by `pet add` and
+  `pet/import-openpet.mjs` — which shrank to a loop over folders.
+- `pack.json` now records the atlas it came from (`atlas.sheet`, `atlas.cell`,
+  `atlas.rows`, `atlas.version`) and the package's description.
+
 ## [0.29.0] — 2026-10-25
 
 ### Added

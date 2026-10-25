@@ -28,6 +28,8 @@ import { emit as petEmit, petDir as petStateDir, eventsPath } from "../lib/pet.m
 import { thought as thoughtLine } from "../lib/pet-thought.mjs";
 import { MARKS, readMark, writeMark } from "../lib/pet-mark.mjs";
 import { VOICES, VOICE_IDS, resolveVoice } from "../lib/pet-voice.mjs";
+import { catalog as petCatalog, pickPets, findPet, isRemoteSource } from "../lib/pet-catalog.mjs";
+import { installPetSource } from "../pet/pet-package.mjs";
 import { EXPRESSIONS, byId as expressionById } from "../pet/expressions.mjs";
 import {
   renderStatus, runVerify as runVerifyBench, runReplayBench, verifyPlan, resolveVerify, runNoise,
@@ -1412,6 +1414,10 @@ function main() {
   start | stop                                   run or stop the pet
   status                                         running? which pet? how much art?
   packs                                          list pets: built-in + installed packs
+  catalog [--search <text>] [--featured] [--originals] [--limit n] [--json]
+                                                 browse the OpenPets catalog (1300+ pets)
+  add <id|zip|url> [--voice <id>] [--as <name>]  install a pet as a pack
+  add --originals | --featured [--search <text>] install a whole slice of the catalog
   use <pack|babyzilla>                           switch pet (restarts it if running)
   remove <pack|babyzilla>                        delete a pet you do not use
   restore <pack|babyzilla>                       copy a removed pet's art back
@@ -1446,6 +1452,129 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
             }
             return;
           } catch (e) { out(`${c(YELLOW)}pet install failed:${c(RESET)} ${e.message}\n`); process.exitCode = 1; return; }
+        }
+        if (sub === "catalog") {
+          void (async () => {
+            try {
+              const { pets, cached } = await petCatalog({ fresh: rest.includes("--fresh") });
+              const found = pickPets(pets, {
+                search: rest.includes("--search") ? rest[rest.indexOf("--search") + 1] : null,
+                featured: rest.includes("--featured"),
+                originals: rest.includes("--originals"),
+                category: rest.includes("--category") ? rest[rest.indexOf("--category") + 1] : null,
+                limit: rest.includes("--limit") ? Number(rest[rest.indexOf("--limit") + 1]) : (rest.includes("--json") ? 0 : 25),
+              });
+              if (rest.includes("--json")) { out(JSON.stringify(found) + "\n"); return; }
+              const have = new Set(listPacks().filter((entry) => entry.installed).map((entry) => entry.id));
+              for (const pet of found) {
+                const mark = have.has(pet.id) ? `${c(GREEN)}+${c(RESET)}` : " ";
+                const flags = [pet.original ? "original" : null, pet.featured ? "featured" : null, pet.v2 ? "v2" : null].filter(Boolean).join(" ");
+                out(`${mark} ${pet.id.padEnd(30)} ${pet.label.padEnd(22)} ${String(pet.category ?? "").padEnd(8)}${flags ? `${c(DIM)}${flags}${c(RESET)}` : ""}\n`);
+              }
+              out(`${c(DIM)}${found.length} of ${pets.length} pets${cached ? " (cached)" : ""} — babyzilla pet add <id>${c(RESET)}\n`);
+            } catch (e) {
+              out(`${c(YELLOW)}catalog unavailable:${c(RESET)} ${e.message}\n`);
+              process.exitCode = 1;
+            }
+          })();
+          return;
+        }
+        if (sub === "add") {
+          const withValue = new Set(["voice", "as", "search", "category", "limit"]);
+          const positional = [];
+          for (let i = 0; i < rest.length; i++) {
+            if (rest[i].startsWith("--")) { if (withValue.has(rest[i].slice(2))) i++; continue; }
+            if (rest[i] !== "add") positional.push(rest[i]);
+          }
+          const asked = rest.includes("--voice") ? rest[rest.indexOf("--voice") + 1] : null;
+          if (asked && !VOICES[asked]) {
+            out(`unknown voice ${asked} — try: ${VOICE_IDS.join(", ")}\n`);
+            process.exitCode = 2;
+            return;
+          }
+          void (async () => {
+            try {
+              const packsDir = path.join(petStateDir(), "packs");
+              fs.mkdirSync(packsDir, { recursive: true });
+              const have = new Set(listPacks().filter((entry) => entry.installed).map((entry) => entry.id));
+              const force = rest.includes("--force");
+              const done = [];
+              const failed = [];
+              const sources = [];
+
+              const batch = rest.includes("--originals") || rest.includes("--featured")
+                || (rest.includes("--search") && !positional.length);
+              if (batch) {
+                const { pets } = await petCatalog({ fresh: rest.includes("--fresh") });
+                const slice = pickPets(pets, {
+                  search: rest.includes("--search") ? rest[rest.indexOf("--search") + 1] : null,
+                  featured: rest.includes("--featured"),
+                  originals: rest.includes("--originals"),
+                  category: rest.includes("--category") ? rest[rest.indexOf("--category") + 1] : null,
+                });
+                for (const pet of slice) {
+                  if (!pet.zip) { failed.push(`${pet.id}: the catalog has no zip for it`); continue; }
+                  if (have.has(pet.id) && !force) continue;
+                  sources.push({ label: pet.id, source: pet.zip, voice: asked });
+                }
+                if (!sources.length) { out(`nothing to do: every pet in that slice is already installed (--force to rebuild)\n`); return; }
+                out(`${sources.length} to install…\n`);
+              } else if (positional.length) {
+                for (const one of positional) {
+                  const clean = String(one).replace(/^~/, process.env.HOME ?? "~");
+                  if (isRemoteSource(one) || fs.existsSync(clean)) { sources.push({ label: one, source: clean, voice: asked }); continue; }
+                  const { pets } = await petCatalog();
+                  const pet = findPet(pets, one);
+                  if (!pet?.zip) throw new Error(`no pet "${one}" in the catalog — try: babyzilla pet catalog --search ${one}`);
+                  if (have.has(pet.id) && !force) { out(`${pet.id} is already installed (--force to rebuild)\n`); continue; }
+                  sources.push({ label: pet.id, source: pet.zip, voice: asked });
+                }
+              } else {
+                out(`usage: babyzilla pet add <id|zip|url> [--voice <id>] [--as <name>] | --originals | --featured\n`);
+                process.exitCode = 2;
+                return;
+              }
+
+              // four at a time: enough to hide the latency, gentle on the catalog
+              let next = 0;
+              const worker = async () => {
+                while (next < sources.length) {
+                  const job = sources[next++];
+                  try {
+                    const results = await installPetSource(job.source, {
+                      outRoot: packsDir,
+                      size: 112,
+                      scale: 2,
+                      voice: job.voice,
+                      name: rest.includes("--as") ? rest[rest.indexOf("--as") + 1] : null,
+                      source: job.source,
+                      license: "OpenPets catalog — art belongs to its owner",
+                    });
+                    for (const result of results) {
+                      done.push(result);
+                      out(`  ${c(GREEN)}+${c(RESET)} ${result.id.padEnd(26)} ${result.label.padEnd(20)} ${c(DIM)}voice=${result.voice} ${result.frames} frames${c(RESET)}\n`);
+                    }
+                  } catch (e) {
+                    failed.push(`${job.label}: ${e.message}`);
+                  }
+                }
+              };
+              await Promise.all(Array.from({ length: Math.min(4, sources.length) }, worker));
+
+              if (failed.length) for (const line of failed) out(`  ${c(YELLOW)}skip${c(RESET)} ${line}\n`);
+              if (!done.length) { process.exitCode = failed.length ? 1 : 0; return; }
+              out(`${done.length} pet${done.length === 1 ? "" : "s"} installed${failed.length ? `, ${failed.length} skipped` : ""}`);
+              const fresh = done.map((entry) => entry.id);
+              out(done.length === 1
+                ? ` — switch with: babyzilla pet use ${fresh[0]}\n`
+                : ` — babyzilla pet packs, then pet use <id>\n`);
+              process.exitCode = failed.length && !done.length ? 1 : 0;
+            } catch (e) {
+              out(`${c(YELLOW)}pet add failed:${c(RESET)} ${e.message}\n`);
+              process.exitCode = 1;
+            }
+          })();
+          return;
         }
         if (sub === "think" || sub === "say") {
           const text = rest.slice(rest.indexOf(sub) + 1).filter((a) => !a.startsWith("--")).join(" ").trim();

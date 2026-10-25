@@ -70,6 +70,42 @@ attitude rather than a blink and a grin. The art belongs to its author: the impo
 records where it came from in `pack.json` and writes only to
 `~/.opencode/pet/packs/`.
 
+### The catalog: 1300+ pets, one at a time
+
+[OpenPets](https://openpets.dev) publishes a catalog of over a thousand pets as
+`pet.json` + a 192x208 atlas. BabyZilla can browse it and turn any of them into a
+pack:
+
+```sh
+babyzilla pet catalog                        # the first 25, + marks what you own
+babyzilla pet catalog --search cat           # by name, id or blurb
+babyzilla pet catalog --originals            # the 79 made by the OpenPets team
+babyzilla pet add hoodie-cat                 # one pet
+babyzilla pet add --originals                # all 79 originals (~180 MB of art)
+babyzilla pet add --featured --search bot    # or any slice of it
+babyzilla pet add https://…/pet.zip          # or a package straight from a URL
+```
+
+The list is fetched once and cached for a day in
+`~/.opencode/pet/catalog.v3.json`; `--fresh` ignores the cache. A pet is only
+downloaded when you ask for it, and nothing is written outside
+`~/.opencode/pet/packs/`.
+
+The importer understands both atlas generations: **V1** is the 8x9 sheet, **V2**
+adds two rows of look-direction cells that this app has no use for — the crop and
+every animation ignore them, so a V2 pet imports exactly like a V1 one. A pet that
+only ships SVG is refused with a message rather than guessed at.
+
+**Which voice?** A catalog pet is a stranger: we know its art, not its character.
+So each one gets one of four house registers — `chirpy`, `deadpan`, `gruff`,
+`regal` — plus `robot` for the machines, chosen from the pet's own id so it always
+sounds like itself. The few personalities that are unmistakable are pinned
+(`hoodie-cat` is `deadpan`, `luna-techbot` is `robot`). Override any of it:
+
+```sh
+babyzilla pet add snoopy --voice chirpy
+```
+
 ### More faces, without more art
 
 A 15x13 character has far too little identity for a diffusion model to hold: at
@@ -265,6 +301,11 @@ plainly, because its art is someone else's and so is its character.
 | Gemini | `gemini` | bright, loud, delighted by everything | `The user keeps asking for a smaller bubble. Really?` |
 | ChatGPT | `chatgpt` | relentlessly helpful, faintly corporate | `The user keeps asking for a smaller bubble. Again, then.` |
 | Claude | `claude` | gentle, thoughtful, never in a hurry | `The user keeps asking for a smaller bubble. This again.` |
+| *(a catalog pet)* | `chirpy` | bright cartoon pep | `The user keeps asking for a smaller bubble. Nailed it!` |
+| *(a catalog pet)* | `deadpan` | dry, unimpressed | `The user keeps asking for a smaller bubble. Thrilling.` |
+| *(a catalog pet)* | `gruff` | blunt, short fuse | `The user keeps asking for a smaller bubble. Waste of time.` |
+| *(a catalog pet)* | `regal` | grand, formal, theatrical | `The user keeps asking for a smaller bubble. How tedious.` |
+| *(a machine)* | `robot` | clipped and precise | `The user keeps asking for a smaller bubble. Idle loop.` |
 | *(anything else)* | `plain` | no opinions pasted on | `The user keeps asking for a smaller bubble. As before.` |
 
 Two rules keep this honest:

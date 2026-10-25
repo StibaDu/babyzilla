@@ -17,6 +17,8 @@ import {
   budgetExpression, updateExpression, errorExpression, sessionSummary,
 } from "../lib/pet-map.mjs";
 import { decodePng, encodePng } from "../pet/png.mjs";
+import { characterCrop, installPetPackage } from "../pet/pet-package.mjs";
+import { houseVoice } from "../lib/pet-voice.mjs";
 import { analyze } from "../pet/pixelate.mjs";
 
 const run = promisify(execFile);
@@ -613,6 +615,83 @@ test("pack builder: a non-square atlas is downscaled without stretching the art"
   const aspect = (x1 - x0 + 1) / (y1 - y0 + 1);
   assert.ok(Math.abs(aspect - 24 / 40) < 0.12, `aspect ${aspect.toFixed(2)} vs 0.60`);
   assert.ok(x0 > 0, "letterboxed horizontally rather than stretched to the edges");
+});
+
+test("pet package: an 8x11 V2 atlas installs as a pack, and the glance rows are ignored", async () => {
+  // The OpenPets V2 sheet is the nine standard rows plus sixteen look-direction
+  // cells. Those extra rows are not animation frames: if the crop counted them,
+  // every pet would be cropped to the width of the whole cell.
+  const cw = 48, ch = 52, cols = 8, rows = 11;
+  const sheet = { width: cw * cols, height: ch * rows, data: Buffer.alloc(cw * cols * ch * rows * 4) };
+  const ink = (row, col, x, y, r, g, b) => {
+    const i = (((row * ch) + y) * sheet.width + (col * cw + x)) * 4;
+    sheet.data[i] = r; sheet.data[i + 1] = g; sheet.data[i + 2] = b; sheet.data[i + 3] = 255;
+  };
+  for (let r = 0; r < 9; r++) {
+    for (let c = 0; c < cols; c++) {
+      for (let y = 6; y < 42; y++) for (let x = 12; x < 32; x++) ink(r, c, x, y, 240, 200, 60);
+    }
+  }
+  for (let r = 9; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) ink(r, c, x, y, 40, 120, 240);
+    }
+  }
+  assert.deepEqual(characterCrop(sheet, cw, ch), { x: 10, y: 4, w: 24, h: 40 }, "crop ignores rows 9-10");
+
+  const dir = tmp();
+  const pkg = path.join(dir, "hoodie-cat");
+  fs.mkdirSync(pkg, { recursive: true });
+  fs.writeFileSync(path.join(pkg, "pet.json"), JSON.stringify({
+    id: "hoodie-cat", displayName: "Hoodie Cat", description: "A cat in a hoodie", spritesheetPath: "spritesheet.png",
+  }));
+  fs.writeFileSync(path.join(pkg, "spritesheet.png"), encodePng(sheet.width, sheet.height, sheet.data));
+
+  const result = installPetPackage(pkg, { outRoot: path.join(dir, "packs"), size: 48, scale: 2 });
+  assert.equal(result.id, "hoodie-cat");
+  assert.equal(result.rows, 11);
+  const pack = JSON.parse(fs.readFileSync(path.join(result.dir, "pack.json"), "utf8"));
+  assert.deepEqual(pack.atlas, { sheet: `${sheet.width}x${sheet.height}`, cell: `${cw}x${ch}`, rows: 11, version: 2 });
+  assert.equal(pack.voice, houseVoice("hoodie-cat"), "an unknown character gets a house voice");
+  assert.equal(pack.voice, "deadpan", "and this cat is pinned to the one it deserves");
+  assert.equal(pack.expressions.thinking, "review", "expressions map onto bodies");
+  assert.equal(pack.expressions["shell-fail"], "sad");
+  assert.equal(pack.animations.walk.length, cols);
+  assert.equal(pack.size, 48);
+  const frame = decodePng(fs.readFileSync(path.join(result.dir, "sprites", `${pack.animations.idle[0]}.png`)));
+  assert.equal(frame.width, 48);
+  assert.equal(frame.height, 48);
+});
+
+test("cli: pet add installs a package from a folder, with a chosen voice", async () => {
+  const dir = tmp();
+  const pkg = path.join(dir, "pkg");
+  fs.mkdirSync(pkg, { recursive: true });
+  const cell = 24, cols = 8, rows = 9;
+  const sheet = { width: cell * cols, height: Math.round(cell * 208 / 192) * rows, data: null };
+  sheet.data = Buffer.alloc(sheet.width * sheet.height * 4);
+  const cellH = sheet.height / rows;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      for (let y = 4; y < cellH - 4; y++) for (let x = 6; x < cell - 6; x++) {
+        const i = (((r * cellH) + y) * sheet.width + (c * cell + x)) * 4;
+        sheet.data[i] = 200; sheet.data[i + 1] = 120; sheet.data[i + 2] = 240; sheet.data[i + 3] = 255;
+      }
+    }
+  }
+  fs.writeFileSync(path.join(pkg, "pet.json"), JSON.stringify({ id: "test-cat", displayName: "Test Cat", spritesheetPath: "spritesheet.png" }));
+  fs.writeFileSync(path.join(pkg, "spritesheet.png"), encodePng(sheet.width, sheet.height, sheet.data));
+
+  const state = path.join(dir, "state");
+  const env = { ...process.env, BABYZILLA_PET_STATE: state, BABYZILLA_NO_UPDATE_CHECK: "1" };
+  const res = await run(process.execPath, [BIN, "pet", "add", pkg, "--voice", "robot"], { env });
+  assert.match(res.stdout, /test-cat/);
+  const pack = JSON.parse(fs.readFileSync(path.join(state, "packs", "test-cat", "pack.json"), "utf8"));
+  assert.equal(pack.voice, "robot");
+  assert.equal(pack.label, "Test Cat");
+  // and it is a first-class pack from then on
+  const packs = await run(process.execPath, [BIN, "pet", "packs"], { env });
+  assert.match(packs.stdout, /test-cat/);
 });
 
 test("pack builder: a sheet becomes coherent, complete animations", async (t) => {

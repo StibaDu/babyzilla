@@ -153,7 +153,10 @@ another pet say it).
 
 A second look can be built from a sprite sheet and switched at runtime
 (`babyzilla pet packs`, `babyzilla pet use <name>`, or right-click → Pet); see
-[docs/PET.md](docs/PET.md). Five anime pets import in one command:
+[docs/PET.md](docs/PET.md). The [OpenPets](https://openpets.dev) catalog is wired
+in: `babyzilla pet catalog --search cat` to browse 1300+ pets,
+`babyzilla pet add <id>` to take one home, `babyzilla pet add --originals` for the
+79 made by the OpenPets team. Five anime pets import from a folder in one command:
 `node pet/import-openpet.mjs --repo <openpet-ai-girls checkout>`. Unused pets can be deleted from your install with
 `babyzilla pet remove <name>` — `pet restore <name>` brings them back.
 

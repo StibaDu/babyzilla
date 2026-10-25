@@ -288,6 +288,28 @@ test("cli: pet mark sets, reports and clears the badge", async () => {
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "mark.json"), "utf8")).mark, null);
 });
 
+test("cli: pet think speaks in the active pet's voice, and --voice previews another", async () => {
+  const dir = tmp();
+  const env = { ...process.env, BABYZILLA_PET_STATE: dir, BABYZILLA_NO_UPDATE_CHECK: "1" };
+  const line = "The user wants me to add a bubble next";
+  // no pack: the built-in creature is the caveman
+  const dino = await run(process.execPath, [BIN, "pet", "think", line], { env });
+  assert.match(dino.stdout, /human/i);
+  assert.match(dino.stdout, /voice\s+caveman/);
+  // a pack declares its voice, and the same words are no longer rewritten
+  fs.mkdirSync(path.join(dir, "packs", "doubao"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "packs", "doubao", "pack.json"), JSON.stringify({ voice: "doubao" }));
+  fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ pack: "doubao" }));
+  const sweet = await run(process.execPath, [BIN, "pet", "think", line], { env });
+  assert.match(sweet.stdout, /The user wants me to add a bubble next/);
+  assert.match(sweet.stdout, /voice\s+Doubao/);
+  // any voice can be previewed without switching the pet
+  const gem = await run(process.execPath, [BIN, "pet", "think", "The tests pass now", "--voice", "gemini"], { env });
+  assert.match(gem.stdout, /voice\s+Gemini/);
+  const bad = await run(process.execPath, [BIN, "pet", "think", "x", "--voice", "party"], { env }).catch((e) => e);
+  assert.match(String(bad.stdout ?? bad.message), /unknown voice/);
+});
+
 test("cli: pet remove deletes a pet you are not wearing, and install restores it", async () => {
   const dir = tmp();
   const env = { ...process.env, BABYZILLA_PET_STATE: dir, BABYZILLA_NO_UPDATE_CHECK: "1" };
@@ -542,6 +564,55 @@ test("app: every sprite it asks for exists", (t) => {
   const data = JSON.parse(fs.readFileSync(path.join(ROOT, "assets/pet/pet-data.json"), "utf8"));
   const absent = data.expressions.filter((e) => !built.has(e.id)).map((e) => e.id);
   assert.deepEqual(absent, [], `expressions with no sprite: ${absent.join(", ")}`);
+});
+
+test("pack builder: a non-square atlas is downscaled without stretching the art", async () => {
+  // OpenPet/Codex atlases use cells that are taller than they are wide (192x208)
+  // and are drawn at several times the size the app wants. A square cell would
+  // read the wrong grid; a nearest upscale would only make it bigger.
+  const cw = 48, ch = 52, cols = 2, rows = 2;
+  const sheet = { width: cw * cols, height: ch * rows, data: Buffer.alloc(cw * cols * ch * rows * 4) };
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      // a 24x40 bar of ink, so a stretched frame is measurable
+      for (let y = 0; y < 40; y++) {
+        for (let x = 0; x < 24; x++) {
+          const i = ((r * ch + y + 4) * sheet.width + (c * cw + x + 6)) * 4;
+          sheet.data[i] = 240; sheet.data[i + 1] = 200; sheet.data[i + 2] = 60; sheet.data[i + 3] = 255;
+        }
+      }
+    }
+  }
+  const dir = tmp();
+  const sheetPath = path.join(dir, "atlas.png");
+  fs.writeFileSync(sheetPath, encodePng(sheet.width, sheet.height, sheet.data));
+  const out = path.join(dir, "pack");
+  await run(process.execPath, [path.join(ROOT, "pet/pack.mjs"), "--sheet", sheetPath, "--name", "atlas",
+    "--label", "Atlas", "--cell", `${cw}x${ch}`, "--crop", `0,0,${cw},${ch}`,
+    "--rows", "idle,walk", "--cols", String(cols), "--resize", "32", "--voice", "gemini", "--out", out],
+    { env: { ...process.env, BABYZILLA_NO_UPDATE_CHECK: "1" } });
+
+  const pack = JSON.parse(fs.readFileSync(path.join(out, "pack.json"), "utf8"));
+  assert.equal(pack.size, 32, "the canvas is the requested square");
+  assert.equal(pack.voice, "gemini", "a pack records the voice it speaks with");
+  assert.equal(pack.animations.idle.length, cols);
+  const img = decodePng(fs.readFileSync(path.join(out, "sprites", pack.animations.idle[0] + ".png")));
+  assert.equal(img.width, 32);
+  assert.equal(img.height, 32);
+  // ink bbox: aspect must survive the resize (24x40 in, letterboxed, never squashed)
+  let x0 = 99, y0 = 99, x1 = -1, y1 = -1;
+  for (let y = 0; y < img.height; y++) {
+    for (let x = 0; x < img.width; x++) {
+      if (img.data[(y * img.width + x) * 4 + 3] < 128) continue;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  const aspect = (x1 - x0 + 1) / (y1 - y0 + 1);
+  assert.ok(Math.abs(aspect - 24 / 40) < 0.12, `aspect ${aspect.toFixed(2)} vs 0.60`);
+  assert.ok(x0 > 0, "letterboxed horizontally rather than stretched to the edges");
 });
 
 test("pack builder: a sheet becomes coherent, complete animations", async (t) => {

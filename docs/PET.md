@@ -47,6 +47,29 @@ node pet/pack.mjs   --sheet ~/Downloads/PACK.png   --name lil-dino --label "Lil 
 - `pack.json` records the animations, their frame rate, the canvas size, the
   default scale, and where the art came from.
 
+### Known packs: OpenPet AI Girls
+
+Five anime pets from [AwesomeHou/openpet-ai-girls](https://github.com/AwesomeHou/openpet-ai-girls)
+import in one command, each with its own voice:
+
+```sh
+node pet/import-openpet.mjs --repo ~/src/openpet-ai-girls
+babyzilla pet packs
+babyzilla pet use deepseek
+```
+
+The importer reads the OpenPet / Codex atlas convention: **8 columns, 9 rows**, one
+animation per row, in this order — `idle`, `running-right`, `running-left`,
+`waving`, `jumping`, `failed`, `waiting`, `running`, `review`. It crops the character
+from the union of its own opaque pixels (a 192x208 cell is not square), box-filters
+the frames down to 112px, and maps every expression id onto the body that reads
+closest, so a pet with no faces still reacts instead of freezing on idle.
+
+Those girls are not pixel art and their atlas has no faces, so they get movement and
+attitude rather than a blink and a grin. The art belongs to its author: the importer
+records where it came from in `pack.json` and writes only to
+`~/.opencode/pet/packs/`.
+
 ### More faces, without more art
 
 A 15x13 character has far too little identity for a diffusion model to hold: at
@@ -192,8 +215,9 @@ the file.
 
 ## Thinking out loud
 
-On every request the pet says one line about **you**, in caveman. Not a summary of
-the work — the model's opinion of its human, bluntly:
+On every request the pet says one line about **you**. Not a summary of the work —
+the model's opinion of its human, bluntly. It speaks in the voice its pack declares,
+and only the dino is a caveman:
 
 ```
    ╭──────────────────────────────╮
@@ -226,12 +250,41 @@ model's own sentence, picked for interest (a question, an aside, a "wait"):
    ╰──────────────────╮───────────╯
 ```
 
+### Voices
+
+Every pet has one. A voice is exactly two things: a **mechanical transform** of the
+model's own sentence, and a **pool of asides** it may add afterwards. A pack states
+its voice in `pack.json` (`"voice": "doubao"`); a pack that states nothing speaks
+plainly, because its art is someone else's and so is its character.
+
+| pet | voice | register | the same thought, its way |
+|---|---|---|---|
+| Lil Dino | `caveman` | blunt, cave, rewrites words | `Human keep ask for smaller bubble. Human again.` |
+| DeepSeek | `deepseek` | calm, precise, quietly superior | `The user keeps asking for a smaller bubble. Predictable.` |
+| Doubao | `doubao` | small, sweet, easily offended | `The user keeps asking for a smaller bubble. Hmph!` |
+| Gemini | `gemini` | bright, loud, delighted by everything | `The user keeps asking for a smaller bubble. Really?` |
+| ChatGPT | `chatgpt` | relentlessly helpful, faintly corporate | `The user keeps asking for a smaller bubble. Again, then.` |
+| Claude | `claude` | gentle, thoughtful, never in a hurry | `The user keeps asking for a smaller bubble. This again.` |
+| *(anything else)* | `plain` | no opinions pasted on | `The user keeps asking for a smaller bubble. As before.` |
+
+Two rules keep this honest:
+
+- **Only the caveman rewrites words.** Everyone else keeps the model's own sentence
+  and adds attitude around it. `The user wants me to make the pet talk` becomes
+  `Human want me make pet talk` for the dino, and stays itself for everyone else.
+- **`Rawr!` belongs to the creature, not the format.** About one caveman thought in
+  twenty-three roars; no other voice ever does.
+
+A pet's voice follows the active pack, so `babyzilla pet use doubao` changes both the
+body and the way it talks. `babyzilla pet think "…" --voice claude` previews one
+without switching.
+
 ### Mood
 
-The dino is allowed an opinion. It is not allowed a fantasy: the **content** is
-always the model's own sentence, reduced; only the **tone** is the pet's. So the
-mood is read off words that are already in the sentence, and a mood with no
-evidence is never put on.
+A pet is allowed an opinion. It is not allowed a fantasy: the **content** is always
+the model's own sentence; only the **tone** is the pet's. So the mood is read off
+words that are already in the sentence, and a mood with no evidence is never put on.
+Every voice answers every mood with its own lines — the table below is the dino's:
 
 | evidence in the sentence | mood | some of what it says |
 |---|---|---|
@@ -242,8 +295,9 @@ evidence is never put on.
 | the human asked for something (`wants`, `asked`, `keeps`) | teasing | `Human ask much.` `Dino do work. Human watch.` `Dino listen. Maybe.` |
 | no evidence at all | *(none)* | `Dino work.` `Me look. Me look more.` — it comments on its day, not on you |
 
-**Variety is structural, not just a long list.** Each mood has a pool of eleven
-asides and a pool of four short grunts, and the same machinery moves between them:
+**Variety is structural, not just a long list.** The caveman has eleven asides and
+four short grunts per mood (the other voices five and two), and the same machinery
+moves between them:
 
 - **Placement.** A short grunt can open the bubble (`Hmph. Parser broken again…`)
   about a third of the time; a longer aside trails it. A thought that already opens

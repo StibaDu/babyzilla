@@ -2,6 +2,32 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.29.0] — 2026-10-25
+
+### Added
+
+- **Every pet has a voice.** A voice is a mechanical transform of the model's own
+  sentence plus a pool of asides: `caveman` (the dino, the only one that rewrites
+  words), `deepseek` (calm, precise, quietly superior), `doubao` (small, sweet,
+  easily offended), `gemini` (bright, loud, delighted), `chatgpt` (relentlessly
+  helpful), `claude` (gentle, thoughtful), and `plain` for anyone else. A pack
+  declares its own in `pack.json` (`"voice": "doubao"`); a pack with no voice
+  speaks plainly rather than borrowing the dino's opinions.
+- **The same thought, six ways:**
+  `Human keep ask for smaller bubble. Human again.` · `… Predictable.` · `… Hmph!` ·
+  `… Really?` · `… Again, then.` · `… This again.`
+- **`Rawr!` is the creature's, not the format's**: no other voice ever roars.
+- **OpenPet AI Girls import**: `node pet/import-openpet.mjs --repo <checkout|url>`
+  adds DeepSeek, Doubao, Gemini, ChatGPT and Claude as packs, each with its voice.
+  It reads the 8x9 OpenPet/Codex atlas, crops the character from its own opaque
+  pixels, box-filters to 112px, and maps every expression id onto the body that
+  reads closest — a pet with no faces still reacts.
+- **`pet/pack.mjs` handles real atlases**: non-square cells (`--cell 192x208`),
+  `--resize N` (alpha-weighted box downscale, letterboxed so the character is never
+  stretched), webp sheets via `sips`, `--voice`, and per-animation `--fps`.
+- **`babyzilla pet think "…" --voice doubao`** previews any voice without switching
+  the pet; `pet think` and `pet status` report the active one.
+
 ## [0.28.0] — 2026-10-25
 
 ### Added

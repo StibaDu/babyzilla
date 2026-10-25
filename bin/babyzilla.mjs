@@ -27,6 +27,7 @@ import {
 import { emit as petEmit, petDir as petStateDir, eventsPath } from "../lib/pet.mjs";
 import { thought as thoughtLine } from "../lib/pet-thought.mjs";
 import { MARKS, readMark, writeMark } from "../lib/pet-mark.mjs";
+import { VOICES, VOICE_IDS, resolveVoice } from "../lib/pet-voice.mjs";
 import { EXPRESSIONS, byId as expressionById } from "../pet/expressions.mjs";
 import {
   renderStatus, runVerify as runVerifyBench, runReplayBench, verifyPlan, resolveVerify, runNoise,
@@ -1417,7 +1418,7 @@ function main() {
   list                                           all 100 expressions
   mark [done|question|error|none]                the status badge (no arg: show it)
   emit <id> [--hold 2] [--say "text"]            make it react right now
-  think "text" | say "text"                     a thought (quiet bubble) or a spoken line
+  think "text" [--voice <id>] | say "text"      a thought (quiet bubble) or a spoken line
   gallery                                        open the sprite field guide
 
 A pack is a second look built from a sprite sheet; see docs/PET.md.
@@ -1452,11 +1453,20 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
           // what you test should be what the dino says: caveman by default,
           // exactly as in a session. --raw keeps the words as typed.
           const raw = rest.includes("--raw") || rest.includes("--verbatim");
-          // the CLI goes through the same reducer as a live thought, mood tag and all
-          const reduced = sub === "think" && !raw ? thoughtLine(text) : null;
+          // the CLI goes through the same reducer as a live thought, mood tag and
+          // all — in the voice of the pet that is actually running
+          const asked = rest.includes("--voice") ? rest[rest.indexOf("--voice") + 1] : null;
+          if (asked && !VOICES[asked]) {
+            out(`unknown voice ${asked} — try: ${VOICE_IDS.join(", ")}\n`);
+            process.exitCode = 2;
+            return;
+          }
+          const voice = asked ?? resolveVoice(petStateDir()).id;
+          const reduced = sub === "think" && !raw ? thoughtLine(text, { voice }) : null;
           const line = reduced?.text ?? text;
           petEmitLine({ kind: sub, text: line });
           out(`${sub === "think" ? "thought" : "said"}: ${line}\n`);
+          if (sub === "think") out(`  ${c(DIM)}voice     ${VOICES[voice]?.label ?? voice}${c(RESET)}\n`);
           // Proof, not faith: the app writes last-bubble.json when a bubble is on
           // screen, so this can tell "no pet running" from "pet was busy".
           const ackFile = path.join(petStateDir(), "last-bubble.json");
@@ -1695,6 +1705,8 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
         if (!activePack) out(`  sprites   ${covered}/${EXPRESSIONS.length} expressions${loco ? ` + ${loco} locomotion frames` : ""}\n`);
         out(`  events    ${eventsPath()}\n  last      ${lastEvent}\n`);
         out(`  mark      ${readMark(petStateDir()) ?? `${c(DIM)}none${c(RESET)}`}\n`);
+        const activeVoice = resolveVoice(petStateDir());
+        out(`  voice     ${activeVoice.label} ${c(DIM)}(${activeVoice.id})${c(RESET)}\n`);
         out(`  config    ${path.join(petStateDir(), "config.json")}\n`);
         return;
       }

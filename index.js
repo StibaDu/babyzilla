@@ -49,6 +49,7 @@ import {
 import { petEnabled, expr as petExpr, say as petSay, think as petThink, mark as petMark } from "./lib/pet.mjs";
 import { thought as petThoughtText, latestThought } from "./lib/pet-thought.mjs";
 import { classifyTurn, lastAnswer } from "./lib/pet-mark.mjs";
+import { resolveVoice } from "./lib/pet-voice.mjs";
 import { toolExpression, outcomeExpression, compactionExpression, budgetExpression, updateExpression } from "./lib/pet-map.mjs";
 
 const execAsync = promisify(execCb);
@@ -692,8 +693,11 @@ export default {
       if (!petThrottled("think", 2600)) return;
       // caveman by default: the pet's opinion of its human, bluntly. "verbatim"
       // keeps the model's own sentences instead.
+      // The pack decides how its pet talks: the dino is a caveman, an anime girl
+      // is not. A pack with no voice speaks plainly.
       const said = petThoughtText(latestThought(messages), {
-        style: opts.petThoughts === "verbatim" ? "verbatim" : "caveman",
+        style: opts.petThoughts === "verbatim" ? "verbatim" : "voice",
+        voice: resolveVoice().id,
       });
       if (!said || said.text === lastThought) return;
       lastThought = said.text;

@@ -195,6 +195,18 @@ test("install: copies sprites, data and gallery into the state dir", async (t) =
   assert.ok(fs.readFileSync(path.join(dir, "gallery-data.js"), "utf8").includes("window.PET_DATA"));
 });
 
+test("install: never kills a pet that belongs to another state dir", async (t) => {
+  if (process.platform === "win32") return t.skip("posix signals");
+  // Regression: install used to `pkill -f BabyZillaPet`, so running the test
+  // suite killed the pet the user was actually looking at.
+  const decoy = spawn("bash", ["-c", "exec -a BabyZillaPet-fake sleep 10"], { stdio: "ignore" });
+  t.after(() => { try { decoy.kill(); } catch {} });
+  await new Promise((r) => setTimeout(r, 200));
+  const env = { ...process.env, BABYZILLA_PET_STATE: tmp(), BABYZILLA_NO_UPDATE_CHECK: "1" };
+  await run(process.execPath, [BIN, "pet", "install", "--no-build", "--no-start"], { env });
+  assert.doesNotThrow(() => process.kill(decoy.pid, 0), "the pet in the other state dir is still alive");
+});
+
 test("data file: matches the catalogue", (t) => {
   const file = path.join(ROOT, "assets/pet/pet-data.json");
   if (!fs.existsSync(file)) return t.skip("pet-data.json not built");

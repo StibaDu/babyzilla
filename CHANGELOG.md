@@ -2,6 +2,19 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.14.1] — 2026-10-25
+
+### Fixed
+
+- **`pet install` no longer kills a pet from another state dir.** It used
+  `pkill -f BabyZillaPet`, so any install — including the one the test suite runs
+  against a temporary state dir — took down the pet on your screen. It now kills
+  only the pid recorded in that state dir's `pet.pid`, after verifying the
+  process command, and only `pet status` reading the same file can report it as
+  running.
+- 1 new test (249 total): an install in a temporary state dir must leave another
+  pet running.
+
 ## [0.14.0] — 2026-10-25
 
 ### Added

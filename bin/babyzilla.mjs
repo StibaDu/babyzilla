@@ -828,6 +828,27 @@ function petRunning() {
   return [...pids];
 }
 
+/**
+ * The pet writes its pid into the state dir. Killing by that file (and checking
+ * the command) instead of `pkill -f BabyZillaPet` means an install or a test run
+ * in a temporary state dir cannot take down the pet the user is looking at.
+ */
+function petPidAlive() {
+  try {
+    const pid = Number(fs.readFileSync(path.join(petStateDir(), "pet.pid"), "utf8").trim());
+    if (!Number.isInteger(pid) || pid <= 1) return null;
+    const cmd = execFileSync("/usr/bin/ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" }).trim();
+    return /BabyZillaPet|bzpet/.test(cmd) ? pid : null;
+  } catch { return null; }
+}
+
+function petStop() {
+  const pid = petPidAlive();
+  try { fs.rmSync(path.join(petStateDir(), "pet.pid"), { force: true }); } catch {}
+  if (pid) { try { process.kill(pid); } catch {} }
+  return pid;
+}
+
 function petInstall({ login = false, build = true } = {}) {
   const root = repoRoot();
   const src = path.join(root, "apps", "pet");
@@ -1228,8 +1249,7 @@ function main() {
             out(`${c(GREEN)}installed${c(RESET)} ${res.app}\n`);
             out(`  binary   ${res.binary}\n  sprites  ${res.sprites} → ${petStateDir()}/sprites\n`);
             if (res.login) out(`  login    ${PET_LOGIN}\n`);
-            const pids = petRunning();
-            for (const pid of pids) { try { process.kill(Number(pid)); } catch {} }
+            petStop();
             if (!rest.includes("--no-start")) {
               const child = spawn(path.join(res.binary), [], { detached: true, stdio: "ignore" });
               child.unref();
@@ -1279,7 +1299,8 @@ function main() {
           return;
         }
         // status
-        const pids = petRunning();
+        const own = petPidAlive();
+        const pids = own ? [String(own)] : petRunning();
         const spriteDir = path.join(petStateDir(), "sprites");
         const files = fs.existsSync(spriteDir)
           ? new Set(fs.readdirSync(spriteDir).filter((f) => f.endsWith(".png")).map((f) => f.slice(0, -4))) : new Set();

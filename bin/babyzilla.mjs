@@ -908,6 +908,39 @@ function petStart() {
   return null;
 }
 
+/**
+ * Removed pets live in their own file, not in config.json. The app owns that file
+ * and re-encodes it from a fixed struct, so a `retired` key there is silently
+ * dropped on the next drag or scale change — which brought the built-in art back
+ * on the following install.
+ */
+function petRetiredFile() { return path.join(petStateDir(), "retired.json"); }
+
+function readRetired() {
+  const list = [];
+  try {
+    for (const name of JSON.parse(fs.readFileSync(petRetiredFile(), "utf8"))?.pets ?? []) list.push(name);
+  } catch { /* nothing retired yet */ }
+  // migrate a mark left in config.json by an earlier version
+  try {
+    const cfg = readPetConfig();
+    if (Array.isArray(cfg.retired) && cfg.retired.length) {
+      for (const name of cfg.retired) if (!list.includes(name)) list.push(name);
+      delete cfg.retired;
+      writePetConfig(cfg);
+      writeRetired(new Set(list));
+    }
+  } catch { /* a broken config is not worth failing reads over */ }
+  return new Set(list);
+}
+
+function writeRetired(set) {
+  const pets = [...set].sort();
+  fs.mkdirSync(petStateDir(), { recursive: true });
+  if (!pets.length) { fs.rmSync(petRetiredFile(), { force: true }); return; }
+  fs.writeFileSync(petRetiredFile(), `${JSON.stringify({ pets }, null, 2)}\n`);
+}
+
 function petInstall({ login = false, build = true } = {}) {
   const root = repoRoot();
   const src = path.join(root, "apps", "pet");
@@ -944,7 +977,7 @@ function petInstall({ login = false, build = true } = {}) {
   fs.mkdirSync(petStateDir(), { recursive: true });
   // An install must not resurrect a pet the user removed: `retired` is a decision,
   // not a missing file to repair. `pet restore <name>` is the way back.
-  const retired = new Set(readPetConfig().retired ?? []);
+  const retired = readRetired();
   const skipped = [];
   const spritesOut = path.join(petStateDir(), "sprites");
   fs.mkdirSync(spritesOut, { recursive: true });
@@ -1005,10 +1038,9 @@ function petInstall({ login = false, build = true } = {}) {
 /** `pet restore <name>`: undo a removal by copying that pet's assets back. */
 function petRestore(name) {
   const root = repoRoot();
-  const cfg = readPetConfig();
-  cfg.retired = (cfg.retired ?? []).filter((n) => n !== name);
-  if (!cfg.retired.length) delete cfg.retired;
-  writePetConfig(cfg);
+  const retired = readRetired();
+  retired.delete(name);
+  writeRetired(retired);
 
   if (name === "babyzilla") {
     const src = path.join(root, "assets", "pet");
@@ -1485,8 +1517,7 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
             process.exitCode = 2;
             return;
           }
-          cfg.retired = [...new Set([...(cfg.retired ?? []), id])];
-          writePetConfig(cfg);
+          writeRetired(new Set([...readRetired(), id]));
           let gone = 0;
           if (builtin) {
             const dir = path.join(petStateDir(), "sprites");
@@ -1525,7 +1556,7 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
         if (sub === "packs" || sub === "use") {
           const packs = listPacks();
           const cfgNow = readPetConfig();
-          const retired = new Set(cfgNow.retired ?? []);
+          const retired = readRetired();
           const active = cfgNow.pack ?? "babyzilla";
           if (sub === "packs") {
             if (!retired.has("babyzilla")) {
@@ -1545,9 +1576,8 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
           const name = rest[rest.indexOf("use") + 1];
           if (!name) { out("usage: babyzilla pet use <pack|babyzilla>\n"); process.exitCode = 2; return; }
           const cfg = readPetConfig();
-          const retiredUse = new Set(cfg.retired ?? []);
           const wanted = name === "default" ? "babyzilla" : name;
-          if (retiredUse.has(wanted)) {
+          if (readRetired().has(wanted)) {
             out(`${c(YELLOW)}${wanted} was removed${c(RESET)} — restore it: babyzilla pet restore ${wanted}\n`);
             process.exitCode = 2;
             return;

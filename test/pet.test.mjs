@@ -195,6 +195,13 @@ test("cli: pet remove deletes a pet you are not wearing, and install restores it
 
   await assert.rejects(cli("pet", "use", "babyzilla"), (e) => e.code === 2 && /was removed/.test(e.stdout));
 
+  // The app owns config.json and re-encodes it from its own struct, so a removal
+  // recorded there would vanish on the next drag. It must live in its own file.
+  fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({
+    scale: 3, chattiness: "normal", muted: false, followCursor: true, pack: "fakey",
+  }));
+  assert.doesNotMatch((await cli("pet", "packs")).stdout, /BabyZilla \(built-in\)/, "the app's save must not undo the removal");
+
   // an install must not quietly bring it back — that would undo a decision
   const reinstalled = await cli("pet", "install", "--no-build", "--no-start");
   assert.match(reinstalled.stdout, /skipped\s+babyzilla/);

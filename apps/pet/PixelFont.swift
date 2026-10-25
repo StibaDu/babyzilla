@@ -7,6 +7,11 @@ import AppKit
 enum PixelFont {
     static var scale: CGFloat = 2
 
+    /// Bubble text is deliberately smaller than the pet's own pixels: the bubble is
+    /// fixed in width, so every step of glyph scale doubles the characters per line
+    /// (14 → 29 at 3×), which is the difference between a gist and a chopped one.
+    static func forPetScale(_ petScale: Int) -> CGFloat { petScale >= 4 ? 2 : 1 }
+
     static var advance: CGFloat { 6 * scale }
     static var lineHeight: CGFloat { 9 * scale }
     static var glyphHeight: CGFloat { 7 * scale }

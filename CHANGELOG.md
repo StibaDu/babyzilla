@@ -2,6 +2,29 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.17.2] — 2026-10-25
+
+### Fixed
+
+- **The bubble outline was open along the top.** Its frame was 2pt shorter than
+  what `draw` paints: `measure` budgeted 16pt of vertical padding where the box
+  uses 9pt top and bottom, so the top stroke landed just outside the view and was
+  clipped away. Frame height and drawn box now share one set of constants, so they
+  cannot drift apart again.
+- **A removed pet came back on the next install** whenever the pet had saved its
+  config in between. The `retired` mark lived in `config.json`, which the app owns
+  and re-encodes from a fixed struct — so a drag, a size change or a quit deleted
+  the mark. Marks now live in `~/.opencode/pet/retired.json`; older marks migrate
+  out of `config.json` on first read.
+- Thought dots were sliced by the bottom edge of the bubble view; both dots now sit
+  inside the tail band.
+
+### Changed
+
+- **Smaller bubble text, more of it.** The glyph scale is one step down at every pet
+  size (at 3× that is 14 → 29 characters per line), and a bubble wraps to five lines
+  before it truncates. A thought now fits instead of being chopped mid-sentence.
+
 ## [0.17.1] — 2026-10-25
 
 ### Fixed

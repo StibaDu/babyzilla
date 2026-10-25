@@ -262,19 +262,26 @@ final class BubbleView: NSView {
     /// Drawn as a thought: quieter ink, and dots instead of a tail.
     var thought = false
 
+    // The box and the frame must agree on these: a frame one pixel short clips the
+    // top stroke, and the outline reads as open along the top edge.
+    static let padX: CGFloat = 11
+    static let padY: CGFloat = 9
+    static let tail: CGFloat = 7
+    static let lineH = CGFloat(PixelFont.lineHeight) + 3
+
     static func measure(_ text: String, width: CGFloat) -> (lines: [String], height: CGFloat) {
-        let lines = wrap(text, width: width - 22)
-        return (lines, CGFloat(lines.count) * (PixelFont.lineHeight + 3) + 16 + 7)
+        let lines = wrap(text, width: width - padX * 2)
+        return (lines, CGFloat(lines.count) * lineH + padY * 2 + tail)
     }
 
     override func draw(_ dirtyRect: NSRect) {
         guard alpha > 0.01, !text.isEmpty else { return }
-        let lines = Self.wrap(text, width: bounds.width - 22)
-        let lineH = CGFloat(PixelFont.lineHeight) + 3
+        let lines = Self.wrap(text, width: bounds.width - Self.padX * 2)
+        let lineH = Self.lineH
         let textH = CGFloat(lines.count) * lineH
-        let padX: CGFloat = 11
-        let padY: CGFloat = 9
-        let tail: CGFloat = 7
+        let padX = Self.padX
+        let padY = Self.padY
+        let tail = Self.tail
         let boxW = bounds.width
         let boxH = textH + padY * 2
         let box = NSRect(x: 0, y: tail, width: boxW, height: boxH)
@@ -286,7 +293,7 @@ final class BubbleView: NSView {
         if thought {
             // Two dots instead of a tail: the shape that says "this is inside its
             // head", not something it said to you.
-            for (dx, y, r) in [(-9.0, 2.6, 2.9), (-1.0, 0.2, 1.6)] as [(CGFloat, CGFloat, CGFloat)] {
+            for (dx, y, r) in [(-9.0, 4.0, 2.7), (-1.0, 1.5, 1.5)] as [(CGFloat, CGFloat, CGFloat)] {
                 let dot = NSBezierPath(ovalIn: NSRect(x: boxW / 2 + dx - r, y: y, width: r * 2, height: r * 2))
                 path.append(dot)
             }
@@ -333,7 +340,7 @@ final class BubbleView: NSView {
             }
         }
         if !line.isEmpty { out.append(line) }
-        let maxLines = 4
+        let maxLines = 5
         if out.count > maxLines {
             var kept = Array(out.prefix(maxLines))
             // Never cut a sentence silently: mark the truncation.
@@ -476,7 +483,7 @@ final class PetController: NSObject {
         self.lib = lib
         self.pack = pack
         self.spriteSize = pack?.size ?? data.size
-        PixelFont.scale = CGFloat(config.scale <= 1 ? 1 : (config.scale >= 4 ? 3 : 2))
+        PixelFont.scale = PixelFont.forPetScale(config.scale)
         super.init()
         buildWindows()
         observeEvents()

@@ -268,6 +268,26 @@ test("thoughts: the CLI can make it think, and the bridge tags the kind", async 
   assert.match(exact.stdout, /thought: read the parser/);
 });
 
+test("cli: pet mark sets, reports and clears the badge", async () => {
+  const dir = tmp();
+  const env = { ...process.env, BABYZILLA_PET_STATE: dir, BABYZILLA_NO_UPDATE_CHECK: "1" };
+  const set = await run(process.execPath, [BIN, "pet", "mark", "question"], { env });
+  assert.match(set.stdout, /mark\s+question/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "mark.json"), "utf8")).mark, "question");
+  // no argument reports the state rather than changing it
+  const got = await run(process.execPath, [BIN, "pet", "mark"], { env });
+  assert.match(got.stdout, /mark\s+question/);
+  const ev = fs.readFileSync(path.join(dir, "events.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)).pop();
+  assert.deepEqual({ kind: ev.kind, mark: ev.mark }, { kind: "mark", mark: "question" });
+  // none clears it, in the file and in the event
+  await run(process.execPath, [BIN, "pet", "mark", "none"], { env });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "mark.json"), "utf8")).mark, null);
+  // a typo is refused instead of written (execFile rejects on the exit code)
+  const bad = await run(process.execPath, [BIN, "pet", "mark", "party"], { env }).catch((e) => e);
+  assert.match(String(bad.stdout ?? bad.message), /unknown mark/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "mark.json"), "utf8")).mark, null);
+});
+
 test("cli: pet remove deletes a pet you are not wearing, and install restores it", async () => {
   const dir = tmp();
   const env = { ...process.env, BABYZILLA_PET_STATE: dir, BABYZILLA_NO_UPDATE_CHECK: "1" };

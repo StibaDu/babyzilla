@@ -46,8 +46,9 @@ import {
   checkForUpdate, readUpdateCache, shouldNotify, markNotified, agentUpdateNotice,
   disabled as updatesDisabled, UPDATE_INTERVAL_MS,
 } from "./lib/updates.mjs";
-import { petEnabled, expr as petExpr, say as petSay, think as petThink } from "./lib/pet.mjs";
+import { petEnabled, expr as petExpr, say as petSay, think as petThink, mark as petMark } from "./lib/pet.mjs";
 import { thought as petThoughtText, latestThought } from "./lib/pet-thought.mjs";
+import { classifyTurn, lastAnswer } from "./lib/pet-mark.mjs";
 import { toolExpression, outcomeExpression, compactionExpression, budgetExpression, updateExpression } from "./lib/pet-map.mjs";
 
 const execAsync = promisify(execCb);
@@ -712,6 +713,70 @@ export default {
       try { fn(); } catch { /* never affect execution */ }
     };
 
+    // ---- status mark ---------------------------------------------------------
+    // One badge, kept until the human decides something. `done`/`question` are
+    // read from the turn's own last words; `error` from anything that failed and
+    // nothing cleared. The next prompt clears it: that *is* the decision, however
+    // the human made it (an answer, a fix, or a new task).
+    let markError = false;
+    // What the badge says right now, so raising it is idempotent: a burst of tool
+    // calls must not append a hundred identical events to the file.
+    let markKind = null;
+    const raiseMark = (kind) => {
+      const clean = kind ?? null;
+      if (markKind === clean) return;
+      markKind = clean;
+      petOn(() => petMark(clean));
+    };
+    // Only sessions a human prompted. A subagent going quiet is not your turn.
+    const markSessions = new Set();
+    const markCleanups = [];
+    try {
+      if (typeof ctx.event?.subscribe === "function") {
+        const stop = new AbortController();
+        markCleanups.push(() => stop.abort());
+        // The event stream is the only place a *turn* end is visible: the prompt
+        // hook sees the human speak, `session.idle` sees the model stop. Every
+        // other hook sits inside a step, which is not the same thing.
+        void (async () => {
+          try {
+            for await (const ev of ctx.event.subscribe({ signal: stop.signal })) {
+              if (!pet) continue;
+              const type = String(ev?.type ?? "");
+              if (!type) continue;
+              const p = ev?.properties ?? ev?.data ?? {};
+              const sid = p.sessionID ?? p.sessionId ?? p.info?.sessionID ?? p.part?.sessionID ?? ev?.sessionID;
+              if (!sid || !markSessions.has(sid)) continue;
+              if (type === "session.error" || type === "session.step.failed") {
+                markError = true;
+                raiseMark("error");
+                continue;
+              }
+              // Two names for the same moment: `session.idle` is the turn-end
+              // event, and `session.status` carries the same fact for hosts that
+              // report status transitions instead.
+              const status = p.status?.type ?? p.status;
+              const ended = type === "session.idle" ||
+                (type === "session.status" && /idle/i.test(String(status ?? "")));
+              if (!ended) continue;
+              let kind = "done";
+              if (markError) kind = "error";
+              else {
+                try {
+                  // the transcript, not a guess: did the turn stop to ask?
+                  kind = classifyTurn(lastAnswer(await ctx.session.context({ sessionID: sid })));
+                } catch { /* no transcript: a finished turn is still finished */ }
+              }
+              markError = false;
+              raiseMark(kind);
+            }
+          } catch { /* stream closed on shutdown */ }
+        })();
+      } else {
+        log("event stream unavailable — status marks are set by tool failures only");
+      }
+    } catch (e) { log("event subscription skipped:", e?.message ?? e); }
+
     // ---- self-tuning loop ---------------------------------------------------
     // Overrides from a verified (currently pending) proposal are applied to
     // the options object BEFORE any hook registers, so thresholds read them
@@ -753,6 +818,13 @@ export default {
           const out = typeof event?.result === "string" ? event.result : deepText(event?.result, 0);
           const err = event?.error?.message ?? (event?.error ? String(event.error) : "");
           const failed = Boolean(err) || event?.status === "error";
+          // The badge is immediate proof, not a summary: a failure raises ! at once,
+          // and a later success in the same turn takes it back down, so a badge left
+          // up at the end of a turn means "still broken".
+          markError = failed;
+          // raised at once, and taken back down by the next success in the same
+          // turn: a badge that stays up after the retry worked is crying wolf
+          raiseMark(failed ? "error" : null);
           petOn(() => {
             const o = outcomeExpression({ name: toolName, ok: !failed, ms: Number(event?.durationMs ?? event?.duration) || 0 });
             if (o) petExpr(o.id, o.hold);
@@ -1085,6 +1157,17 @@ export default {
           const sid = event?.sessionID;
           const prompt = event?.prompt;
           const text = typeof prompt?.text === "string" ? prompt.text : "";
+          // Whatever the badge was waiting for, this is the answer: a reply, a
+          // fix, or a new task. Cleared before the bail below, because a prompt
+          // with no text (an image) is still a human deciding.
+          if (sid) {
+            markSessions.add(sid);
+            markError = false;
+            // unconditional: a fresh plugin may not know what the last one left on
+            // disk, and one clear per prompt costs nothing.
+            markKind = null;
+            petOn(() => petMark(null));
+          }
           if (!sid || !text || !prompt) {
             log(`prompt hook: bail (keys: ${Object.keys(event ?? {}).join(",")}, sid=${sid ?? "MISSING"}, text.length=${text.length})`);
             return;
@@ -1293,6 +1376,7 @@ export default {
     } catch (e) { log("command registration unavailable:", e?.message ?? e); }
 
     log("plugin ready", Object.keys(opts).length ? `(options: ${JSON.stringify(opts)})` : "");
+    return () => { for (const fn of markCleanups) { try { fn(); } catch { /* already gone */ } } };
   },
 };
 

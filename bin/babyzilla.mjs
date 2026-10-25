@@ -26,6 +26,7 @@ import {
 } from "../lib/setup.mjs";
 import { emit as petEmit, petDir as petStateDir, eventsPath } from "../lib/pet.mjs";
 import { thought as thoughtLine } from "../lib/pet-thought.mjs";
+import { MARKS, readMark, writeMark } from "../lib/pet-mark.mjs";
 import { EXPRESSIONS, byId as expressionById } from "../pet/expressions.mjs";
 import {
   renderStatus, runVerify as runVerifyBench, runReplayBench, verifyPlan, resolveVerify, runNoise,
@@ -1414,6 +1415,7 @@ function main() {
   remove <pack|babyzilla>                        delete a pet you do not use
   restore <pack|babyzilla>                       copy a removed pet's art back
   list                                           all 100 expressions
+  mark [done|question|error|none]                the status badge (no arg: show it)
   emit <id> [--hold 2] [--say "text"]            make it react right now
   think "text" | say "text"                     a thought (quiet bubble) or a spoken line
   gallery                                        open the sprite field guide
@@ -1469,6 +1471,39 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
           if (ack) out(`  ${c(GREEN)}shown${c(RESET)} at ${new Date(ack.t).toLocaleTimeString()} (${ack.thought ? "thought" : "speech"})\n`);
           else if (!petPidAlive()) out(`  ${c(YELLOW)}not running${c(RESET)} — babyzilla pet start\n`);
           else out(`  ${c(YELLOW)}queued${c(RESET)} — another bubble is up; this appears when it clears\n`);
+          return;
+        }
+        if (sub === "mark") {
+          const arg = rest[rest.indexOf(sub) + 1];
+          // A mark is state, not an event: it stays until the human decides, so
+          // the CLI writes the same file the plugin does and the app reads.
+          if (!arg || arg.startsWith("-")) {
+            const cur = readMark(petStateDir());
+            out(`mark      ${cur ?? "none"}${cur ? "" : " (nothing waiting)"}\n`);
+            return;
+          }
+          const kind = ["none", "off", "clear"].includes(arg) ? null : arg;
+          if (kind !== null && !MARKS.includes(kind)) {
+            out(`unknown mark ${arg} — try: done | question | error | none\n`);
+            process.exitCode = 2;
+            return;
+          }
+          const ok = writeMark(petStateDir(), kind);
+          petEmitLine({ kind: "mark", mark: kind });
+          out(`mark      ${kind ?? "none"}${ok ? "" : ` ${c(YELLOW)}(could not write mark.json)${c(RESET)}`}\n`);
+          // Ask the app, not the file: the badge is only real if it is on screen.
+          const ackFile = path.join(petStateDir(), "last-mark.json");
+          let ack = null;
+          for (const deadline = Date.now() + 1400; Date.now() < deadline;) {
+            try {
+              const got = JSON.parse(fs.readFileSync(ackFile, "utf8"));
+              if ((got?.mark ?? null) === kind) { ack = got; break; }
+            } catch { /* not written yet */ }
+            try { execFileSync("/bin/sleep", ["0.1"]); } catch { /* keep polling */ }
+          }
+          if (ack) out(`  ${c(GREEN)}shown${c(RESET)} at ${new Date(ack.t).toLocaleTimeString()}${ack.shown ? "" : " (pet is hidden)"}\n`);
+          else if (!petPidAlive()) out(`  ${c(YELLOW)}not running${c(RESET)} — babyzilla pet start\n`);
+          else out(`  ${c(YELLOW)}stored${c(RESET)} — the pet will pick it up (old app build?)\n`);
           return;
         }
         if (sub === "emit") {
@@ -1659,6 +1694,7 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
         out(`  pet       ${packLabel}${activePack ? ` ${c(DIM)}(pack)${c(RESET)}` : ""}\n`);
         if (!activePack) out(`  sprites   ${covered}/${EXPRESSIONS.length} expressions${loco ? ` + ${loco} locomotion frames` : ""}\n`);
         out(`  events    ${eventsPath()}\n  last      ${lastEvent}\n`);
+        out(`  mark      ${readMark(petStateDir()) ?? `${c(DIM)}none${c(RESET)}`}\n`);
         out(`  config    ${path.join(petStateDir(), "config.json")}\n`);
         return;
       }

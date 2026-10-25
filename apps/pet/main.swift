@@ -53,7 +53,8 @@ if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
     bv.thought = args.contains("--thought")
     let bubbleH = BubbleView.measure(line, width: bubbleW).height
     bv.frame = NSRect(x: 0, y: 0, width: bubbleW, height: bubbleH)
-    let W = bubbleW + 40, H = bubbleH + side + 20
+    let markName = value("--mark", "")
+    let W = bubbleW + 40 + (markName.isEmpty ? 0 : 40), H = bubbleH + side + 20
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(W * 2), pixelsHigh: Int(H * 2),
                                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
                                colorSpaceName: .deviceRGB, bytesPerRow: Int(W * 2) * 4, bitsPerPixel: 32)!
@@ -73,6 +74,18 @@ if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
     t.concat()
     bv.draw(bv.bounds)
     NSGraphicsContext.restoreGraphicsState()
+    // --mark draws the status badge beside the head, at the size the app uses
+    if let kind = PetMark(rawValue: markName) {
+        let badge: CGFloat = max(15, side * 0.30)
+        let mv = MarkView(frame: NSRect(x: 0, y: 0, width: badge, height: badge))
+        mv.kind = kind
+        NSGraphicsContext.saveGraphicsState()
+        let m = NSAffineTransform()
+        m.translateX(by: (W - side) / 2 + side * 0.85, yBy: 6 + side * 0.56)
+        m.concat()
+        mv.draw(mv.bounds)
+        NSGraphicsContext.restoreGraphicsState()
+    }
     NSGraphicsContext.restoreGraphicsState()
     try? rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out))
     print("snapshot: \(out)  expr=\(exprId)  screen=\(NSScreen.main?.visibleFrame.debugDescription ?? "?")")

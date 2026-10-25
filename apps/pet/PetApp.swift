@@ -93,6 +93,9 @@ enum Paths {
         return home.appendingPathComponent(".opencode/pet")
     }
     static var events: URL { state.appendingPathComponent("events.jsonl") }
+    /// The status badge. Written by the plugin (it knows when a turn ended), only
+    /// read here — one writer, so the file and the screen cannot disagree.
+    static var markFile: URL { state.appendingPathComponent("mark.json") }
     static var config: URL { state.appendingPathComponent("config.json") }
     static var sprites: URL { state.appendingPathComponent("sprites") }
     static var data: URL { state.appendingPathComponent("pet-data.json") }
@@ -389,6 +392,87 @@ final class PetPanel: NSPanel {
     }
 }
 
+// ── status mark ──────────────────────────────────────────────────────────────
+
+/// What the dino is holding up: a finished turn, a question it needs answered, or
+/// something that broke. A bubble is an event and fades; this is state, and it
+/// stays until the human decides something (answers, fixes, or gives a new task).
+enum PetMark: String {
+    case done, question, error
+
+    var ink: NSColor {
+        switch self {
+        case .done: return NSColor(calibratedRed: 0.42, green: 0.90, blue: 0.56, alpha: 1)
+        case .question: return NSColor(calibratedRed: 0.55, green: 0.75, blue: 1.00, alpha: 1)
+        case .error: return NSColor(calibratedRed: 1.00, green: 0.44, blue: 0.42, alpha: 1)
+        }
+    }
+
+    /// The check is drawn as a stroke; `?` and `!` come from the bubble font.
+    var glyph: String { self == .question ? "?" : "!" }
+}
+
+final class MarkView: NSView {
+    var kind: PetMark?
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let kind else { return }
+        let side = min(bounds.width, bounds.height)
+        let box = NSRect(x: (bounds.width - side) / 2, y: (bounds.height - side) / 2, width: side, height: side)
+        let plate = NSBezierPath(roundedRect: box.insetBy(dx: 1, dy: 1), xRadius: side * 0.30, yRadius: side * 0.30)
+        // Same plate as the bubble: the badge belongs to the pet, not the desktop.
+        NSColor(calibratedRed: 0.06, green: 0.05, blue: 0.09, alpha: 0.94).setFill()
+        plate.fill()
+        kind.ink.setStroke()
+        plate.lineWidth = max(1.5, side * 0.10)
+        plate.stroke()
+
+        if kind == .done {
+            let check = NSBezierPath()
+            check.move(to: NSPoint(x: box.minX + side * 0.26, y: box.minY + side * 0.53))
+            check.line(to: NSPoint(x: box.minX + side * 0.44, y: box.minY + side * 0.33))
+            check.line(to: NSPoint(x: box.minX + side * 0.76, y: box.minY + side * 0.71))
+            check.lineWidth = max(1.5, side * 0.15)
+            check.lineCapStyle = .round
+            check.lineJoinStyle = .round
+            kind.ink.setStroke()
+            check.stroke()
+            return
+        }
+
+        // ? and ! are font glyphs so the badge reads as part of the pet. The font
+        // scale is global (the bubble owns it), so it is borrowed and given back.
+        let saved = PixelFont.scale
+        PixelFont.scale = max(0.9, (side * 0.62) / 7)
+        PixelFont.pixel = 1 / (window?.backingScaleFactor ?? 2)
+        let glyphW = 5 * PixelFont.scale
+        let glyphH = 7 * PixelFont.scale
+        // `?`/`!` carry their ink high in the cell; a hair up keeps them optically
+        // centred next to the check, which is a stroke and has no such bias.
+        PixelFont.draw(kind.glyph, at: NSPoint(x: (bounds.width - glyphW) / 2, y: (bounds.height - glyphH) / 2 + side * 0.03),
+                       alpha: 1, color: kind.ink)
+        PixelFont.scale = saved
+    }
+}
+
+final class MarkWindow: NSPanel {
+    init(size: CGFloat) {
+        super.init(contentRect: NSRect(x: 0, y: 0, width: size, height: size),
+                   styleMask: [.borderless, .nonactivatingPanel],
+                   backing: .buffered, defer: false)
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = false
+        level = .floating
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        isFloatingPanel = true
+        hidesOnDeactivate = false
+        becomesKeyOnlyIfNeeded = true
+        // A sign, not a button: clicking the badge must hit whatever is behind it.
+        ignoresMouseEvents = true
+    }
+}
+
 // ── controller ───────────────────────────────────────────────────────────────
 
 final class PetController: NSObject {
@@ -402,10 +486,14 @@ final class PetController: NSObject {
     var onVisibilityChange: (() -> Void)?
     var window: PetPanel!
     var bubble: BubbleWindow!
+    var markWindow: MarkWindow!
+    var markView: MarkView!
     var view: PetView!
     var bubbleView: BubbleView!
 
     // state
+    /// The badge currently held up, if any. Never expires on its own.
+    private(set) var mark: PetMark?
     var currentImage: NSImage?
     private(set) var expressionId = "idle"
     private var expressionUntil: Date = .distantPast
@@ -546,6 +634,15 @@ final class PetController: NSObject {
         bubbleView.autoresizingMask = [.width, .height]
         bubble.contentView = bubbleView
 
+        // the badge is its own tiny window, like the bubble: the pet window is
+        // exactly sprite-sized and cannot draw outside itself
+        let badge = max(15, side * 0.30)
+        markWindow = MarkWindow(size: badge)
+        markView = MarkView(frame: NSRect(x: 0, y: 0, width: badge, height: badge))
+        markWindow.contentView = markView
+        // a mark set while the pet was not running is still waiting
+        loadMark()
+
         placeOnFloor(initial: true)
         window.orderFrontRegardless()
         setExpression("wave", hold: 1.6)
@@ -601,6 +698,7 @@ final class PetController: NSObject {
         eventHandle = nil
         window?.close()
         bubble?.close()
+        markWindow?.close()
     }
 
     private func start() {
@@ -624,11 +722,14 @@ final class PetController: NSObject {
             lastEventAt = .distantPast
             lastTick = Date()
             start()
+            // events are skipped while hidden, so the file is the truth on show
+            loadMark()
         } else {
             timer?.invalidate()
             timer = nil
             window.orderOut(nil)
             bubble.orderOut(nil)
+            markWindow?.orderOut(nil)
             bubbleVisible = false
             pendingLines.removeAll()
             pendingThought = nil
@@ -976,6 +1077,17 @@ final class PetController: NSObject {
         let bubbleH = max(40, BubbleView.measure(bubbleView.text, width: bubbleW).height)
         bubble.setFrame(NSRect(x: x - bubbleW / 2, y: feetY + side + bob - 6, width: bubbleW, height: bubbleH), display: false)
         bubbleView.frame = NSRect(x: 0, y: 0, width: bubbleW, height: bubbleH)
+
+        // The badge rides beside the head, below the bubble's tail: it must not be
+        // mistaken for part of a sentence, and it must survive the sentence ending.
+        if mark != nil, !hidden {
+            let badge = max(15, side * 0.30)
+            markWindow.setFrame(NSRect(x: x + side * 0.34, y: feetY + side * 0.56 + bob, width: badge, height: badge),
+                                display: false)
+            if markView.frame.width != badge {
+                markView.frame = NSRect(x: 0, y: 0, width: badge, height: badge)
+            }
+        }
     }
 
     private var currentMotion: String {
@@ -1028,6 +1140,68 @@ final class PetController: NSObject {
         if bubbleVisible, bubbleView.text == text { return }
         pendingThought = text
         if bubbleVisible, bubbleView.thought { bubbleUntil = Date.distantPast }
+    }
+
+    /// Raise (or clear) the status badge. There is no timer here on purpose: a
+    /// mark means "your turn", and only the human's next prompt takes it down —
+    /// the plugin sends that as `mark: null`.
+    func setMark(_ kind: PetMark?) {
+        mark = kind
+        markView?.kind = kind
+        markView?.needsDisplay = true
+        guard let kind, !hidden else {
+            markWindow?.orderOut(nil)
+            if let data = try? JSONSerialization.data(withJSONObject: ["mark": NSNull(), "shown": false,
+                                                                      "t": Date().timeIntervalSince1970 * 1000]) {
+                try? data.write(to: Paths.state.appendingPathComponent("last-mark.json"))
+            }
+            return
+        }
+        trace(["ev": "mark", "mark": kind.rawValue])
+        layout()
+        markWindow.orderFrontRegardless()
+        // Observation, not faith: the CLI asks the app what it is holding up, so
+        // "nothing happened" can be diagnosed without screen access.
+        let ack: [String: Any] = ["mark": kind.rawValue, "shown": markWindow.isVisible,
+                                  "t": Date().timeIntervalSince1970 * 1000]
+        if let data = try? JSONSerialization.data(withJSONObject: ack) {
+            try? data.write(to: Paths.state.appendingPathComponent("last-mark.json"))
+        }
+    }
+
+    /// A restart must not swallow an unanswered question: the plugin owns the
+    /// file, so this is a read, never a write.
+    private func loadMark() {
+        guard let data = try? Data(contentsOf: Paths.markFile),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            setMark(nil)
+            return
+        }
+        setMark((obj["mark"] as? String).flatMap(PetMark.init(rawValue:)))
+    }
+
+    /// Headless proof for the badge: set it, report it, and draw it to a file.
+    func markHeadless(_ name: String?, to path: String?) -> String {
+        setMark(name.flatMap(PetMark.init(rawValue:)))
+        if let path, let kind = mark, let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64, bitsPerSample: 8,
+            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: 64 * 4, bitsPerPixel: 32) {
+            rep.size = NSSize(width: 32, height: 32)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            NSColor(calibratedRed: 0.09, green: 0.10, blue: 0.13, alpha: 1).setFill()
+            NSRect(x: 0, y: 0, width: 32, height: 32).fill()
+            markView.frame = NSRect(x: 4, y: 4, width: 24, height: 24)
+            markView.draw(markView.bounds)
+            NSGraphicsContext.restoreGraphicsState()
+            _ = kind
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+        }
+        let f = markWindow.frame
+        return "mark=\(mark?.rawValue ?? "none") badge=\(markWindow.isVisible) "
+            + "at=\(Int(f.minX)),\(Int(f.minY)) size=\(Int(f.width)) "
+            + "file=\(Paths.markFile.lastPathComponent)"
     }
 
     private func showBubble(_ text: String, thought: Bool = false) {
@@ -1241,8 +1415,10 @@ final class PetController: NSObject {
     }
 
     private func handleEvent(_ ev: [String: Any]) {
-        lastEventAt = Date()
         let kind = ev["kind"] as? String ?? ""
+        // A mark is a state, not a poke: it must not stop the pet wandering for
+        // the next eight seconds the way real activity does.
+        if kind != "mark" { lastEventAt = Date() }
         switch kind {
         case "expr":
             if let id = ev["id"] as? String {
@@ -1265,6 +1441,9 @@ final class PetController: NSObject {
             if busy { setExpression("typing", hold: 0) }
         case "walk":
             if let to = ev["x"] as? Double { targetX = CGFloat(to) }
+        case "mark":
+            // null clears it: the human decided something
+            setMark((ev["mark"] as? String).flatMap(PetMark.init(rawValue:)))
         case "ping":
             setExpression("wave", hold: 1.2)
         default:
@@ -1370,6 +1549,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         exit(0)
                     }
                 }
+            }
+        }
+        if CommandLine.arguments.contains("--mark-test") {
+            // The badge cannot be seen without screen access, so it is set, reported,
+            // drawn to a PNG, and checked against hiding the pet: a mark must survive
+            // the pet being switched off, and must come back with it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                guard let self, let c = self.controller else { print("no controller"); exit(1) }
+                let png = ProcessInfo.processInfo.environment["BABYZILLA_PET_MARK_PNG"]
+                for kind in ["done", "question", "error"] {
+                    print(c.markHeadless(kind, to: kind == "done" ? png : nil))
+                }
+                // What the plugin does: the badge outlives the pet being switched
+                // off, and comes back from the file rather than from memory.
+                try? Data("{\"mark\":\"error\"}".utf8).write(to: Paths.markFile)
+                c.setVisible(false)
+                print("hidden: badge=\(c.markWindow.isVisible) pet=\(c.window.isVisible)")
+                c.setVisible(true)
+                print("shown:  badge=\(c.markWindow.isVisible) mark=\(c.mark?.rawValue ?? "none")")
+                print(c.markHeadless(nil, to: nil))
+                exit(0)
             }
         }
         if CommandLine.arguments.contains("--toggle-test") {

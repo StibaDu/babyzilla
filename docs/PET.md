@@ -113,6 +113,40 @@ writes them to `~/.opencode/pet/packs/`, and the repo ignores
   30 bubbles.
 - **Keeps its mouth shut while you work.** Reactions queue, coalesce, and
   respect `chattiness`.
+- **Holds up a mark.** A badge beside its head says what the last turn left for
+  you: **✓ done**, **? it asked you something**, **! something broke**. Unlike a
+  bubble it never fades — it stays until *you* decide something.
+
+### The status mark
+
+A bubble is an event and fades on its own. A mark is **state**, and the difference
+is the whole point: the dino holds up ✓, ? or ! next to its head and keeps holding
+it until you act. Answering, fixing, or giving it a new task clears it.
+
+| mark | when it appears | how it is decided |
+|---|---|---|
+| **✓** done | the turn ended | `session.idle`, and the turn's last words were not a question |
+| **?** question | the turn ended on a question | the final answer's last character is `?` |
+| **!** error | anything failed | a tool result with an error, or `session.error` / `session.step.failed` |
+
+Rules that keep it honest:
+
+- **A question is read literally.** Only a `?` at the end of the model's own last
+  sentence counts (`… right?"` still counts). A question mark in the middle is the
+  model thinking, not asking you, and nothing is inferred from tone.
+- **An error is immediate and can be withdrawn.** A failed command raises **!** at
+  once; a later success in the same turn takes it back down, so a badge left up at
+  the end of a turn means "still broken", not "something once went wrong".
+- **It survives a restart.** The plugin owns `~/.opencode/pet/mark.json` and the app
+  only reads it, so a dino launched tomorrow still holds yesterday's unanswered
+  question. One writer, no disagreement.
+- **Only your sessions count.** A subagent session going quiet does not raise a
+  badge — it is not your turn.
+- **It never steals a click.** The badge is a separate click-through window beside
+  the head, below the bubble's tail.
+
+`babyzilla pet mark` shows the current mark; `babyzilla pet mark done|question|error|none`
+sets or clears it by hand (useful when testing the look, or to shut the dino up).
 
 ## Controls
 

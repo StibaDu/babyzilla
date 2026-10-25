@@ -2,6 +2,30 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.28.0] — 2026-10-25
+
+### Added
+
+- **The dino holds up a mark.** A badge beside its head that says what the last
+  turn left for you — **✓ done**, **? it asked you something**, **! something
+  broke** — and it does not fade. A bubble is an event; a mark is state, and it
+  stays until *you* decide something: answer, fix, or give a new task.
+- **Questions are read literally.** At turn end (`session.idle`, or
+  `session.status` going idle) the plugin reads the model's own last answer: a
+  final `?` means it stopped to ask, anything else means done. Nothing is inferred
+  from tone, and a `?` in the middle of an explanation does not count.
+- **Errors are immediate and withdrawable.** A failed tool raises **!** at once; a
+  later success in the same turn takes it back down, so a badge still up at the end
+  of a turn means "still broken", not "something once went wrong". `session.error`
+  and `session.step.failed` raise it too.
+- **It survives a restart and the pet being switched off.** The plugin owns
+  `~/.opencode/pet/mark.json`; the app only reads it, so a login start still shows
+  yesterday's unanswered question. Only your own sessions count — a subagent going
+  quiet is not your turn.
+- **`babyzilla pet mark [done|question|error|none]`** shows, sets or clears the
+  badge, and reports whether the app really put it on screen (`last-mark.json`),
+  the same observation-not-faith rule as bubbles.
+
 ## [0.27.0] — 2026-10-25
 
 ### Added

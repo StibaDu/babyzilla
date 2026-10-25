@@ -115,6 +115,7 @@ npm i -g --allow-git=all git+https://github.com/StibaDu/babyzilla.git
 # or, with no npm flags at all (works on every npm version):
 #   git clone https://github.com/StibaDu/babyzilla.git ~/.local/src/babyzilla
 #   npm i -g ~/.local/src/babyzilla
+babyzilla pet      # desktop pet: 100 expressions, reacts to this session live
 babyzilla setup    # guided setup: registers the plugin, grants the two permissions it needs
 babyzilla stats    # aggregate savings; also: show / verify / eval / prune
 babyzilla update   # check for a newer release (daily, cached); asks before updating
@@ -125,6 +126,22 @@ babyzilla recall 8c1f0b7a9d2e4c15   # exact original behind a paging marker / le
 babyzilla recall 8c1f0b7a9d2e4c15:120-180   # just those lines
 babyzilla retrieve src/app.js:120-160   # exact span, numbered
 ```
+
+### Desktop pet
+
+A 16-bit creature that lives at the bottom of your screen, wanders, and reacts
+to what OpenCode is doing — 100 expressions, generated from one locked palette.
+
+```sh
+babyzilla pet install     # builds a small native app (needs Xcode CLT once)
+babyzilla pet status      # running? how many sprites? last event?
+babyzilla pet list        # all 100 expressions
+babyzilla pet gallery     # the sprite field guide
+```
+
+It reads `~/.opencode/pet/events.jsonl`, which the plugin appends to on prompt,
+tool, compaction and error events. No sockets, no network, no daemon: if the pet
+is closed the plugin writes a few bytes. Turn it off with `"pet": false`.
 
 ### Setup, and the permissions that actually matter
 

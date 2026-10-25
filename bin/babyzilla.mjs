@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { sessionCosts, totals, defaultDbPath, openDb, hasTable, auditPrices } from "../lib/cost.mjs";
 import { readPage, prunePages } from "../lib/pages.mjs";
@@ -19,6 +19,8 @@ import {
 import {
   inspectConfig, planSetup, probe, applyConfig, locateConfig, configCandidates,
 } from "../lib/setup.mjs";
+import { emit as petEmit, petDir as petStateDir, eventsPath } from "../lib/pet.mjs";
+import { EXPRESSIONS, byId as expressionById } from "../pet/expressions.mjs";
 import {
   renderStatus, runVerify as runVerifyBench, runReplayBench, verifyPlan, resolveVerify, runNoise,
   refreshBaseline, manualRevert, readState as readSelftuneState, noteRecallRendered,
@@ -777,6 +779,9 @@ Usage:
   babyzilla update [--check] [--yes] [--json]
                                     daily update check (cached 24h); with consent
                                     runs 'git pull --ff-only' on a checkout
+  babyzilla pet [status|install|list|emit|gallery]
+                                    desktop pet: install the app, list the 100
+                                    expressions, emit one for testing
   babyzilla setup [--yes] [--dry-run] [--check] [--json] [--config PATH]
                                     guided setup: registers the plugin and grants
                                     the permissions it needs (recall, pack reads);
@@ -801,6 +806,97 @@ function writeOne(file, text, exists) {
   }
   const res = applyConfig({ file, text });
   return { file, backup: res.backup };
+}
+
+const PET_APP = path.join(os.homedir(), "Applications", "BabyZillaPet.app");
+const PET_LOGIN = path.join(os.homedir(), "Library", "LaunchAgents", "dev.babyzilla.pet.plist");
+const PET_APP_DIR = () => petStateDir();
+
+function petRunning() {
+  const pids = new Set();
+  for (const pattern of ["BabyZillaPet", "bzpet"]) {
+    try {
+      const out = execFileSync("/usr/bin/pgrep", ["-f", pattern], { encoding: "utf8" });
+      for (const line of out.trim().split("\n")) if (line) pids.add(line);
+    } catch (e) {
+      // pgrep exits 1 when nothing matches, which is the normal case. Anything
+      // else must be visible: a swallowed ReferenceError here reported "not
+      // running" forever and made `pet install` skip killing stale pets.
+      if (e?.status !== 1) process.stderr.write(`pet: process check failed (${e?.message ?? e})\n`);
+    }
+  }
+  return [...pids];
+}
+
+function petInstall({ login = false, build = true } = {}) {
+  const root = repoRoot();
+  const src = path.join(root, "apps", "pet");
+  const swift = ["main.swift", "PetApp.swift", "PixelFont.swift"].map((f) => path.join(src, f));
+  for (const f of swift) if (!fs.existsSync(f)) throw new Error(`missing source ${f}`);
+  const macos = path.join(PET_APP, "Contents", "MacOS");
+  fs.mkdirSync(macos, { recursive: true });
+  fs.mkdirSync(path.join(PET_APP, "Contents", "Resources"), { recursive: true });
+  const binary = path.join(macos, "BabyZillaPet");
+  if (build) {
+    const res = spawnSync("swiftc", ["-swift-version", "5", "-O", "-o", binary, ...swift], { encoding: "utf8" });
+    if (res.status !== 0) {
+      throw new Error(`swiftc failed:\n${(res.stderr || res.stdout || "").slice(-1200)}\n\nInstall Xcode command line tools: xcode-select --install`);
+    }
+  }
+  fs.writeFileSync(path.join(PET_APP, "Contents", "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>BabyZillaPet</string>
+  <key>CFBundleIdentifier</key><string>dev.babyzilla.pet</string>
+  <key>CFBundleExecutable</key><string>BabyZillaPet</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>${pkgVersion()}</string>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>LSUIElement</key><true/>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+`);
+
+  // runtime assets live next to the events file, so the app and the gallery
+  // always see the same set even after the bundle is rebuilt
+  fs.mkdirSync(petStateDir(), { recursive: true });
+  const spritesOut = path.join(petStateDir(), "sprites");
+  fs.mkdirSync(spritesOut, { recursive: true });
+  const spriteDir = path.join(root, "assets", "pet", "sprites");
+  let copied = 0;
+  for (const file of fs.readdirSync(spriteDir)) {
+    if (!file.endsWith(".png") || file.startsWith("_")) continue;
+    fs.copyFileSync(path.join(spriteDir, file), path.join(spritesOut, file));
+    copied++;
+  }
+  fs.copyFileSync(path.join(root, "assets", "pet", "pet-data.json"), path.join(petStateDir(), "pet-data.json"));
+  const gallery = path.join(petStateDir(), "gallery.html");
+  for (const asset of ["gallery.html", "gallery.css", "gallery-data.js"]) {
+    const srcFile = path.join(root, "assets", "pet", asset);
+    if (fs.existsSync(srcFile)) fs.copyFileSync(srcFile, path.join(petStateDir(), asset));
+  }
+
+  if (login) {
+    fs.mkdirSync(path.dirname(PET_LOGIN), { recursive: true });
+    fs.writeFileSync(PET_LOGIN, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>dev.babyzilla.pet</string>
+  <key>ProgramArguments</key><array><string>${path.join(macos, "BabyZillaPet")}</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><false/>
+</dict>
+</plist>
+`);
+  }
+  return { app: PET_APP, binary, sprites: copied, login };
+}
+
+function petEmitLine(event) {
+  petEmit(event);
 }
 
 function pkgVersion() {
@@ -1083,6 +1179,9 @@ function main() {
           }
 
           const next = wrote ? ["restart opencode so the plugin reloads"] : [];
+          if (process.platform === "darwin" && !process.env.BABYZILLA_PET_STATE) {
+            next.push("optional: babyzilla pet install (a 16-bit pet that reacts to this session)");
+          }
           if (asJson) {
             out(JSON.stringify({
               config: { file, exists },
@@ -1120,6 +1219,85 @@ function main() {
           process.exitCode = 1;
         });
         break;
+      }
+      case "pet": {
+        const sub = rest.find((a) => !a.startsWith("-")) ?? "status";
+        if (sub === "install") {
+          try {
+            const res = petInstall({ login: rest.includes("--login"), build: !rest.includes("--no-build") });
+            out(`${c(GREEN)}installed${c(RESET)} ${res.app}\n`);
+            out(`  binary   ${res.binary}\n  sprites  ${res.sprites} → ${petStateDir()}/sprites\n`);
+            if (res.login) out(`  login    ${PET_LOGIN}\n`);
+            const pids = petRunning();
+            for (const pid of pids) { try { process.kill(Number(pid)); } catch {} }
+            if (!rest.includes("--no-start")) {
+              const child = spawn(path.join(res.binary), [], { detached: true, stdio: "ignore" });
+              child.unref();
+              out(`${c(GREEN)}running${c(RESET)} (right-click the pet for size, mute, quit)\n`);
+            }
+            return;
+          } catch (e) { out(`${c(YELLOW)}pet install failed:${c(RESET)} ${e.message}\n`); process.exitCode = 1; return; }
+        }
+        if (sub === "emit") {
+          const id = rest[rest.indexOf("emit") + 1];
+          const sayAt = rest.indexOf("--say");
+          const line = sayAt !== -1 ? rest[sayAt + 1] : null;
+          if (!id || id.startsWith("-")) {
+            if (!line) {
+              out("usage: babyzilla pet emit <expression-id> [--hold 2] [--say \"text\"]\n");
+              process.exitCode = 2;
+              return;
+            }
+          } else {
+            if (!expressionById[id]) {
+              out(`${c(YELLOW)}unknown expression${c(RESET)} ${id} — try: babyzilla pet list\n`);
+              process.exitCode = 2;
+              return;
+            }
+            // face first, then the bubble: the pet should be wearing the
+            // expression by the time it speaks
+            petEmitLine({ kind: "expr", id, hold: Number(rest[rest.indexOf("--hold") + 1]) || 2 });
+          }
+          if (line) petEmitLine({ kind: "say", text: line });
+          if (id && !id.startsWith("-")) out(`emitted ${id}\n`);
+          return;
+        }
+        if (sub === "list") {
+          let last = "";
+          for (const e of EXPRESSIONS) {
+            if (e.cat !== last) { out(`\n${c(BOLD)}${e.cat}${c(RESET)}\n`); last = e.cat; }
+            out(`  ${e.id.padEnd(18)} ${e.label}\n`);
+          }
+          out(`\n${EXPRESSIONS.length} expressions\n`);
+          return;
+        }
+        if (sub === "gallery") {
+          const file = path.join(petStateDir(), "gallery.html");
+          if (!fs.existsSync(file)) { out("no gallery installed — run: babyzilla pet install\n"); process.exitCode = 1; return; }
+          execFileSync("/usr/bin/open", [file]);
+          out(`opened ${file}\n`);
+          return;
+        }
+        // status
+        const pids = petRunning();
+        const spriteDir = path.join(petStateDir(), "sprites");
+        const files = fs.existsSync(spriteDir)
+          ? new Set(fs.readdirSync(spriteDir).filter((f) => f.endsWith(".png")).map((f) => f.slice(0, -4))) : new Set();
+        const covered = EXPRESSIONS.filter((e) => files.has(e.id)).length;
+        const loco = [...files].filter((f) => f.startsWith("loco-")).length;
+        let lastEvent = "none";
+        try {
+          const lines = fs.readFileSync(eventsPath(), "utf8").trim().split("\n");
+          const last = JSON.parse(lines[lines.length - 1]);
+          lastEvent = `${new Date(last.t).toLocaleTimeString()} ${last.kind}${last.id ? ` ${last.id}` : ""}`;
+        } catch { /* no events yet */ }
+        out(`${c(BOLD)}BabyZilla pet${c(RESET)}\n`);
+        out(`  app       ${pids.length ? `${c(GREEN)}running${c(RESET)} (pid ${pids.join(", ")})` : `${c(YELLOW)}not running${c(RESET)} — babyzilla pet install`}\n`);
+        out(`  installed ${pids.length || fs.existsSync(PET_APP) ? PET_APP : `${c(DIM)}no${c(RESET)}`}\n`);
+        out(`  sprites   ${covered}/${EXPRESSIONS.length} expressions${loco ? ` + ${loco} locomotion frames` : ""}\n`);
+        out(`  events    ${eventsPath()}\n  last      ${lastEvent}\n`);
+        out(`  config    ${path.join(petStateDir(), "config.json")}\n`);
+        return;
       }
       case "update": {
         const checkOnly = rest.includes("--check");

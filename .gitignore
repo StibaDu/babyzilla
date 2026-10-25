@@ -5,3 +5,6 @@ node_modules/
 *.log
 graphify-out/
 test/real-shape.mjs
+
+# Generated art sources (regenerate with: node pet/build.mjs master && node pet/build.mjs expressions)
+assets/pet/raw/

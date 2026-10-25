@@ -2,6 +2,50 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.14.0] — 2026-10-25
+
+### Added
+
+- **A desktop pet.** `babyzilla pet install` builds a small native macOS app
+  that lives at the bottom of the screen: it wanders, hops, turns at the edges,
+  and reacts to what OpenCode is doing. It reads
+  `~/.opencode/pet/events.jsonl`, which the plugin appends to on prompt, tool,
+  compaction, budget and error events. No sockets, no ports, no daemon — if the
+  pet is closed the plugin writes a few bytes, and a pet started late reads from
+  the end of the file.
+- **100 expressions**, each a 64×64 sprite on a locked 16-colour palette, plus a
+  procedural motion class (`bob`, `pop`, `shake`, `float`, `still`) and speech
+  lines. `babyzilla pet list` prints them; `babyzilla pet emit <id>` triggers one
+  live; `babyzilla pet gallery` opens a field guide.
+- **A pixel speech bubble** (hand-authored 5×7 font, no system text), with a
+  message budget: important events speak (compaction results, context pressure,
+  tool failures, updates, slow-success celebrations), routine tool calls do not,
+  and bursts coalesce instead of stacking.
+- **A native AppKit app** instead of a web view: a non-activating transparent
+  panel (poking it never steals focus), 30Hz physics, nearest-neighbour blitting,
+  drag/throw with gravity and landing squash, click-to-poke, right-click menu
+  (size, mute, chattiness, gallery, quit), menu-bar icon.
+- **Art pipeline** (`pet/`): mflux generation from one master reference, chroma
+  key, box downscale, palette quantisation, ink outline, baseline alignment, and
+  a contact sheet for review. `pet/manifest.json` keeps the seed and prompt for
+  every sprite, so any one is reproducible. The PNG codec is in-repo, so the
+  pipeline has no native dependencies.
+- Pet state is isolated (`BABYZILLA_PET_STATE`) so tests never touch the real one.
+
+### Notes
+
+- Faces are generated conditioned on a master sprite, which is what keeps 100
+  separately generated images on-model. Body poses cannot move under that
+  conditioning, so locomotion is generated from the same seed without a
+  reference — that is the one place the pose is free.
+- The plugin emits pet events by default (`"pet": false` or `BABYZILLA_PET=0`
+  turns it off). On non-macOS hosts there is no app to read them, so the only
+  cost is a small append.
+- 9 new tests (248 total): catalogue shape, every mapping target exists, tool
+  classification, bridge JSONL + rotation + failure isolation, CLI list/emit/
+  status, and sprite invariants (64×64, ≤16 colours, clean border, shared
+  baseline).
+
 ## [0.13.1] — 2026-10-25
 
 ### Fixed

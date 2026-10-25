@@ -46,6 +46,8 @@ import {
   checkForUpdate, readUpdateCache, shouldNotify, markNotified, agentUpdateNotice,
   disabled as updatesDisabled, UPDATE_INTERVAL_MS,
 } from "./lib/updates.mjs";
+import { petEnabled, expr as petExpr, say as petSay } from "./lib/pet.mjs";
+import { toolExpression, outcomeExpression, compactionExpression, budgetExpression, updateExpression } from "./lib/pet-map.mjs";
 
 const execAsync = promisify(execCb);
 const execFileAsync = promisify(execFileCb);
@@ -674,6 +676,23 @@ export default {
   setup: async (ctx) => {
     const opts = { ...defaults, ...(ctx.options ?? {}) };
 
+    // ---- desktop pet bridge -------------------------------------------------
+    // Fire-and-forget appends to ~/.opencode/pet/events.jsonl. A pet that is
+    // closed, crashed or never installed costs a few bytes; a pet bug must
+    // never reach a turn, so every emission is wrapped.
+    const pet = petEnabled(opts);
+    const petSeen = new Map();
+    const petThrottled = (key, ms) => {
+      const now = Date.now();
+      if (now - (petSeen.get(key) ?? 0) < ms) return false;
+      petSeen.set(key, now);
+      return true;
+    };
+    const petOn = (fn) => {
+      if (!pet) return;
+      try { fn(); } catch { /* never affect execution */ }
+    };
+
     // ---- self-tuning loop ---------------------------------------------------
     // Overrides from a verified (currently pending) proposal are applied to
     // the options object BEFORE any hook registers, so thresholds read them
@@ -693,7 +712,14 @@ export default {
     if (opts.checkUpdates !== false && !updatesDisabled()) {
       void checkForUpdate({ root: ROOT, current: PLUGIN_VERSION })
         .then((r) => {
-          if (r?.ok && r.newer) log(`update available: v${r.current} → v${r.latest} (run: babyzilla update)`);
+          if (r?.ok && r.newer) {
+            log(`update available: v${r.current} → v${r.latest} (run: babyzilla update)`);
+            petOn(() => {
+              const u = updateExpression(r.latest, r.current);
+              petExpr(u.id, u.hold);
+              petSay(u.say);
+            });
+          }
         })
         .catch(() => {});
     }
@@ -707,6 +733,12 @@ export default {
           if (!sid) return;
           const out = typeof event?.result === "string" ? event.result : deepText(event?.result, 0);
           const err = event?.error?.message ?? (event?.error ? String(event.error) : "");
+          const failed = Boolean(err) || event?.status === "error";
+          petOn(() => {
+            const o = outcomeExpression({ name: toolName, ok: !failed, ms: Number(event?.durationMs ?? event?.duration) || 0 });
+            if (o) petExpr(o.id, o.hold);
+            if (failed) petSay(`${toolName} failed`);
+          });
           try { SELFTUNE?.noteToolUse(sid, toolName, out || err); } catch { /* telemetry only */ }
           void writeJournal(sid, {
             t: Date.now(),
@@ -738,6 +770,17 @@ export default {
       });
     } else {
       log("tool.hook unavailable — journal capture disabled");
+    }
+
+    // ---- pet: what the agent is doing right now ----------------------------
+    if (pet && typeof ctx.tool?.hook === "function") {
+      await ctx.tool.hook("execute.before", async (a) => {
+        petOn(() => {
+          const name = a?.tool ?? a?.toolName ?? "";
+          if (!name) return;
+          petExpr(toolExpression(name, a?.input), 2.4);
+        });
+      });
     }
 
     // ---- layer 2: command-output compression (lowfat) ----------------------
@@ -788,6 +831,14 @@ export default {
           const messages = event?.messages;
           if (!Array.isArray(messages) || !messages.length) return;
           const window = Number(event?.model?.limit?.context ?? event?.model?.limit?.input) || 0;
+          petOn(() => {
+            if (petThrottled("ctx", 900)) petExpr("thinking", 1.6);
+            if (window) {
+              const pct = (estimateMessagesTokens(event?.messages) / window) * 100;
+              const b = budgetExpression(pct);
+              if (b && petThrottled("budget", 120000)) { petExpr(b.id, b.hold); if (b.say) petSay(b.say); }
+            }
+          });
           const pageRef = (text) => writePage(ROOT, text, { sessionID: event?.sessionID });
           if (opts.stablePrefix === true) {
             const stable = applyStableCompression(messages, opts, pageRef);
@@ -855,6 +906,11 @@ export default {
     if (typeof ctx.session?.hook === "function") {
       await ctx.session.hook("compaction", async (event) => {
         let owned = false; // only the event that set the lock clears it
+        petOn(() => {
+          const c = compactionExpression("start");
+          petExpr(c.id, c.hold);
+          petSay("Squeezing the context…");
+        });
         try {
           if (event?.result) {
             log("compaction: result already set by an earlier hook — yielding");
@@ -991,6 +1047,11 @@ export default {
             metadata: { contextpack: { ...summaryStats, files: chosen.length, model } },
           };
           log(`compaction swapped: raw ${fmt(rawTokens)} tok → pack ${fmt(packTokens)} tok (${summaryStats.savedPct}% smaller)`);
+          petOn(() => {
+            const c = compactionExpression("end");
+            petExpr(c.id, c.hold);
+            petSay(`Compacted: ${fmt(rawTokens)} → ${fmt(packTokens)} tok (${summaryStats.savedPct}% smaller).`);
+          });
         } catch (e) {
           log("compaction distillation failed — falling back to native compaction:", e?.message ?? e);
         } finally {
@@ -1010,6 +1071,7 @@ export default {
           }
           prompt.files ??= [];
           if (!Array.isArray(prompt.files)) return;
+          petOn(() => petExpr("listening", 1.8));
           // Daily update check + notice (v0.12). The cache is read every
           // prompt (a small file); a stale one is refreshed in the background
           // so a long-running opencode still checks daily, and the notice is

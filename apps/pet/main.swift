@@ -1,0 +1,90 @@
+// Entry point. Top-level code has to live in main.swift for swiftc.
+import AppKit
+
+let args = CommandLine.arguments
+if args.contains("--font-test") {
+    PixelFont.writeTestImage(to: "/tmp/babyzilla-font.png")
+    print("wrote /tmp/babyzilla-font.png")
+    exit(0)
+}
+if args.contains("--self-test") {
+    let base = Paths.resolveSprites()
+    print("sprites dir: \(base.path)")
+    let lib = SpriteLibrary(base: base)
+    print("loaded: \(lib.images.count) sprites")
+    if let pd = PetData.load(spritesDir: base) {
+        print("expressions: \(pd.expressions.count), size: \(pd.size)")
+        let missing = pd.expressions.map(\.id).filter { lib.images[$0] == nil }
+        print("missing sprites: \(missing.isEmpty ? "none" : missing.joined(separator: ", "))")
+        exit(missing.isEmpty ? 0 : 1)
+    }
+    exit(1)
+}
+
+// Offscreen render of the pet + bubble. Screen capture needs permissions this
+// harness does not have, so layout is verified by drawing the same views into
+// a bitmap and looking at it.
+if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
+    let out = args[i + 1]
+    func value(_ key: String, _ fallback: String) -> String {
+        guard let j = args.firstIndex(of: key), j + 1 < args.count else { return fallback }
+        return args[j + 1]
+    }
+    let base = Paths.resolveSprites()
+    guard let pd = PetData.load(spritesDir: base) else { print("no pet-data.json"); exit(1) }
+    let lib = SpriteLibrary(base: base)
+    let exprId = value("--expr", "idle")
+    let line = value("--say", "Compacted: 84k -> 9k tok (89% smaller).")
+    let scale = Int(value("--scale", "3")) ?? 3
+    let side = CGFloat(pd.size * scale)
+    let bubbleW: CGFloat = 260
+    PixelFont.scale = CGFloat(max(2, scale - 1))
+    let bv = BubbleView(frame: NSRect(x: 0, y: 0, width: bubbleW, height: 90))
+    bv.text = line
+    bv.alpha = 1
+    let bubbleH = BubbleView.measure(line, width: bubbleW).height
+    bv.frame = NSRect(x: 0, y: 0, width: bubbleW, height: bubbleH)
+    let W = bubbleW + 40, H = bubbleH + side + 20
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(W * 2), pixelsHigh: Int(H * 2),
+                               bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                               colorSpaceName: .deviceRGB, bytesPerRow: Int(W * 2) * 4, bitsPerPixel: 32)!
+    rep.size = NSSize(width: W, height: H)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    NSColor(calibratedRed: 0.09, green: 0.10, blue: 0.13, alpha: 1).setFill()
+    NSRect(x: 0, y: 0, width: W, height: H).fill()
+    if let sprite = lib.image(exprId) {
+        sprite.draw(in: NSRect(x: (W - side) / 2, y: 6, width: side, height: side),
+                    from: .zero, operation: .sourceOver, fraction: 1,
+                    respectFlipped: true, hints: [.interpolation: NSImageInterpolation.none.rawValue])
+    }
+    NSGraphicsContext.saveGraphicsState()
+    let t = NSAffineTransform()
+    t.translateX(by: (W - bubbleW) / 2, yBy: side + 2)
+    t.concat()
+    bv.draw(bv.bounds)
+    NSGraphicsContext.restoreGraphicsState()
+    NSGraphicsContext.restoreGraphicsState()
+    try? rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out))
+    print("snapshot: \(out)  expr=\(exprId)  screen=\(NSScreen.main?.visibleFrame.debugDescription ?? "?")")
+    exit(0)
+}
+
+// Single instance: two pets fighting over the same events file is confusing.
+do {
+    try? FileManager.default.createDirectory(at: Paths.state, withIntermediateDirectories: true)
+    let lock = Paths.state.appendingPathComponent("pet.pid")
+    if let raw = try? String(contentsOf: lock, encoding: .utf8), let pid = Int32(raw.trimmingCharacters(in: .whitespacesAndNewlines)) {
+        if kill(pid, 0) == 0, pid != getpid() {
+            print("BabyZillaPet already running (pid \(pid))")
+            exit(0)
+        }
+    }
+    try? String(getpid()).write(to: lock, atomically: true, encoding: .utf8)
+}
+
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.setActivationPolicy(.accessory)
+app.run()

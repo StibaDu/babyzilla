@@ -2,6 +2,19 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.22.0] — 2026-10-25
+
+### Added
+
+- **`lean`, `bounce` and `slump` — the last states that were still falling back to
+  idle.** Reading and searching tilt the dino towards the thing it is looking at
+  (`tool-read`, `tool-grep`, `tool-list`, `tool-webfetch`, `tool-lsp`, `tool-mcp`);
+  editing, writing and running commands get a crouch-and-hop (`tool-edit`,
+  `tool-write`, `tool-bash`, `typing`); and a filling context makes it sag toward the
+  floor (`budget-low`, `budget-full`) instead of stretching.
+- Twelve animations in the pack now — idle, walk, jump, dash, nod, sway, shake,
+  stretch, turn, lean, bounce, slump — 45 frames, all from the artist's own pixels.
+
 ## [0.21.0] — 2026-10-25
 
 ### Added

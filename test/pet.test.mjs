@@ -261,7 +261,7 @@ test("pack animations: a nod and a sway from the pack's own pixels, plus the she
 
   const cli = (...args) => run(process.execPath, [fileURLToPath(new URL("../pet/pack-animations.mjs", import.meta.url)), ...args], { env: process.env });
   const first = await cli("--pack", packDir);
-  assert.match(first.stdout, /frames written: nod, sway, shake, stretch, turn/);
+  assert.match(first.stdout, /frames written: nod, sway, shake, stretch, turn, lean, bounce, slump/);
 
   const after = JSON.parse(fs.readFileSync(path.join(packDir, "pack.json"), "utf8"));
   assert.deepEqual(after.animations.nod, ["nod-1", "nod-2", "nod-3"]);
@@ -272,6 +272,9 @@ test("pack animations: a nod and a sway from the pack's own pixels, plus the she
   assert.equal(after.expressions["shell-fail"], "shake");
   assert.equal(after.expressions["tool-question"], "turn");
   assert.equal(after.expressions["tool-task"], "stretch");
+  assert.equal(after.expressions["tool-read"], "lean");
+  assert.equal(after.expressions["tool-edit"], "bounce");
+  assert.equal(after.expressions["budget-full"], "slump");
   for (const id of ["nod-1", "nod-2", "nod-3", "sway-1", "sway-2", "sway-3", "shake-1", "shake-4", "stretch-1", "turn-1", "turn-3", "turn-4"]) {
     assert.ok(fs.existsSync(path.join(packDir, "sprites", `${id}.png`)), `${id} written`);
   }
@@ -286,6 +289,10 @@ test("pack animations: a nod and a sway from the pack's own pixels, plus the she
   assert.equal(bottom(frame("nod-1")), 45, "a nod squashes toward the feet, it does not float");
   assert.equal(bottom(frame("sway-3")), 45, "a sway keeps its feet planted");
   assert.equal(bottom(frame("stretch-2")), 45, "a stretch grows upward from the feet");
+  assert.equal(bottom(frame("lean-2")), 45, "a lean tips the body, not the feet");
+  // a hop is the one pose allowed to leave the ground, and it comes back down
+  assert.ok(bottom(frame("bounce-3")) < 45, "a bounce lifts off");
+  assert.equal(bottom(frame("bounce-1")), 45, "and it starts from the floor");
   // a turn is the character squeezed edge-on, then mirrored: same character, other side
   const width = (img) => {
     let min = img.width, max = -1;
@@ -314,13 +321,13 @@ test("pack animations: a nod and a sway from the pack's own pixels, plus the she
   const sheetPath = path.join(dir, "sheet.png");
   fs.writeFileSync(sheetPath, encodePng(sheet.width, sheet.height, sheet.data));
   const second = await cli("--pack", packDir, "--sheet", sheetPath, "--row", "2", "--from-col", "6");
-  assert.match(second.stdout, /dash, nod, sway, shake, stretch, turn/);
+  assert.match(second.stdout, /dash, nod, sway, shake, stretch, turn, lean, bounce, slump/);
   const withDash = JSON.parse(fs.readFileSync(path.join(packDir, "pack.json"), "utf8"));
   assert.equal(withDash.animations.dash.length, 4);
   assert.equal(withDash.expressions.compressing, "dash");
 
   const removed = await cli("--pack", packDir, "--remove");
-  assert.match(removed.stdout, /removed 21 frames/);
+  assert.match(removed.stdout, /removed 32 frames/);
   const back = JSON.parse(fs.readFileSync(path.join(packDir, "pack.json"), "utf8"));
   assert.equal(back.animations.nod, undefined);
   assert.equal(back.expressions, undefined, "the map goes with the animations");

@@ -194,12 +194,13 @@ expression id at an animation name:
 
 ```json
 "expressions": {
-  "thinking": "nod",      "celebrate": "sway",     "compressing": "dash",
-  "shell-fail": "shake",  "tool-question": "turn", "tool-task": "stretch"
+  "thinking": "nod",       "celebrate": "sway",    "compressing": "dash",
+  "shell-fail": "shake",   "tool-question": "turn", "tool-task": "stretch",
+  "tool-read": "lean",     "tool-edit": "bounce",   "budget-full": "slump"
 }
 ```
 
-`pet/pack-animations.mjs` adds six of them without repainting anything — the
+`pet/pack-animations.mjs` adds nine of them without repainting anything — the
 palette, the pixel blocks and the baseline cannot drift, because every frame comes
 either from the artist's own sheet or from the pack's own idle frame:
 
@@ -217,12 +218,15 @@ node pet/pack-animations.mjs --pack ~/.opencode/pet/packs/lil-dino \
 | `shake` | 4 | the sprite jerking sideways, feet and all | `shell-fail`, `oops`, `conflict`, `offline` |
 | `stretch` | 3 | the body growing up from its feet | `tool-task`, `subagent-wait`, `budget-low` |
 | `turn` | 4 | squeezed edge-on, then mirrored | `tool-question`, `waiting` |
+| `lean` | 4 | tipping forward, feet planted | `tool-read`, `tool-grep`, `tool-list`, `tool-webfetch` |
+| `bounce` | 4 | crouch, then a small hop | `tool-edit`, `tool-write`, `tool-bash`, `typing` |
+| `slump` | 3 | sagging toward the floor, slowly | `budget-low`, `budget-full` |
 
 The `turn` is the one worth watching: frame 2 squashes the character to a sliver and
 frame 3 is the mirror image, so it reads as the dino rotating to face its human —
 which is exactly what it should do when the agent needs an answer from you.
 
-`--remove` takes all six out again and leaves the pack as drawn.
+`--remove` takes all nine out again and leaves the pack as drawn.
 
 ## Removing a pet
 

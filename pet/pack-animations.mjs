@@ -42,7 +42,7 @@ const canvas = Number(pack.size ?? 48);
 const footRow = Number(arg("foot", 45));
 
 /** Animations this tool owns; everything else in the pack is the artist's. */
-const SIZES = { dash: 4, nod: 3, sway: 3, shake: 4, stretch: 3, turn: 4 };
+const SIZES = { dash: 4, nod: 3, sway: 3, shake: 4, stretch: 3, turn: 4, lean: 4, bounce: 4, slump: 3 };
 
 /** Which states each animation answers, so the pack shows more than idle. */
 const EXPRESSIONS = {
@@ -55,12 +55,18 @@ const EXPRESSIONS = {
   // something went wrong
   shake: ["shell-fail", "oops", "conflict", "model-error", "offline", "rate-limited"],
   // waiting on something slow, so it stretches instead of standing still
-  stretch: ["tool-task", "subagent-wait", "budget-low"],
+  stretch: ["tool-task", "subagent-wait"],
+  // reading or searching: it tips towards whatever it is looking at
+  lean: ["tool-read", "tool-grep", "tool-list", "tool-webfetch", "tool-websearch", "tool-lsp", "tool-mcp"],
+  // hands on the keyboard, doing the work
+  bounce: ["tool-edit", "tool-write", "tool-bash", "tool-imagegen", "typing"],
+  // the context is filling up and the pet is being squashed by it
+  slump: ["budget-low", "budget-full"],
   // pleased with itself
   sway: ["celebrate", "shell-ok", "pack-created", "update-available"],
 };
 
-const FPS = { dash: 12, nod: 8, sway: 8, shake: 14, stretch: 5, turn: 7 };
+const FPS = { dash: 12, nod: 8, sway: 8, shake: 14, stretch: 5, turn: 7, lean: 5, bounce: 12, slump: 3 };
 
 function ownedFrames() {
   return Object.entries(SIZES).flatMap(([name, count]) =>
@@ -145,6 +151,11 @@ function shift(img, dx) {
   return resample(img, (x, y) => [x - dx, y]);
 }
 
+/** A hop: the whole sprite leaves its baseline for a frame or two. */
+function lift(img, dy) {
+  return resample(img, (x, y) => [x, y + dy]);
+}
+
 /** Narrower only: what a body looks like when it turns edge-on. */
 function scaleX(img, factor) {
   const cx = canvas / 2;
@@ -197,6 +208,12 @@ const BUILT = {
   stretch: () => [1.0, 1.07, 1.03].map((f) => squash(base, f)),
   // edge-on squeeze then mirrored: it turns to face its human
   turn: () => [base, scaleX(base, 1.9), mirror(base), scaleX(base, 1.9)],
+  // tipping forward towards the thing it is reading, then settling back
+  lean: () => [0, 2, 2, 1].map((p) => shear(base, p)),
+  // crouch, then up and down: hands on the keyboard
+  bounce: () => [squash(base, 0.95), lift(base, 2), lift(base, 4), lift(base, 2)],
+  // sagging under a full context, slowly, like a deflating balloon
+  slump: () => [0.97, 0.93, 0.95].map((f) => squash(base, f)),
 };
 
 // ---- write ------------------------------------------------------------------

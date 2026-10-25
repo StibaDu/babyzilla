@@ -843,10 +843,18 @@ function petPidAlive() {
 }
 
 function petStop() {
-  const pid = petPidAlive();
+  const pids = new Set();
+  const own = petPidAlive();
+  if (own) pids.add(own);
+  // For the real state dir also clear strays whose pid file was lost (a crashed
+  // or --capture instance leaves one). A test or a temp state only ever stops
+  // its own pid, which is what keeps `node --test` from killing the user's pet.
+  if (!process.env.BABYZILLA_PET_STATE) {
+    for (const pid of petRunning()) pids.add(Number(pid));
+  }
   try { fs.rmSync(path.join(petStateDir(), "pet.pid"), { force: true }); } catch {}
-  if (pid) { try { process.kill(pid); } catch {} }
-  return pid;
+  for (const pid of pids) { try { process.kill(pid); } catch {} }
+  return pids.size ? [...pids][0] : null;
 }
 
 function petConfigFile() { return path.join(petStateDir(), "config.json"); }
@@ -881,10 +889,23 @@ function listPacks() {
 
 function petStart() {
   const binary = path.join(PET_APP, "Contents", "MacOS", "BabyZillaPet");
-  if (!fs.existsSync(binary)) return false;
+  if (!fs.existsSync(binary)) return null;
   const child = spawn(binary, [], { detached: true, stdio: "ignore" });
+  let failed = null;
+  child.on("error", (e) => { failed = e; });
   child.unref();
-  return true;
+  // Wait for it to appear: "spawned" and "running" are not the same thing, and
+  // the old code reported success even when the child died on launch.
+  // macOS can take a few seconds to start a freshly rebuilt binary (Gatekeeper),
+  // so poll long enough that a slow start is not reported as a failure.
+  const deadline = Date.now() + 9000;
+  while (Date.now() < deadline) {
+    const pid = petPidAlive() ?? (petRunning()[0] ? Number(petRunning()[0]) : null);
+    if (pid) return pid;
+    if (failed) return null;
+    execFileSync("/bin/sleep", ["0.15"]);
+  }
+  return null;
 }
 
 function petInstall({ login = false, build = true } = {}) {
@@ -1323,9 +1344,12 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
             if (res.login) out(`  login    ${PET_LOGIN}\n`);
             petStop();
             if (!rest.includes("--no-start")) {
-              const child = spawn(path.join(res.binary), [], { detached: true, stdio: "ignore" });
-              child.unref();
-              out(`${c(GREEN)}running${c(RESET)} (right-click the pet for size, mute, quit)\n`);
+              const pid = petStart();
+              if (pid) out(`${c(GREEN)}running${c(RESET)} pid ${pid} (right-click the pet for size, mute, quit)\n`);
+              else {
+                out(`${c(YELLOW)}could not start the pet${c(RESET)} — run: ${res.binary} in Terminal to see why\n`);
+                process.exitCode = 1;
+              }
             }
             return;
           } catch (e) { out(`${c(YELLOW)}pet install failed:${c(RESET)} ${e.message}\n`); process.exitCode = 1; return; }
@@ -1362,7 +1386,9 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
           }
           if (petPidAlive()) { out(`already running (pid ${petPidAlive()})\n`); return; }
           if (!fs.existsSync(PET_APP)) { out("no app installed — babyzilla pet install\n"); process.exitCode = 1; return; }
-          out(petStart() ? "started\n" : "could not start\n");
+          const pid = petStart();
+          out(pid ? `started pid ${pid}\n` : "could not start\n");
+          if (!pid) process.exitCode = 1;
           return;
         }
 
@@ -1400,7 +1426,11 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
           // only relaunch a pet that was already up: switching while closed
           // should not start one behind the user's back
           const wasRunning = petStop();
-          if (wasRunning && petStart()) out(`${c(GREEN)}restarted${c(RESET)}\n`);
+          if (wasRunning) {
+            const pid = petStart();
+            if (pid) out(`${c(GREEN)}restarted${c(RESET)} pid ${pid}\n`);
+            else { out(`${c(YELLOW)}could not restart the pet${c(RESET)}\n`); process.exitCode = 1; }
+          }
           return;
         }
 

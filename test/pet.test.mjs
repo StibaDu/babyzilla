@@ -233,9 +233,14 @@ test("pack builder: a sheet becomes coherent, complete animations", async (t) =>
   const src = decodePng(fs.readFileSync(master));
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      for (let y = 0; y < Math.min(cell, src.height); y++) {
-        for (let x = 0; x < Math.min(cell, src.width); x++) {
-          const s = (y * src.width + x) * 4;
+      // take the *centre* of the master so the synthetic character sits inside
+      // its cell the way a real sheet's does
+      for (let y = 0; y < cell; y++) {
+        for (let x = 0; x < cell; x++) {
+          const sx = x + Math.max(0, (src.width - cell) / 2);
+          const sy = y + Math.max(0, (src.height - cell) / 2);
+          if (sx >= src.width || sy >= src.height) continue;
+          const s = (sy * src.width + sx) * 4;
           const d = ((r * cell + y) * sheet.width + (c * cell + x)) * 4;
           for (let k = 0; k < 4; k++) sheet.data[d + k] = src.data[s + k];
         }
@@ -247,10 +252,10 @@ test("pack builder: a sheet becomes coherent, complete animations", async (t) =>
   fs.writeFileSync(sheetPath, encodePng(sheet.width, sheet.height, sheet.data));
   const out = path.join(dir, "pack");
   await run(process.execPath, [path.join(ROOT, "pet/pack.mjs"), "--sheet", sheetPath, "--name", "testpack",
-    "--label", "Test Pack", "--cell", String(cell), "--crop", "0,0,24,24", "--rows", "idle,walk,jump",
+    "--label", "Test Pack", "--cell", String(cell), "--crop", "4,4,24,24", "--rows", "idle,walk,jump",
     "--cols", String(cols), "--upscale", "2", "--out", out], { env: { ...process.env, BABYZILLA_NO_UPDATE_CHECK: "1" } });
 
-  const pack = JSON.parse(fs.readFileSync(path.join(out, "pack.json"), "utf8"));
+  let pack = JSON.parse(fs.readFileSync(path.join(out, "pack.json"), "utf8"));
   assert.equal(pack.size, 48, "24px crop at 2x");
   for (const anim of ["idle", "walk", "jump"]) {
     assert.equal(pack.animations[anim].length, cols, `${anim} has every column`);
@@ -259,6 +264,33 @@ test("pack builder: a sheet becomes coherent, complete animations", async (t) =>
       assert.equal(img.width, pack.size);
       assert.equal(img.height, pack.size);
     }
+  }
+
+  // Authoring expressions on the grid must produce usable animations and a map
+  // that answers for every expression id the app can receive.
+  await run(process.execPath, [path.join(ROOT, "pet/pack-expressions.mjs"), "--pack", out],
+    { env: { ...process.env, BABYZILLA_NO_UPDATE_CHECK: "1" } });
+  pack = JSON.parse(fs.readFileSync(path.join(out, "pack.json"), "utf8"));
+  for (const face of ["blink", "happy", "angry", "surprised", "hurt", "sleep"]) {
+    assert.ok(pack.animations[face]?.length >= 2, `${face} animation exists`);
+    for (const frame of pack.animations[face]) {
+      const img = decodePng(fs.readFileSync(path.join(out, "sprites", `${frame}.png`)));
+      assert.equal(img.width, pack.size, `${frame} keeps the canvas`);
+      let ink = 0;
+      for (let i = 3; i < img.data.length; i += 4) if (img.data[i]) ink++;
+      assert.ok(ink > 20, `${frame} is not empty`);
+    }
+    assert.ok(pack.fps?.[face] > 0, `${face} has a frame rate`);
+  }
+  assert.equal(Object.keys(pack.expressions).length, EXPRESSIONS.length, "every expression id is mapped");
+  for (const e of EXPRESSIONS) {
+    const anim = pack.expressions[e.id];
+    assert.ok(pack.animations[anim], `${e.id} -> ${anim} exists`);
+  }
+  // the interesting faces must actually be reachable, not just present
+  const used = new Set(Object.values(pack.expressions));
+  for (const face of ["happy", "angry", "surprised", "hurt", "sleep"]) {
+    assert.ok(used.has(face), `some expression selects ${face}`);
   }
 });
 

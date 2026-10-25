@@ -47,6 +47,27 @@ node pet/pack.mjs   --sheet ~/Downloads/PACK.png   --name lil-dino --label "Lil 
 - `pack.json` records the animations, their frame rate, the canvas size, the
   default scale, and where the art came from.
 
+### More faces, without more art
+
+A 15x13 character has far too little identity for a diffusion model to hold: at
+low strength it redesigns the creature, at high strength it melts the pose. So
+new expressions are authored the way pixel pets always were — on the grid:
+
+```sh
+node pet/pack-expressions.mjs --pack ~/.opencode/pet/packs/lil-dino
+```
+
+This derives the pack's palette from its own frames, then writes `blink`,
+`happy`, `angry`, `surprised`, `hurt` and `sleep` by editing the eye, the brow and
+the tooth row of the idle frame, each with a 1px beat so it holds up when looped.
+It also records an `expressions` map from every one of the 100 expression ids to
+the face that fits — `celebrate` gets the grin, `oops` the X eye, `sleep` the
+closed one — and the app plays that face for the duration of the reaction.
+
+Because the colours are derived from the pack rather than hardcoded, the same
+edits work on any pack that has an ink/shade/light/white relationship, and cannot
+silently blank a frame whose palette differs.
+
 Packs built from someone else's sheet are not ours to redistribute: the builder
 writes them to `~/.opencode/pet/packs/`, and the repo ignores
 `assets/pet/packs/`.

@@ -2,6 +2,33 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.16.0] — 2026-10-25
+
+### Added
+
+- **Faces for packs.** `pet/pack-expressions.mjs` authors six expressions on the
+  pack's own pixel grid — `blink`, `happy`, `angry`, `surprised`, `hurt`, `sleep`
+  — by editing the eye, brow and tooth row of the idle frame, each with a 1px beat
+  so it holds up when the app loops it. The palette is derived from the pack, so
+  the same edits work on any pack and cannot blank a frame whose colours differ.
+- **An expression map.** Every one of the 100 expression ids now resolves to a
+  face (54 idle, 16 happy, 9 sleep, 8 angry, 7 hurt, 5 surprised, 1 blink), and the
+  app plays the pack's face for the duration of the reaction instead of showing
+  the same idle sprite for everything.
+
+### Fixed
+
+- **A pack played the same face for every reaction.** `setExpression` collapsed
+  any id without a matching sprite to `"idle"`, so the pack's expression map never
+  saw the real id.
+- **The event watcher could miss appends** when the pet had created
+  `events.jsonl` itself: the DispatchSource did not always fire for that case. A
+  size check every half second now backs it up.
+- **`pet install` / `pet start` claimed success without checking.** They now poll
+  for the pid for up to nine seconds (macOS can be slow to launch a freshly
+  rebuilt binary) and fail loudly; `pet stop` also clears strays for the default
+  state dir, which a crashed or `--capture` instance leaves behind.
+
 ## [0.15.0] — 2026-10-25
 
 ### Added

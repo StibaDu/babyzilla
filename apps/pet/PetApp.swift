@@ -166,6 +166,8 @@ struct PackData: Decodable {
     let size: Int
     let animations: [String: [String]]
     let fps: [String: Double]?
+    /// expression id -> animation, so a pack can answer with its own faces
+    let expressions: [String: String]?
     let defaultScale: Int?
     let source: String?
 
@@ -415,6 +417,7 @@ final class PetController: NSObject {
     private var packClock: TimeInterval = 0
     private var packAnim = "idle"
     private var lastExprAt = Date.distantPast
+    private var lastWatchPoll = Date.distantPast
 
     private var timer: Timer?
     private var eventSource: DispatchSourceFileSystemObject?
@@ -521,6 +524,16 @@ final class PetController: NSObject {
         timer = t
     }
 
+    /// The DispatchSource can miss an append when the pet created the events file
+    /// itself; a size check costs nothing and makes the bridge reliable.
+    private func pollEventsFile() {
+        guard Date().timeIntervalSince(lastWatchPoll) > 0.5 else { return }
+        lastWatchPoll = Date()
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: Paths.events.path),
+              let size = attrs[.size] as? UInt64 else { return }
+        if size > eventOffset { drainEvents() }
+    }
+
     @objc private func tick() {
         let now = Date()
         let dt = min(0.1, now.timeIntervalSince(lastTick))
@@ -531,6 +544,7 @@ final class PetController: NSObject {
             stepMovement(dt: dt, now: now)
             stepFall(dt: dt)
         }
+        pollEventsFile()
         stepAI(now: now)
         stepExpression(now: now)
         stepBlink(now: now)
@@ -705,7 +719,9 @@ final class PetController: NSObject {
             // the physics hop uses the sheet's own jump
             anim = "jump"
         } else if Date() < expressionUntil {
-            anim = PackData.energetic.contains(expressionId) ? "jump" : "idle"
+            // the pack's own expression map wins; then its jump for excitement
+            anim = pack.expressions?[expressionId]
+                ?? (PackData.energetic.contains(expressionId) ? "jump" : "idle")
         } else if targetX != nil || abs(vx) > 2 {
             anim = "walk"
         } else {
@@ -791,7 +807,10 @@ final class PetController: NSObject {
     // ── public actions ───────────────────────────────────────────────────────
 
     func setExpression(_ id: String, hold: TimeInterval) {
-        let resolved = lib.image(id) != nil ? id : "idle"
+        // A pack has no sprite per expression — its expression map answers for the
+        // id, so the id has to survive. Collapsing to "idle" here made every
+        // reaction in a pack play the same face.
+        let resolved = (pack != nil || lib.image(id) != nil) ? id : "idle"
         if resolved != expressionId { trace(["ev": "expr", "id": resolved, "hold": hold]) }
         expressionId = resolved
         expressionUntil = Date().addingTimeInterval(hold)

@@ -30,6 +30,11 @@
   `max(proactiveCompactMinTokens, proactiveCompactRatio × window)` BabyZilla
   asks OpenCode to compact (rate-limited per session), so the pack kicks in at
   ~35% of the window instead of ~90%. Disable with `proactiveCompaction: false`.
+- **Layer 0.5 — Vision routing**: text-only main models receive a placeholder
+  instead of image pixels, so image prompts are routed *before* the request:
+  when a prompt involves image content, a one-shot synthetic note tells the
+  main model to delegate to the vision subagent with the exact readable
+  paths (`visionRoute: true` default).
 - **Layer 2 — Command compression** (lowfat, bundled and adapted from
   [zdk/lowfat](https://github.com/zdk/lowfat), Apache-2.0): shell commands are
   rewritten *before execution* (`git status`, `ls -la`, `docker …` →
@@ -48,7 +53,7 @@
   pointer is reversible: `babyzilla recall <id>` prints the exact original
   text (add `:start-end` for a span) from a content-addressed page store.
 
-All six run automatically. Layer 2 needs the `lowfat` binary (~3 MB release
+All seven run automatically. Layer 2 needs the `lowfat` binary (~3 MB release
 download, no Rust toolchain); without it BabyZilla stays fully functional
 minus that layer.
 

@@ -60,6 +60,19 @@ const CARRY_KINDS = new Set(["state", "decisions", "tool", "errors"]);
 // Among the promoted kinds, these two are the hot core a new session carries
 // in on its first prompt (trigger-free). tool/errors stay cold.
 const CARRY_CORE = new Set(["state", "decisions"]);
+
+// Vision auto-routing (v0.7.7): the main session model is usually text-only,
+// so image work must be delegated to the `vision` subagent (which reads the
+// image file itself). BabyZilla spots image intent on every prompt — attached
+// image files, concrete image paths in the text, or picture wording — verifies
+// the paths actually exist, then sends one synthetic note that tells the main
+// model to delegate with the exact paths. Without this the model gets a
+// "short note in place of the attachment" and starts guessing at pixels.
+const IMAGE_FILE_EXT = /\.(png|jpe?g|webp|gif|bmp|tiff?|heic|heif|avif)$/i;
+// Wording that implies pixels without a path in sight. Deliberately concrete;
+// "vision" alone must not trigger rhapsodic speeches about the routing feature.
+const VISION_INTENT_WORDS =
+  /\b(?:screenshots?|screencaps?|screen\s?grabs?|attached\s+(?:image|photo|picture|screenshot|diagram|mockup)|image\s+attached|photo\s+attached|the\s+(?:image|photo|picture|screenshot|mockup|diagram|figure|chart|render)|this\s+(?:image|photo|picture|screenshot|mockup|diagram|figure|chart|render)|look\s+at\s+(?:the\s+|this\s+)?(?:image|photo|picture|screenshot|mockup|diagram|figure|chart)|ui\s+mockups?|wireframes?|flow\s?charts?|what\s+does\s+the\s+(?:image|screenshot|mockup|diagram)|what\s+do\s+you\s+see)\b/i;
 // Compaction re-entrancy: sid → expiry ms. Two queued compaction events (or a
 // re-registered hook after a config reload) must not distill the same session
 // concurrently; a conservative TTL covers abnormal aborts.
@@ -109,6 +122,15 @@ const defaults = {
   // attach budget with cold modules, never exceeding it. Turn OFF to keep the
   // old behavior where only keyword matches from the library could attach.
   carryIn: false,
+  // vision auto-routing: when a prompt attaches images, names image paths, or
+  // contains picture wording, verify the paths and send one routing note that
+  // makes the main model delegate the visual work to `visionAgent`. Safe as a
+  // default: sessions without that agent profile only get a debug-log line,
+  // never a note.
+  visionRoute: true,
+  // agent profile that receives routed image tasks. Create it as
+  // ~/.config/opencode/agents/vision.md with a vision-capable model.
+  visionAgent: "vision",
   // below this many estimated transcript tokens, native compaction is fine.
   minRawTokens: 4000,
   // layer 2: rewrite shell commands through the `lowfat` binary before
@@ -487,6 +509,99 @@ function matchModules(idx, userText) {
   }
   scored.sort((x, y) => y.hits - x.hits || x.m.tokens - y.m.tokens);
   return scored.map((s) => s.m);
+}
+
+// ---------------------------------------------------------------------------
+// Vision routing
+// ---------------------------------------------------------------------------
+
+// Image references in the prompt text: shell-style tokens (quoted or not),
+// tilde-expanded, trailing punctuation stripped. Verified against the
+// filesystem below — a guessed path must never reach the spawn prompt.
+function imagePathsInText(text) {
+  const found = [];
+  for (const raw of String(text).split(/[\s"'`]+/)) {
+    let tok = raw.replace(/^[([{<]+/, "").replace(/[)\]>,.;:!?]+$/, "");
+    if (!tok || tok.length > 400) continue;
+    if (!IMAGE_FILE_EXT.test(tok)) continue;
+    let p = tok;
+    if (p.startsWith("~/") || p === "~") p = path.join(os.homedir(), p.slice(1));
+    if (!path.isAbsolute(p)) continue; // relative refs are ambiguous per cwd
+    found.push(p);
+  }
+  return found;
+}
+
+function imagePathsInFiles(files) {
+  const found = [];
+  for (const f of files ?? []) {
+    const uri = typeof f === "string" ? f : f?.uri;
+    if (!uri) continue;
+    try {
+      const u = new URL(uri);
+      if (u.protocol !== "file:") continue;
+      const p = decodeURIComponent(u.pathname);
+      // file URLs from macOS drag-and-drop are pre-encoded; IMAGE_FILE_EXT on
+      // the decoded name keeps "Screenshot 2026-10-25 at 13.43.25.png" warm.
+      if (IMAGE_FILE_EXT.test(p)) found.push(p);
+    } catch {}
+  }
+  return found;
+}
+
+// Returns { targets, intent }:
+//   targets — unique verified image paths (attachment URIs always count even
+//             when the workspace cannot stat them; text paths must exist).
+//   intent  — picture wording present but nothing verifiable to hand over.
+async function visionTargets(text, files) {
+  const waiting = [
+    ...imagePathsInFiles(files).map((p) => ({ p, verified: true })),
+    ...imagePathsInText(text).map((p) => ({ p, verified: null })),
+  ];
+  const seen = new Set();
+  const targets = [];
+  for (const { p, verified } of waiting) {
+    if (seen.has(p)) continue;
+    seen.add(p);
+    if (verified === true) { targets.push(p); continue; }
+    try { await fs.access(p); targets.push(p); } catch {}
+  }
+  const intent = targets.length === 0 && VISION_INTENT_WORDS.test(text);
+  return { targets, intent };
+}
+
+async function visionAgentAvailable(ctx, agentID) {
+  try {
+    const agents = await ctx.agent?.list?.();
+    if (!Array.isArray(agents) || !agents.length) return true; // unknown -> assume ok
+    const ids = new Set(agents.map((a) => a?.id ?? a?.name).filter(Boolean));
+    return ids.has(agentID);
+  } catch {
+    return true;
+  }
+}
+
+async function sendVisionRouteNote(ctx, sessionID, paths) {
+  if (typeof ctx.session?.synthetic !== "function") return false;
+  const list = paths.map((p) => `- ${p}`).join("\n");
+  const note =
+    `[babyzilla vision-route] This prompt involves image content the current session model cannot see ` +
+    `(text-only model; images are replaced by a placeholder note in its request). Delegate the visual work ` +
+    `to the vision subagent in your next step, passing these exact file path(s) in the subagent prompt so it ` +
+    `can read and describe the pixels itself:\n${list}\n` +
+    `Do not guess at image content from filenames or wording.`;
+  try {
+    await ctx.session.synthetic({ sessionID, text: note });
+    return true;
+  } catch (e) {
+    log("vision-route note failed:", e?.message ?? e);
+    return false;
+  }
+}
+
+// Prompts that already name the vision subagent need no router nudge.
+function explicitVisionDelegate(text) {
+  return /\bvision\b[^\n]{0,40}\bsubagent/i.test(text) || /\bsubagent\b[^\n]{0,40}\bvision\b/i.test(text);
 }
 
 // ---------------------------------------------------------------------------
@@ -914,6 +1029,22 @@ export default {
           }
           prompt.files ??= [];
           if (!Array.isArray(prompt.files)) return;
+          // Vision auto-routing (opt-out via visionRoute:false): before any
+          // module machinery — image prompts need the nudge even when the
+          // pack would bail. One synthetic note per prompt, never a loop.
+          if (opts.visionRoute !== false && !explicitVisionDelegate(text)) {
+            const { targets, intent } = await visionTargets(text, prompt.files);
+            if (targets.length) {
+              if (await visionAgentAvailable(ctx, opts.visionAgent)) {
+                const sent = await sendVisionRouteNote(ctx, sid, targets);
+                log(`vision-route: ${targets.length} path(s) -> ${opts.visionAgent} (note ${sent ? "sent" : "SKIPPED — no session.synthetic"})`);
+              } else {
+                log(`vision-route: image path(s) found but agent "${opts.visionAgent}" not configured — skipped`);
+              }
+            } else if (intent) {
+              log("vision-route: picture wording but no verifiable image path — no note");
+            }
+          }
           let projectDir = null;
           try {
             const info = await ctx.client.app.info();

@@ -96,6 +96,8 @@ once.)
 | `attachBudgetTokens` | `6000` | Total estimated-token budget for auto-attached modules per prompt. |
 | `library` | `true` | Promote carry kinds (state, decisions, tool, errors) to the cross-session project library. |
 | `carryIn` | `false` | Opt-in. On a session's first prompt, attach the project library's hot modules (state, decisions) trigger-free, labeled `[carry-in]`, once per session. |
+| `visionRoute` | `true` | Layer 0.5 — when a prompt involves image content (file attachments, concrete image paths, or screenshot wording), send a one-shot synthetic note telling the main model to delegate to the vision subagent with the exact readable paths. Text-only main models see a placeholder instead of the pixels, so routing has to happen before the request. Never routes when the prompt already names the delegate itself. Set `false` to disable. |
+| `visionAgent` | `"vision"` | Subagent ID the vision note delegates to. Must exist as a subagent profile (e.g. `~/.config/opencode/agents/vision.md` pinned to a vision-capable model); when the agent catalog is readable and the ID is absent, no note is sent. |
 | `minRawTokens` | `4000` | Below this, skip custom distillation and let native compaction run. |
 | `proactiveCompaction` | `true` | Layer 1c — ask OpenCode to compact when the context reaches `max(proactiveCompactMinTokens, proactiveCompactRatio × model context window)`. On 1M-token models OpenCode's own threshold is so high that it effectively never fires, so sessions grow unbounded. Set to `false` to let OpenCode decide. |
 | `proactiveCompactAtTurnBoundary` | `true` | Only request a proactive compaction when the request starts with a user message. Compacting mid-tool-loop replaces the working set the agent is still using. |

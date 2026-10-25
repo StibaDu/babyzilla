@@ -2,6 +2,29 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.8.0] — 2026-10-25
+
+### Added
+
+- **Vision auto-routing (Layer 0.5, `visionRoute` default on).** When a prompt
+  involves image content — file attachments, concrete image paths in the text,
+  or screenshot wording — the plugin sends a one-shot synthetic note before any
+  module machinery: `[babyzilla vision-route] … delegate the visual work to the
+  vision subagent`, carrying every verified readable path so the main model can
+  spawn the subagent with exact paths. Never fires twice per prompt, never when
+  the prompt already names the delegate (`vision subagent`),
+  never with unverifiable paths, and silently skips when the configured
+  `visionAgent` isn't in the agent catalog or the host lacks `session.synthetic`.
+  Rationale: text-only main models receive a placeholder note instead of image
+  pixels, so the route has to be established inside the prompt hook. Opt out
+  with `visionRoute: false`; retarget with `visionAgent`.
+
+### Fixed
+
+- Test-cleanup race: per-file temp roots are now removed in a node:test
+  `after()` hook instead of a module-level top-level `await`, which could fire
+  mid-test and delete a seed image while the vision-route tests were running.
+
 ## [0.7.6] — 2026-10-24
 
 ### Added

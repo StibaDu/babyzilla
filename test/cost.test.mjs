@@ -15,14 +15,14 @@ try {
 test("estimateCost uses input, cached and output rates", () => {
   const usage = { input: 1_000_000, cacheRead: 1_000_000, output: 1_000_000 };
   const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
-  close(estimateCost(usage, "deepseek-v4.1-flash"), 0.3 + 0.006 + 1.2);
+  close(estimateCost(usage, "deepseek-v4.1-flash"), 0.15 + 0.003 + 0.6);
   close(estimateCost(usage, "ollama-cloud/glm-5.2"), 1.4 + 0.26 + 4.4);
 });
 
 test("estimateCost accepts variants, providers and unknown names", () => {
   const usage = { input: 1_000_000, output: 0, cacheRead: 0 };
-  assert.equal(estimateCost(usage, "deepseek-v4.1-flash:1017"), 0.3);
-  assert.equal(estimateCost(usage, "ollama-cloud/deepseek-v4.1-flash"), 0.3);
+  assert.equal(estimateCost(usage, "deepseek-v4.1-flash:1017"), 0.15);
+  assert.equal(estimateCost(usage, "ollama-cloud/deepseek-v4.1-flash"), 0.15);
   assert.equal(estimateCost(usage, "some-model"), null);
 });
 

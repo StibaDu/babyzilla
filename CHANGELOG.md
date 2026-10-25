@@ -24,6 +24,23 @@ All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
   gracefully against the host catalog, and `catalogCompat()` flags unknown or
   vanished models both ways. CLI: `babyzilla models [--lanes|--json]`.
 
+### Fixed
+
+- Price table silently drifted from real billing. `PRICES` is now hydrated at
+  load from OpenCode's own catalog (`~/.cache/opencode/models.json`), so numbers
+  follow the metadata the host charges against instead of a hand-scraped page.
+  Corrected by measuring actual billed spend across ~7k requests: all DeepSeek
+  rows were 2x too high (v4.1-flash is $0.15/$0.003/$0.60), `mistral-large-4`
+  2x too low ($1.36/$0.14/$4.18), `minimax-m3.1-flash` had a 2x-too-high cache
+  rate ($0.015), and the nemotron rows invented cache rates (they bill at input).
+  Added rows for nemotron-3-ultra/super and qwen3.5:397b.
+- `babyzilla models --audit`: recovers the rate OpenCode actually charged per
+  model (single-scale fit against the table's ratio structure; a full 3-param
+  fit is collinear on this data) and flags drift at a 15% tolerance. Audit of
+  all recorded spend now reconciles at 1.00x. Audited from per-request rows
+  (`session_message`), not the `session` aggregate, whose token columns do not
+  reconcile with the cost it records.
+
 ## [0.8.1] — 2026-10-25
 
 ### Fixed

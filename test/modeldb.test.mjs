@@ -42,7 +42,7 @@ test("modeldb: prices delegate to cost.mjs PRICES with variant fallback", () => 
   assert.deepEqual(priceForId("glm-5.3-flash"), [0.15, 0.03, 0.5]);
   assert.deepEqual(priceForId("deepseek-v4.1-flash:1017"), priceForId("deepseek-v4.1-flash"));
   assert.deepEqual(priceForId("gemma4:31b"), priceForId("gemma4"));
-  assert.deepEqual(priceForId("minimax-m3.1-flash"), [0.15, 0.03, 0.6], "m3.1 must NOT inherit m3 pricing");
+  assert.deepEqual(priceForId("minimax-m3.1-flash"), [0.15, 0.015, 0.6], "m3.1 must NOT inherit m3 pricing");
   assert.equal(priceForId("beam"), null, "beam is free-with-plan, no per-token price");
   assert.equal(priceForId("totally-unknown-model"), null);
 });

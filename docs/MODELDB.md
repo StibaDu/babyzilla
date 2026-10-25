@@ -113,9 +113,33 @@ $0.07/$0.30 in cost.mjs) but **no longer on the cloud price index** (checked
    → ground truth for *which ids exist and their caps*.
 2. `curl -s "https://r.jina.ai/https://ollama.com/search?c=cloud"` → one page with
    per-model blurb, usage class, $in/$out, context size, badges.
-3. Add new ids to **both** `lib/modeldb.json` (facts) and `lib/cost.mjs` `PRICES`
-   (numbers), update `fetched` in the JSON meta, bump nothing else.
+3. Add new ids to `lib/modeldb.json` (facts). Numbers usually land automatically —
+   see below — so only add a `PRICES` row when the id is too new for the cache.
 4. Run `node --test test/modeldb.test.mjs` and `babyzilla models --lanes`.
+
+### Where the numbers actually come from
+
+The shipped `PRICES` table is a **fallback**. At load, `hydrateFromOpencodeModels()`
+overlays price, context, output limit, and vision/tools/thinking flags from the
+`ollama-cloud` block of **OpenCode's own catalog** (`~/.cache/opencode/models.json`)
+— the same metadata the host bills against. That is why `babyzilla models` prints
+`N model(s) hydrated from OpenCode's catalog`: those entries cannot drift from
+what you are charged. Ids missing from the cache (brand-new models) keep the
+shipped values and are listed by `catalogCompat()`.
+
+The cache itself can be a stale snapshot: on 2026-10-25 it still listed 7 retired
+ids and lacked 5 live ones. Use `/api/tags` to decide *existence*, the cache to
+decide *numbers and caps*.
+
+### Proving the table: `babyzilla models --audit`
+
+Recomputes the rate OpenCode *actually charged* per model from its per-request
+records and compares it with the table (`ratio`, 1.00 = agreement; tolerance 15%).
+This is the drift alarm — run it after a pricing change or a big spend.
+
+The 2026-10-25 run is why the table looks the way it does: it caught DeepSeek rows
+priced 2x too high, `mistral-large-4` 2x too low, and `minimax-m3.1-flash` with a
+2x-too-high cache rate. Marketing pages say "from $X"; only the bill is truth.
 
 Personal overrides (no upstream edit needed): `~/.config/babyzilla/modeldb.overrides.json`
 — a `{ "<id>": { patch... } }` object merged on top of the shipped entries at load.

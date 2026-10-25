@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { sessionCosts, totals, defaultDbPath, openDb, hasTable } from "../lib/cost.mjs";
+import { sessionCosts, totals, defaultDbPath, openDb, hasTable, auditPrices } from "../lib/cost.mjs";
 import { readPage, prunePages } from "../lib/pages.mjs";
 import { extractProbes, scorePack, missingFactsModule } from "../lib/eval.mjs";
 import { loadDB, explain as explainModels } from "../lib/modeldb.mjs";
@@ -445,6 +445,32 @@ export function verifyPack(p, home = os.homedir()) {
   return reports;
 }
 
+export function renderAudit(rows) {
+  const s = [];
+  s.push(`  ${c(BOLD)}price audit${c(RESET)} ${c(DIM)}(table vs. what the provider actually billed)${c(RESET)}`);
+  s.push("  " + c(DIM) + "─".repeat(20) + c(RESET));
+  if (!rows.length) return s.join("\n") + `\n  ${c(DIM)}no recorded spend yet${c(RESET)}\n`;
+  const bad = rows.filter((r) => r.status === "mismatch");
+  for (const r of rows) {
+    const mark = r.status === "ok" ? `${c(GREEN)}✓${c(RESET)}`
+      : r.status === "mismatch" ? `${c(YELLOW)}✗${c(RESET)}`
+      : `${c(DIM)}·${c(RESET)}`;
+    const ratio = r.ratio == null ? "—" : `${r.ratio.toFixed(2)}x`;
+    const rate = (v) => `$${v < 0.01 ? v.toFixed(3) : v.toFixed(2)}`;
+    const table = r.table ? `${rate(r.table.input)}/${rate(r.table.cached)}/${rate(r.table.output)}` : "—";
+    const billed = r.billed ? `${rate(r.billed.input)}/${rate(r.billed.cached)}/${rate(r.billed.output)}` : "—";
+    s.push(
+      `  ${mark} ${r.model.replace(/^[^/]+\//, "").padEnd(26)} ` +
+      `${c(DIM)}spent${c(RESET)} $${r.spent.toFixed(2).padStart(7)}  ` +
+      `${c(DIM)}table${c(RESET)} ${table.padEnd(22)} ${c(DIM)}billed${c(RESET)} ${billed.padEnd(22)} ${c(DIM)}${ratio}${c(RESET)}`,
+    );
+  }
+  s.push(bad.length
+    ? `\n  ${c(YELLOW)}${bad.length} model(s) drift${c(RESET)} ${c(DIM)}— prices are in/cached/out USD per 1M tokens${c(RESET)}`
+    : `\n  ${c(GREEN)}✓${c(RESET)} every model with recorded spend reconciles with its price row`);
+  return s.join("\n") + "\n";
+}
+
 export function renderVerify(target, root = packRoot()) {
   const packs = target
     ? [loadPack(path.join(sessionsRoot(root), target)) ?? (() => { throw new Error(`no pack for session ${target}`); })()]
@@ -757,6 +783,11 @@ function main() {
       }
       case "verify": out(renderVerify(rest[0] || undefined)); break;
       case "models": {
+        if (rest.includes("--audit")) {
+          const rows = auditPrices();
+          out(renderAudit(rows));
+          break;
+        }
         const db = loadDB({});
         out(rest.includes("--json")
           ? JSON.stringify(explainModels(db, { json: true }), null, 2) + "\n" + "\n"

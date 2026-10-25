@@ -24,7 +24,7 @@ async function seedImage(name) {
   return p;
 }
 
-function loadPlugin(options = {}, { agents, synthFails } = {}) {
+function loadPlugin(options = {}, { agents, synthFails, catalog } = {}) {
   const handlers = new Map();
   const syntheticCalls = [];
   return plugin
@@ -44,6 +44,9 @@ function loadPlugin(options = {}, { agents, synthFails } = {}) {
       client: { app: { info: async () => ({ directory: project }) } },
       ...(agents !== undefined
         ? { agent: { list: async () => agents } }
+        : {}),
+      ...(catalog !== undefined
+        ? { catalog: { model: { get: (p, i) => catalog[`${p}/${i}`] ?? null } } }
         : {}),
     })
     .then(() => ({ promptHook: handlers.get("prompt"), syntheticCalls }));
@@ -126,5 +129,58 @@ test("vision-route: session.synthetic missing (older host) -> no throw", async (
   const ev = { sessionID: "ses_v7", prompt: { text: `look at ${p}`, files: [] } };
   await promptHook(ev); // must not reject
   assert.ok(true, "bails silently when synthetic is unavailable");
+});
+test("vision-route: image-capable session model reads pixels itself — no note", async () => {
+  const p = await seedImage("self-vision.png");
+  // The user selected a vision-capable model (e.g. gemma4:31b) as the MAIN
+  // model. Delegating to a subagent would be noise — the model sees the image.
+  const { promptHook, syntheticCalls } = await loadPlugin({}, {
+    catalog: {
+      "ollama-cloud/gemma4:31b": {
+        capabilities: { input: ["text", "image"], tools: true },
+      },
+    },
+  });
+  const ev = {
+    sessionID: "ses_v8",
+    model: { providerID: "ollama-cloud", id: "gemma4:31b" },
+    prompt: { text: `look at ${p}`, files: [] },
+  };
+  await promptHook(ev);
+  assert.equal(syntheticCalls.length, 0, "capability-aware: no delegation note");
+});
+
+test("vision-route: text-only session model still routes to the vision agent", async () => {
+  const p = await seedImage("beam-text-only.png");
+  // beam declared text-only in the catalog: identity is known, so routing
+  // must NOT change — the nudge is what makes a text model get the pixels.
+  const { promptHook, syntheticCalls } = await loadPlugin({}, {
+    catalog: {
+      "ollama-cloud/beam": { capabilities: { input: ["text"], tools: true } },
+    },
+  });
+  const ev = {
+    sessionID: "ses_v9",
+    model: { providerID: "ollama-cloud", id: "beam" },
+    prompt: { text: `look at ${p}`, files: [] },
+  };
+  await promptHook(ev);
+  assert.equal(syntheticCalls.length, 1);
+  assert.ok(syntheticCalls[0].text.includes(p));
+});
+
+test("vision-route: unknown session model keeps the conservative route", async () => {
+  const p = await seedImage("unknown-model.png");
+  // No catalog entry, no capability info — suppress-on-guess is forbidden:
+  // a mistaken note is one harmless delegation; a mistaken suppression can
+  // leave a text-only model staring at a placeholder.
+  const { promptHook, syntheticCalls } = await loadPlugin({}, { catalog: {} });
+  const ev = {
+    sessionID: "ses_v10",
+    model: { providerID: "ollama-cloud", id: "mystery" },
+    prompt: { text: `look at ${p}`, files: [] },
+  };
+  await promptHook(ev);
+  assert.equal(syntheticCalls.length, 1);
 });
 after(() => fs.rm(root, { recursive: true, force: true }));

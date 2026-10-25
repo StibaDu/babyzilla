@@ -2,6 +2,21 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Capability-aware vision routing: when a prompt carries images, BabyZilla now
+  checks whether the user's *selected* session model accepts image input
+  (`ctx.catalog.model.get` → `capabilities.input` includes `image`). It does —
+  the model reads its own pixels and no delegation note is sent. It doesn't (or
+  the identity/shape is unknown) — the note to the `vision` subagent is sent
+  exactly as before. The user picks the main model; the router adapts.
+- `distillModel` now defaults to unpinned: set `distillModel: null` (the
+  default) and distillation runs on the model the user actually selected
+  (`event.model`), with the window taken from that model's limit. Pinning one
+  model explicitly remains supported for setups that want a fixed lane.
+
 ## [0.8.1] — 2026-10-25
 
 ### Fixed

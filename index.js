@@ -61,13 +61,17 @@ const CARRY_KINDS = new Set(["state", "decisions", "tool", "errors"]);
 // in on its first prompt (trigger-free). tool/errors stay cold.
 const CARRY_CORE = new Set(["state", "decisions"]);
 
-// Vision auto-routing (v0.7.7): the main session model is usually text-only,
-// so image work must be delegated to the `vision` subagent (which reads the
-// image file itself). BabyZilla spots image intent on every prompt — attached
-// image files, concrete image paths in the text, or picture wording — verifies
-// the paths actually exist, then sends one synthetic note that tells the main
-// model to delegate with the exact paths. Without this the model gets a
-// "short note in place of the attachment" and starts guessing at pixels.
+// Vision auto-routing (v0.7.7): historically the main session model was
+// assumed text-only, so image work was always delegated to the `vision`
+// subagent (which reads the image file itself). BabyZilla spots image intent
+// on every prompt — attached image files, concrete image paths in the text,
+// or picture wording — verifies the paths actually exist, then sends one
+// synthetic note that tells the main model to delegate with the exact paths.
+// Since v0.9.0 the session model's catalog entry is checked first: a model
+// that accepts image input reads the pixels itself and no note is sent.
+// Unknown identity/shape keeps the delegation route (conservative).
+// Without this the model gets a "short note in place of the attachment" and
+// starts guessing at pixels.
 const IMAGE_FILE_EXT = /\.(png|jpe?g|webp|gif|bmp|tiff?|heic|heif|avif)$/i;
 // Wording that implies pixels without a path in sight. Deliberately concrete;
 // "vision" alone must not trigger rhapsodic speeches about the routing feature.
@@ -124,9 +128,10 @@ const defaults = {
   carryIn: false,
   // vision auto-routing: when a prompt attaches images, names image paths, or
   // contains picture wording, verify the paths and send one routing note that
-  // makes the main model delegate the visual work to `visionAgent`. Safe as a
-  // default: sessions without that agent profile only get a debug-log line,
-  // never a note.
+  // makes the main model delegate the visual work to `visionAgent`. Skipped
+  // automatically when the session model's catalog entry confirms image
+  // input — the user's selected model decides. Safe as a default: sessions
+  // without that agent profile only get a debug-log line, never a note.
   visionRoute: true,
   // agent profile that receives routed image tasks. Create it as
   // ~/.config/opencode/agents/vision.md with a vision-capable model.
@@ -397,6 +402,37 @@ function modelWindow(ctx, model) {
   } catch {
     return 0;
   }
+}
+
+// Best-effort identity of the model the current prompt runs under. The
+// compaction event carries `event.model`; prompt events depend on the host,
+// so several carriers are probed. Absent identity -> null, and callers stay
+// conservative (treat the session model as text-only).
+function sessionModelIdentity(event) {
+  return (
+    normalizeModel(event?.model) ??
+    normalizeModel(event?.message?.model) ??
+    normalizeModel(event?.prompt?.model)
+  );
+}
+
+// Best-effort image-input check for a catalogued model. Deliberately
+// conservative: no catalog, unknown shape, or an ambiguous capability shape
+// all report false, so the vision-agent note is still sent when in doubt.
+// A false "false" costs one harmless delegation note; a false "true" would
+// leave a text-only model staring at a placeholder.
+function modelSeesImages(ctx, model) {
+  if (!model) return false;
+  try {
+    const rec = ctx?.catalog?.model?.get?.(model.providerID, model.id);
+    const caps = rec?.capabilities ?? rec;
+    const input = caps?.input ?? caps?.capabilities?.input;
+    if (Array.isArray(input)) {
+      return input.some((v) => /^image/.test(String(v).toLowerCase()));
+    }
+    if (caps?.attachment === true || rec?.attachment === true) return true;
+  } catch {}
+  return false;
 }
 
 // Route distillation text generation.
@@ -1042,7 +1078,14 @@ export default {
           if (opts.visionRoute !== false && !explicitVisionDelegate(text)) {
             const { targets, intent } = await visionTargets(text, prompt.files);
             if (targets.length) {
-              if (await visionAgentAvailable(ctx, opts.visionAgent)) {
+              // Capability check first: if the user's selected session model
+              // can read images itself, delegation would be noise. Only a
+              // confirmed image-capable catalog entry suppresses the note —
+              // unknown identity or shape keeps the old routing.
+              const current = sessionModelIdentity(event);
+              if (current && modelSeesImages(ctx, current)) {
+                log(`vision-route: session model ${current.providerID}/${current.id} accepts image input — reading pixels directly, no delegation note`);
+              } else if (await visionAgentAvailable(ctx, opts.visionAgent)) {
                 const sent = await sendVisionRouteNote(ctx, sid, targets);
                 log(`vision-route: ${targets.length} path(s) -> ${opts.visionAgent} (note ${sent ? "sent" : "SKIPPED — no session.synthetic"})`);
               } else {

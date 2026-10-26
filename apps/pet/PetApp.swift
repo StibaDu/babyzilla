@@ -166,10 +166,10 @@ enum Packs {
     /// 1300+ in the OpenPets catalog. Before this, a fresh install could not
     /// choose anything at all without knowing the CLI.
     static func installMenu(into menu: NSMenu, target: AnyObject, action: Selector,
-                            current: String?, more: Selector?) {
+                            current: String?, more: Selector?, l10n: L10n = L10n("en")) {
         let pets = available()
         let active = current ?? PetDefaults.pack
-        let petItem = NSMenuItem(title: "Pet", action: nil, keyEquivalent: "")
+        let petItem = NSMenuItem(title: l10n.t("Pet"), action: nil, keyEquivalent: "")
         let sub = NSMenu()
         for pet in pets {
             let item = NSMenuItem(title: pet.label, action: action, keyEquivalent: "")
@@ -180,7 +180,7 @@ enum Packs {
         }
         if !pets.isEmpty { sub.addItem(.separator()) }
         if let more {
-            let browse = NSMenuItem(title: "More pets…", action: more, keyEquivalent: "")
+            let browse = NSMenuItem(title: l10n.t("More pets…"), action: more, keyEquivalent: "")
             browse.target = target
             sub.addItem(browse)
         }
@@ -782,7 +782,9 @@ final class PetController: NSObject {
     private var pendingLines: [String] = []
     /// Everything the pet has put on screen since launch (and the tail of the
     /// event log before that), for the chat window.
-    private var chatLines: [ChatLine] = []
+    // internal, not private: the --set-language harness reads the last line to
+    // prove the pet answered in the language it was just given
+    var chatLines: [ChatLine] = []
     private var chatSeeded = false
     /// A thought is held separately: it must never displace something the pet is
     /// actually saying, and only the newest one is worth showing.
@@ -1606,7 +1608,10 @@ final class PetController: NSObject {
         persist()
     }
 
-    func showMenu(at point: NSPoint) {
+    /// Built fresh on every open, and separate from showing it: the harness can
+    /// print the menu without a click, which is the only way to check it on a
+    /// machine without accessibility permissions.
+    func buildMenu() -> NSMenu {
         let menu = NSMenu()
         let title = NSMenuItem(title: "BabyZilla", action: nil, keyEquivalent: "")
         title.isEnabled = false
@@ -1627,7 +1632,7 @@ final class PetController: NSObject {
         }
         menu.addItem(.separator())
         Packs.installMenu(into: menu, target: self, action: #selector(choosePack(_:)),
-                          current: config.pack, more: #selector(openPetBrowser))
+                          current: config.pack, more: #selector(openPetBrowser), l10n: l10n)
         let mute = NSMenuItem(title: l10n.t("Mute speech"), action: #selector(toggleMute), keyEquivalent: "")
         mute.target = self
         mute.state = config.muted ? .on : .off
@@ -1640,6 +1645,9 @@ final class PetController: NSObject {
             item.state = config.chattiness == level ? .on : .off
             menu.addItem(item)
         }
+        menu.addItem(LanguageMenu.item(l10n: l10n, target: self,
+                                       action: #selector(setLanguage(_:)),
+                                       current: config.language))
         menu.addItem(.separator())
         let chat = NSMenuItem(title: l10n.t(chatOpen ? "Close chat" : "Open chat…"),
                               action: #selector(toggleChatItem), keyEquivalent: "")
@@ -1649,7 +1657,11 @@ final class PetController: NSObject {
         gallery.target = self
         menu.addItem(gallery)
         menu.addItem(NSMenuItem(title: l10n.t("Quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        menu.popUp(positioning: nil, at: point, in: nil)
+        return menu
+    }
+
+    func showMenu(at point: NSPoint) {
+        buildMenu().popUp(positioning: nil, at: point, in: nil)
     }
 
     @objc private func toggleVisibility() {
@@ -1697,6 +1709,22 @@ final class PetController: NSObject {
                                l10n: l10n) { [weak self] id in
             self?.usePack(id) ?? false
         }
+    }
+
+    /// Switching language from the menu. The app owns config.json, so this is the
+    /// same write `babyzilla pet lang` does — and the plugin reads it per thought,
+    /// so nothing else has to be told.
+    @objc func setLanguage(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? String else { return }
+        guard id != (config.language ?? "en") else { return }
+        config.language = id
+        persist()
+        // The chat window is already on screen: it holds the old words until told.
+        chatView?.l10n = l10n
+        chatView?.needsDisplay = true
+        // A language switch is the one moment the pet answers as itself, in the
+        // language just picked — proof the setting reached it, not just the menu.
+        say(l10n.t("English, then."), hold: 2.5)
     }
 
     @objc private func setChattiness(_ item: NSMenuItem) {
@@ -1996,8 +2024,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             print("roots\t" + Packs.roots().map(\.path).joined(separator: ","))
             exit(0)
         }
+        // Menus cannot be captured (screen recording is not ours to ask for), so
+        // they are printed: titles, checkmarks, submenus, in the current language.
+        if CommandLine.arguments.contains("--menu") {
+            if let c = controller { Self.printMenu(c.buildMenu(), indent: "") }
+            let bar = NSMenu()
+            self.menuNeedsUpdate(bar)
+            Self.printMenu(bar, indent: "")
+            exit(0)
+        }
+        // Drive the real action from the real menu item: proof that picking a
+        // language writes config.json, not just that the line exists.
+        if let i = CommandLine.arguments.firstIndex(of: "--set-language"), i + 1 < CommandLine.arguments.count,
+           let c = controller {
+            let wanted = CommandLine.arguments[i + 1]
+            let title = LanguageMenu.item(l10n: c.l10n, target: c,
+                                          action: #selector(PetController.setLanguage(_:)),
+                                          current: c.config.language)
+            guard let item = title.submenu?.items.first(where: { ($0.representedObject as? String) == wanted }) else {
+                print("unknown language \(wanted)")
+                exit(2)
+            }
+            c.setLanguage(item)
+            print("language\t\(c.config.language ?? "en")")
+            print("config\t\(PetConfig.load(Paths.config).language ?? "(none)")")
+            print("said\t\(c.chatLines.last?.text ?? "(nothing)")")
+            exit(0)
+        }
         if let i = CommandLine.arguments.firstIndex(of: "--capture"), i + 1 < CommandLine.arguments.count {
             captureAndExit(CommandLine.arguments[i + 1], after: 2.0)
+        }
+    }
+
+    static func printMenu(_ menu: NSMenu, indent: String) {
+        for item in menu.items {
+            if item.isSeparatorItem { print("\(indent)---"); continue }
+            var line = indent + item.title
+            if item.submenu != nil { line += "  >" }
+            if item.state == .on { line += "  *" }
+            if !item.isEnabled { line += "  (disabled)" }
+            print(line)
+            if let sub = item.submenu { printMenu(sub, indent: indent + "  ") }
         }
     }
 
@@ -2115,9 +2182,12 @@ extension AppDelegate: NSMenuDelegate {
         mute.target = c
         mute.state = c.config.muted ? .on : .off
         menu.addItem(mute)
+        menu.addItem(LanguageMenu.item(l10n: l, target: c,
+                                       action: #selector(PetController.setLanguage(_:)),
+                                       current: c.config.language))
 
         Packs.installMenu(into: menu, target: c, action: #selector(PetController.choosePack(_:)),
-                          current: c.config.pack, more: #selector(PetController.openPetBrowser))
+                          current: c.config.pack, more: #selector(PetController.openPetBrowser), l10n: l)
 
         menu.addItem(.separator())
         let chat = NSMenuItem(title: l.t(c.chatOpen ? "Close chat" : "Open chat…"),

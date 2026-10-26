@@ -6,7 +6,7 @@
 // never come up blank, and a new string only needs adding to this table to be
 // translated.
 
-import Foundation
+import AppKit
 
 struct L10n {
     let id: String
@@ -42,6 +42,7 @@ struct L10n {
         "Mute speech": "Sprache stumm",
         "Size": "Größe",
         "Chattiness": "Gesprächigkeit",
+        "Language": "Sprache",
         "Open chat…": "Chat öffnen…",
         "Close chat": "Chat schließen",
         "Gallery…": "Galerie…",
@@ -52,6 +53,12 @@ struct L10n {
         "esc / click pet": "esc / Pet klicken",
         "nothing yet.": "noch nichts.",
         "nothing to do yet — babyzilla pet chat": "noch nichts — babyzilla pet chat",
+
+        // language names stay in their own language: that is how a person finds
+        // the one they read
+        "English": "English",
+        "Deutsch": "Deutsch",
+        "English, then.": "Deutsch, bitte.",
 
         // the pet's own canned lines
         "Hey!": "Hey!",
@@ -85,5 +92,29 @@ struct L10n {
 
     func installedNote(_ label: String) -> String {
         isGerman ? "\(label) installiert — nochmal wählen" : "\(label) installed — pick it again"
+    }
+}
+
+/// The language submenu. Both menus (the pet's own and the menu bar's) build it, so
+/// a new language is one entry in `ids` and one row in the table above.
+enum LanguageMenu {
+    /// In display order, with the names a person recognises without translating.
+    static let ids = ["en", "de"]
+
+    static func item(l10n: L10n, target: AnyObject, action: Selector,
+                     current: String?) -> NSMenuItem {
+        let active = current ?? "en"
+        let title = NSMenuItem(title: l10n.t("Language"), action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        for id in ids {
+            let item = NSMenuItem(title: l10n.t(id == "de" ? "Deutsch" : "English"),
+                                  action: action, keyEquivalent: "")
+            item.target = target
+            item.representedObject = id
+            item.state = active == id ? .on : .off
+            sub.addItem(item)
+        }
+        title.submenu = sub
+        return title
     }
 }

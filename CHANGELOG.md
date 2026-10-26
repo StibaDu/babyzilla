@@ -2,6 +2,23 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.33.1] — 2026-10-26
+
+### Added
+
+- **Choosing the language without a terminal.** Right-click the pet → **Sprache →
+  Deutsch** (or **Language → English**), and the same submenu in the menu bar. The
+  checkmark follows the active language, the choice is written to `config.json`, and
+  the pet answers in the language you just picked (`Deutsch, bitte.` / `English,
+  then.`) so the switch is visible rather than silent.
+- `BabyZillaPet --menu` prints both menus (titles, checkmarks, submenus) and
+  `--set-language <id>` drives the real menu action; the harnesses exist because a
+  menu cannot be screen-captured on a machine that has not granted screen recording.
+
+### Changed
+
+- `More pets…` in the Pet submenu is translated as well (`Mehr Pets…`).
+
 ## [0.33.0] — 2026-10-26
 
 ### Added

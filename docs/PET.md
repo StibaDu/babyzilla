@@ -354,6 +354,13 @@ without switching.
 Language is a separate axis from voice: the same dino, the same moods, the same
 honesty rules — only the words it was born into change.
 
+From the pet itself: **right-click → Sprache → Deutsch**, or the same submenu in the
+menu bar (the checkmark follows the active language). Picking one writes
+`config.json` and the pet answers in the language you just picked — `Deutsch, bitte.`
+going in, `English, then.` coming back — so the switch is visible, not just a setting.
+
+Or from a terminal:
+
 ```sh
 babyzilla pet lang de        # Deutsch
 babyzilla pet lang           # what it speaks now

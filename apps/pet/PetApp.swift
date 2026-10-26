@@ -366,7 +366,7 @@ final class BubbleView: NSView {
         }
     }
 
-    static func wrap(_ text: String, width: CGFloat) -> [String] {
+    static func wrap(_ text: String, width: CGFloat, maxLines: Int = 5) -> [String] {
         let perLine = max(8, Int(width / CGFloat(PixelFont.advance)))
         var out: [String] = []
         var line = ""
@@ -380,7 +380,6 @@ final class BubbleView: NSView {
             }
         }
         if !line.isEmpty { out.append(line) }
-        let maxLines = 5
         if out.count > maxLines {
             var kept = Array(out.prefix(maxLines))
             // Never cut a sentence silently: mark the truncation.
@@ -504,6 +503,182 @@ final class MarkWindow: NSPanel {
     }
 }
 
+// ── chat window ──────────────────────────────────────────────────────────────
+//
+// A bubble is an event: it appears, it fades, and if you looked away you missed
+// it. The chat is the same lines kept: scrollable, still there while you read,
+// and closed only when you say so. Same plate, same pixel font, same two inks —
+// it should read as the pet's own notebook, not as a chat app bolted on.
+
+struct ChatLine {
+    let text: String
+    let thought: Bool
+    let at: Date
+}
+
+final class ChatView: NSView {
+    var lines: [ChatLine] = []
+    /// Pixels scrolled back from the newest line. 0 = pinned to the bottom.
+    private var scrollBack: CGFloat = 0
+
+    static let width: CGFloat = 360
+    static let height: CGFloat = 320
+    static let padX: CGFloat = 12
+    static let padY: CGFloat = 12
+    /// The header is a line of this font plus air: guessing 15 points put the
+    /// first log line under the title.
+    static var headerH: CGFloat { CGFloat(PixelFont.glyphHeight) + 14 }
+    static let gap: CGFloat = 7
+    static let marker: CGFloat = 3
+    static var lineH: CGFloat { CGFloat(PixelFont.lineHeight) + 2 }
+    static var textX: CGFloat { padX + marker + 6 }
+    static var textW: CGFloat { width - textX - padX }
+
+    // the two inks the pet already uses: a thought is quiet, speech is bright
+    static let spokenInk = NSColor(calibratedRed: 0.90, green: 0.98, blue: 0.92, alpha: 1)
+    static let thoughtInk = NSColor(calibratedRed: 0.76, green: 0.82, blue: 0.94, alpha: 1)
+    static let spokenMark = NSColor(calibratedRed: 0.72, green: 0.94, blue: 0.78, alpha: 0.95)
+    static let thoughtMark = NSColor(calibratedRed: 0.60, green: 0.68, blue: 0.86, alpha: 0.92)
+
+    func setLines(_ next: [ChatLine]) {
+        let wasPinned = scrollBack <= 0.5
+        lines = next
+        if wasPinned { scrollBack = 0 }
+        needsDisplay = true
+    }
+
+    func append(_ line: ChatLine) {
+        let wasPinned = scrollBack <= 0.5
+        lines.append(line)
+        if lines.count > 200 { lines.removeFirst(lines.count - 200) }
+        // following the newest line unless the human scrolled back to read
+        if wasPinned { scrollBack = 0 } else { scrollBack += entryHeight(line) + Self.gap }
+        needsDisplay = true
+    }
+
+    private func wrapped(_ text: String) -> [String] {
+        BubbleView.wrap(text, width: Self.textW, maxLines: 40)
+    }
+
+    private func entryHeight(_ line: ChatLine) -> CGFloat {
+        CGFloat(wrapped(line.text).count) * Self.lineH
+    }
+
+    private var bodyRect: NSRect {
+        NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - Self.headerH))
+    }
+
+    private var contentHeight: CGFloat {
+        lines.reduce(0) { $0 + entryHeight($1) + Self.gap } + Self.padY * 2
+    }
+
+    private var maxScroll: CGFloat {
+        max(0, contentHeight - (bodyRect.height - Self.headerH))
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        scrollBack = min(maxScroll, max(0, scrollBack + event.scrollingDeltaY))
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        PixelFont.pixel = 1 / (window?.backingScaleFactor ?? 2)
+        let box = bounds.insetBy(dx: 1, dy: 1)
+        let path = NSBezierPath(roundedRect: box, xRadius: 4, yRadius: 4)
+        NSColor(calibratedRed: 0.06, green: 0.05, blue: 0.09, alpha: 0.96).setFill()
+        path.fill()
+        NSColor(calibratedRed: 0.60, green: 0.68, blue: 0.86, alpha: 0.85).setStroke()
+        path.lineWidth = 2
+        path.stroke()
+
+        // header: what this is, and how to leave it
+        let titleBaseline = bounds.maxY - Self.padY - CGFloat(PixelFont.glyphHeight)
+        PixelFont.draw("chat", at: NSPoint(x: Self.padX, y: titleBaseline), alpha: 0.9, color: Self.thoughtInk)
+        let hint = "esc / click pet"
+        PixelFont.draw(hint, at: NSPoint(x: bounds.width - Self.padX - PixelFont.width(hint), y: titleBaseline),
+                       alpha: 0.45, color: Self.thoughtInk)
+        let rule = NSBezierPath()
+        rule.move(to: NSPoint(x: Self.padX, y: bodyRect.maxY - 1))
+        rule.line(to: NSPoint(x: bounds.width - Self.padX, y: bodyRect.maxY - 1))
+        Self.thoughtMark.withAlphaComponent(0.35).setStroke()
+        rule.lineWidth = 1
+        rule.stroke()
+
+        if lines.isEmpty {
+            let y = Self.padY
+            PixelFont.draw("nothing yet.", at: NSPoint(x: Self.textX, y: y), alpha: 0.45, color: Self.thoughtInk)
+            return
+        }
+
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: bodyRect).addClip()
+
+        // newest at the bottom: a chat reads upward from where you are
+        var y = Self.padY - scrollBack
+        for entry in lines.reversed() {
+            let rows = wrapped(entry.text)
+            let height = CGFloat(rows.count) * Self.lineH
+            defer { y += height + Self.gap }
+            if y > bodyRect.maxY || y + height < 0 { continue }
+            let ink = entry.thought ? Self.thoughtInk : Self.spokenInk
+            let mark = entry.thought ? Self.thoughtMark : Self.spokenMark
+            mark.withAlphaComponent(0.85).setFill()
+            NSRect(x: Self.padX, y: y + 1, width: Self.marker, height: max(3, height - 3)).fill()
+            var cursor = y
+            for row in rows.reversed() {
+                PixelFont.draw(row, at: NSPoint(x: Self.textX, y: cursor), alpha: entry.thought ? 0.85 : 1, color: ink)
+                cursor += Self.lineH
+            }
+        }
+        NSGraphicsContext.restoreGraphicsState()
+
+        // Mask the cut where an older line runs under the header, so the log
+        // never looks like it is bleeding into the title.
+        if contentHeight > bodyRect.height - Self.headerH {
+            NSColor(calibratedRed: 0.06, green: 0.05, blue: 0.09, alpha: 0.96).setFill()
+            NSRect(x: 0, y: bodyRect.maxY - 6, width: bounds.width, height: 6).fill()
+        }
+
+        // a scrollbar that only exists when there is something behind you
+        if maxScroll > 0 {
+            let trackH = bodyRect.height - Self.headerH - Self.padY * 2
+            let visible = max(0.08, trackH / max(contentHeight, 1))
+            let barH = trackH * visible
+            let p = min(1, scrollBack / maxScroll)
+            let barY = Self.padY + (trackH - barH) * (1 - p)
+            Self.thoughtMark.withAlphaComponent(0.35).setFill()
+            NSRect(x: bounds.width - 5, y: barY, width: 2, height: barH).fill()
+        }
+    }
+}
+
+final class ChatWindow: NSPanel {
+    var onClose: (() -> Void)?
+    var onResize: (() -> Void)?
+
+    init() {
+        super.init(contentRect: NSRect(x: 0, y: 0, width: ChatView.width, height: ChatView.height),
+                   styleMask: [.borderless, .nonactivatingPanel],
+                   backing: .buffered, defer: false)
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = false
+        level = .floating
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        isFloatingPanel = true
+        hidesOnDeactivate = false
+        // It can take focus, so Esc has somewhere to land. Clicking it must not
+        // raise the whole app over whatever the human is doing.
+        becomesKeyOnlyIfNeeded = true
+    }
+
+    override var canBecomeKey: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { onClose?() } else { super.keyDown(with: event) }
+    }
+}
+
 // ── controller ───────────────────────────────────────────────────────────────
 
 final class PetController: NSObject {
@@ -519,6 +694,9 @@ final class PetController: NSObject {
     var bubble: BubbleWindow!
     var markWindow: MarkWindow!
     var markView: MarkView!
+    var chatWindow: ChatWindow?
+    var chatView: ChatView?
+    private(set) var chatOpen = false
     var view: PetView!
     var bubbleView: BubbleView!
 
@@ -589,6 +767,10 @@ final class PetController: NSObject {
     private var lastInteract = Date()
     private var bubbleUntil = Date.distantPast
     private var pendingLines: [String] = []
+    /// Everything the pet has put on screen since launch (and the tail of the
+    /// event log before that), for the chat window.
+    private var chatLines: [ChatLine] = []
+    private var chatSeeded = false
     /// A thought is held separately: it must never displace something the pet is
     /// actually saying, and only the newest one is worth showing.
     private var pendingThought: String?
@@ -730,6 +912,10 @@ final class PetController: NSObject {
         window?.close()
         bubble?.close()
         markWindow?.close()
+        chatWindow?.close()
+        chatWindow = nil
+        chatView = nil
+        chatOpen = false
     }
 
     private func start() {
@@ -748,6 +934,7 @@ final class PetController: NSObject {
             window.orderFrontRegardless()
             bubble.orderOut(nil)
             bubbleVisible = false
+            hideChat()
             pendingLines.removeAll()
             pendingThought = nil
             lastEventAt = .distantPast
@@ -1103,6 +1290,8 @@ final class PetController: NSObject {
         renderScaleX = sx * (facingRight ? 1 : -1)
         renderScaleY = sy
 
+        if chatOpen { layoutChat() }
+
         // bubble follows the head, sized from the text it actually holds
         let bubbleW: CGFloat = max(200, side * 1.35)
         let bubbleH = max(40, BubbleView.measure(bubbleView.text, width: bubbleW).height)
@@ -1146,8 +1335,96 @@ final class PetController: NSObject {
         applySprite()
     }
 
+    // ── chat ────────────────────────────────────────────────────────────────
+    /// Open or close the persistent log. A bubble is an event; this is the same
+    /// lines kept, so a thought that vanished in two seconds can still be read.
+    func toggleChat() { chatOpen ? hideChat() : showChat() }
+
+    func showChat() {
+        if !chatSeeded { chatLines = seedChatFromEvents(); chatSeeded = true }
+        if chatWindow == nil {
+            let win = ChatWindow()
+            let view = ChatView(frame: NSRect(x: 0, y: 0, width: ChatView.width, height: ChatView.height))
+            view.lines = chatLines
+            win.contentView = view
+            win.onClose = { [weak self] in self?.hideChat() }
+            chatView = view
+            chatWindow = win
+        } else {
+            chatView?.setLines(chatLines)
+        }
+        layoutChat()
+        chatWindow?.orderFrontRegardless()
+        chatOpen = true
+        acknowledgeChat()
+    }
+
+    func hideChat() {
+        guard chatOpen else { return }
+        chatWindow?.orderOut(nil)
+        chatOpen = false
+        acknowledgeChat()
+    }
+
+    /// Observation, not faith: `babyzilla pet chat` can tell "no pet running"
+    /// from "the window is up" without a screen.
+    private func acknowledgeChat() {
+        let ack: [String: Any] = ["open": chatOpen, "lines": chatLines.count,
+                                  "t": Date().timeIntervalSince1970 * 1000]
+        if let data = try? JSONSerialization.data(withJSONObject: ack) {
+            try? data.write(to: Paths.state.appendingPathComponent("last-chat.json"))
+        }
+    }
+
+    /// Every line the pet actually put on screen goes in the log — including the
+    /// ones that replaced an earlier thought before it could be read.
+    private func appendChatLine(_ text: String, thought: Bool) {
+        let line = ChatLine(text: text, thought: thought, at: Date())
+        chatLines.append(line)
+        if chatLines.count > 200 { chatLines.removeFirst(chatLines.count - 200) }
+        chatView?.append(line)
+    }
+
+    /// What was said before the app started is still in the event log; the chat
+    /// opens with the last of it instead of a blank page.
+    private func seedChatFromEvents() -> [ChatLine] {
+        guard let fh = try? FileHandle(forReadingFrom: Paths.events) else { return [] }
+        defer { try? fh.close() }
+        guard let size = try? fh.seekToEnd() else { return [] }
+        let tail: UInt64 = 256 * 1024
+        try? fh.seek(toOffset: size > tail ? size - tail : 0)
+        guard let data = try? fh.readToEnd(), let text = String(data: data, encoding: .utf8) else { return [] }
+        var out: [ChatLine] = []
+        for raw in text.split(separator: "\n") {
+            guard let d = raw.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { continue }
+            let kind = obj["kind"] as? String ?? ""
+            guard kind == "say" || kind == "think", let body = obj["text"] as? String, !body.isEmpty else { continue }
+            let t = (obj["t"] as? Double) ?? 0
+            out.append(ChatLine(text: body, thought: kind == "think", at: Date(timeIntervalSince1970: t / 1000)))
+        }
+        return Array(out.suffix(40))
+    }
+
+    /// Beside the pet, never on top of the bubble: right if there is room, else
+    /// left, always clamped to the screen.
+    private func layoutChat() {
+        guard let win = chatWindow else { return }
+        let side = CGFloat(spriteSize * config.scale)
+        let vf = screenForPet().visibleFrame
+        let w = ChatView.width, h = ChatView.height
+        var x = x + side / 2 + 14
+        if x + w > vf.maxX - 8 { x = x - side - w - 28 }
+        x = min(max(vf.minX + 8, x), vf.maxX - w - 8)
+        let y = min(max(vf.minY + 8, floorY - 8), vf.maxY - h - 8)
+        let frame = NSRect(x: x, y: y, width: w, height: h)
+        guard win.frame != frame else { return }
+        win.setFrame(frame, display: true)
+    }
+
     func say(_ text: String, hold: TimeInterval = 4.5) {
         guard !config.muted else { return }
+        appendChatLine(text, thought: false)
         // Real speech outranks a thought: fade whatever it was muttering.
         if bubbleVisible, bubbleView.thought { bubbleUntil = Date.distantPast }
         let limit: TimeInterval = config.chattiness == "quiet" ? 900 : config.chattiness == "chatty" ? 2 : 8
@@ -1166,6 +1443,7 @@ final class PetController: NSObject {
     /// sentence someone is reading.
     func think(_ text: String) {
         guard !config.muted, !text.isEmpty else { return }
+        appendChatLine(text, thought: true)
         // never while the pet is mid-sentence, never the same line twice
         if bubbleVisible, !bubbleView.thought { return }
         if bubbleVisible, bubbleView.text == text { return }
@@ -1241,10 +1519,19 @@ final class PetController: NSObject {
         trace(rec)
         // Observation, not faith: the CLI reports what the pet actually displayed,
         // so "nothing happened" can be diagnosed without screen access.
+        // Reading time, not a glance: a thought used to vanish in 1.8s, which was
+        // fast enough to miss while your eyes were in the editor. The cap keeps
+        // one very long line from camping out on the screen.
+        let perChar: Double = thought ? 0.07 : 0.08
+        let floor: Double = thought ? 3.8 : 4.0
+        let cap: Double = thought ? 11 : 16
+        let hold = min(cap, max(floor, Double(text.count) * perChar))
+
         let ack: [String: Any] = [
             "kind": thought ? "think" : "say",
             "text": text,
             "thought": thought,
+            "hold": hold,
             "t": Date().timeIntervalSince1970 * 1000,
         ]
         if let data = try? JSONSerialization.data(withJSONObject: ack) {
@@ -1256,10 +1543,7 @@ final class PetController: NSObject {
         bubbleView.needsDisplay = true
         bubbleVisible = true
         bubble.orderFrontRegardless()
-        // A thought is a glance, not a reading matter.
-        let perChar: Double = thought ? 0.045 : 0.055
-        let floor: Double = thought ? 1.8 : 2.6
-        bubbleUntil = Date().addingTimeInterval(max(floor, Double(text.count) * perChar))
+        bubbleUntil = Date().addingTimeInterval(hold)
     }
 
     // ── mouse ────────────────────────────────────────────────────────────────
@@ -1288,9 +1572,10 @@ final class PetController: NSObject {
     func dragEnded(_ event: NSEvent) {
         dragging = false
         if !dragMoved {
-            // click = poke
+            // A click is the pet's own button: it pokes back and opens the log,
+            // because a bubble that faded before you looked is gone for good.
             setExpression("poke", hold: 1.0)
-            say(pick(["That tickles.", "Boop.", "I felt that."]), hold: 2.0)
+            toggleChat()
             lastInteract = Date()
             return
         }
@@ -1338,6 +1623,10 @@ final class PetController: NSObject {
             menu.addItem(item)
         }
         menu.addItem(.separator())
+        let chat = NSMenuItem(title: chatOpen ? "Close chat" : "Open chat…",
+                              action: #selector(toggleChatItem), keyEquivalent: "")
+        chat.target = self
+        menu.addItem(chat)
         let gallery = NSMenuItem(title: "Gallery…", action: #selector(openGallery), keyEquivalent: "")
         gallery.target = self
         menu.addItem(gallery)
@@ -1378,6 +1667,8 @@ final class PetController: NSObject {
         config.chattiness = (item.representedObject as? String) ?? "normal"
         persist()
     }
+
+    @objc func toggleChatItem() { toggleChat() }
 
     @objc func openGallery() {
         let gallery = Paths.state.appendingPathComponent("gallery.html")
@@ -1462,6 +1753,8 @@ final class PetController: NSObject {
         case "mark":
             // null clears it: the human decided something
             setMark((ev["mark"] as? String).flatMap(PetMark.init(rawValue:)))
+        case "chat":
+            if (ev["on"] as? Bool) ?? true { showChat() } else { hideChat() }
         case "ping":
             setExpression("wave", hold: 1.2)
         default:
@@ -1507,11 +1800,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func captureAndExit(_ path: String, after delay: TimeInterval) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, let c = self.controller,
-                  let pet: PetPanel = c.window, let bubble: BubbleWindow = c.bubble else { exit(1) }
-            let petRect = pet.frame
-            let bubbleRect = bubble.frame
-            let union = petRect.union(bubbleRect)
+            guard let self, let c = self.controller, let pet: PetPanel = c.window else { exit(1) }
+            // Every window that is actually up, drawn into one bitmap: the pet, the
+            // bubble, and the chat log. A screenshot needs a screen permission this
+            // setup does not have; drawing the views does not.
+            var panels: [(NSRect, NSView)] = []
+            if let v = pet.contentView { panels.append((pet.frame, v)) }
+            if let b = c.bubble, b.isVisible, let v = b.contentView { panels.append((b.frame, v)) }
+            if c.chatOpen, let chat = c.chatWindow, let v = chat.contentView { panels.append((chat.frame, v)) }
+            let union = panels.map(\.0).reduce(NSRect.zero) { $0.union($1) }
             let W = union.width + 20, H = union.height + 20
             let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(W), pixelsHigh: Int(H),
                                        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -1521,24 +1818,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
             NSColor(calibratedRed: 0.10, green: 0.11, blue: 0.14, alpha: 1).setFill()
             NSRect(x: 0, y: 0, width: W, height: H).fill()
-            if let v = pet.contentView {
-                let r = NSRect(x: petRect.minX - union.minX + 10, y: petRect.minY - union.minY + 10, width: petRect.width, height: petRect.height)
-                NSGraphicsContext.saveGraphicsState()
-                let t = NSAffineTransform(); t.translateX(by: r.minX, yBy: r.minY); t.concat()
-                v.draw(v.bounds)
-                NSGraphicsContext.restoreGraphicsState()
-            }
-            if bubble.isVisible, let bv = bubble.contentView {
+            for (rect, v) in panels {
                 NSGraphicsContext.saveGraphicsState()
                 let t = NSAffineTransform()
-                t.translateX(by: bubbleRect.minX - union.minX + 10, yBy: bubbleRect.minY - union.minY + 10)
+                t.translateX(by: rect.minX - union.minX + 10, yBy: rect.minY - union.minY + 10)
                 t.concat()
-                bv.draw(bv.bounds)
+                v.draw(v.bounds)
                 NSGraphicsContext.restoreGraphicsState()
             }
             NSGraphicsContext.restoreGraphicsState()
             try? rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: path))
-            print("captured \(path) window=\(pet.frame.size) view=\(pet.contentView?.frame.size ?? .zero)")
+            print("captured \(path) window=\(pet.frame.size) panels=\(panels.count) chat=\(c.chatOpen)")
             exit(0)
         }
     }
@@ -1548,6 +1838,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startPet()
         installStatusItem()
         controller?.onVisibilityChange = { [weak self] in self?.refreshStatusItem() }
+        // Headless verification of the chat: open it like a click would.
+        if CommandLine.arguments.contains("--chat") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { self.controller?.showChat() }
+        }
         // A pet turned off from the menu bar stays off across logins: the login
         // item runs this binary, so it is the process that has to remember.
         if controller?.hidden == true { refreshStatusItem() }
@@ -1746,6 +2040,10 @@ extension AppDelegate: NSMenuDelegate {
         Packs.installMenu(into: menu, target: c, action: #selector(PetController.choosePack(_:)), current: c.config.pack)
 
         menu.addItem(.separator())
+        let chat = NSMenuItem(title: c.chatOpen ? "Close chat" : "Open chat…",
+                              action: #selector(PetController.toggleChatItem), keyEquivalent: "")
+        chat.target = c
+        menu.addItem(chat)
         let gallery = NSMenuItem(title: "Gallery…", action: #selector(PetController.openGallery), keyEquivalent: "")
         gallery.target = c
         menu.addItem(gallery)

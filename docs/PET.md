@@ -320,6 +320,33 @@ A pet's voice follows the active pack, so `babyzilla pet use doubao` changes bot
 body and the way it talks. `babyzilla pet think "…" --voice claude` previews one
 without switching.
 
+### The chat: what the bubble said, kept
+
+A bubble is an event and fades on purpose — the pet is not supposed to become a
+second window on your desk. But 1.8 seconds is not a reading time, and a thought
+that arrives while you are in the editor is gone before you look up.
+
+So the pet keeps its own log:
+
+- **Click the pet** to open it, click again to close (or `Esc` while it has focus,
+  or **Open chat…** in both menus).
+- It is the same lines the bubbles showed — dim blue for thoughts, bright for
+  speech, newest at the bottom, scroll wheel for the rest.
+- It keeps **every line it was asked to say**, including the ones a bubble dropped
+  because another bubble was up, so nothing is lost to timing.
+- Opening it seeds from the last 40 lines in `events.jsonl`, so a restart does not
+  start from a blank page.
+- It follows the pet: walk away and it stays beside you.
+
+```sh
+babyzilla pet chat            # open it from the shell (or: pet chat --close)
+```
+
+Bubbles themselves got a longer life in the same pass: a thought now stays
+`max(3.8s, 70ms per character)` up to 11s (a line used to vanish in 1.8s), and a
+thought already on screen is no longer cut off by the next one — the newest waits
+its turn instead.
+
 ### Mood
 
 A pet is allowed an opinion. It is not allowed a fantasy: the **content** is always

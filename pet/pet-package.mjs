@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 
 import { decodePng } from "./png.mjs";
 import { houseVoice, VOICES } from "../lib/pet-voice.mjs";
+import { tool } from "../lib/tool.mjs";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -77,7 +78,7 @@ function toPng(sheet, workDir) {
   if (/\.png$/i.test(sheet)) return sheet;
   const png = path.join(workDir, `sheet-${process.pid}.png`);
   try {
-    execFileSync("/usr/bin/sips", ["-s", "format", "png", sheet, "--out", png], { stdio: "ignore" });
+    execFileSync(tool("sips"), ["-s", "format", "png", sheet, "--out", png], { stdio: "ignore" });
   } catch {
     throw new Error(`cannot read ${path.basename(sheet)} — the package needs a webp or PNG atlas`);
   }
@@ -123,10 +124,10 @@ export async function download(url, dest) {
 export function unzip(archive, dest) {
   fs.mkdirSync(dest, { recursive: true });
   try {
-    execFileSync("/usr/bin/unzip", ["-o", "-q", archive, "-d", dest], { stdio: "ignore" });
+    execFileSync(tool("unzip"), ["-o", "-q", archive, "-d", dest], { stdio: "ignore" });
   } catch {
     // unzip refuses some archives ditto reads happily; try the system copy tool
-    execFileSync("/usr/bin/ditto", ["-x", "-k", archive, dest], { stdio: "ignore" });
+    execFileSync(tool("ditto"), ["-x", "-k", archive, dest], { stdio: "ignore" });
   }
 }
 
@@ -225,7 +226,7 @@ export async function installPetSource(input, opts = {}) {
   try {
     let dir = String(input).replace(/^~/, process.env.HOME ?? "~");
     if (/^(https?:\/\/|git@)/.test(dir) && !/\.zip$/i.test(dir)) {
-      execFileSync("/usr/bin/git", ["clone", "--depth", "1", "-q", dir, path.join(temp, "repo")], { stdio: "ignore" });
+      execFileSync(tool("git"), ["clone", "--depth", "1", "-q", dir, path.join(temp, "repo")], { stdio: "ignore" });
       dir = path.join(temp, "repo");
     } else if (/^https?:\/\//i.test(dir) || /\.zip$/i.test(dir)) {
       const file = path.join(temp, "pet.zip");

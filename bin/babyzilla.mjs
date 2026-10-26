@@ -30,6 +30,7 @@ import { MARKS, readMark, writeMark } from "../lib/pet-mark.mjs";
 import { VOICES, VOICE_IDS, resolveVoice } from "../lib/pet-voice.mjs";
 import { catalog as petCatalog, pickPets, findPet, isRemoteSource } from "../lib/pet-catalog.mjs";
 import { installPetSource } from "../pet/pet-package.mjs";
+import { tool } from "../lib/tool.mjs";
 import { EXPRESSIONS, byId as expressionById } from "../pet/expressions.mjs";
 import {
   renderStatus, runVerify as runVerifyBench, runReplayBench, verifyPlan, resolveVerify, runNoise,
@@ -826,7 +827,7 @@ function petRunning() {
   const pids = new Set();
   for (const pattern of ["BabyZillaPet", "bzpet"]) {
     try {
-      const out = execFileSync("/usr/bin/pgrep", ["-f", pattern], { encoding: "utf8" });
+      const out = execFileSync(tool("pgrep"), ["-f", pattern], { encoding: "utf8" });
       for (const line of out.trim().split("\n")) if (line) pids.add(line);
     } catch (e) {
       // pgrep exits 1 when nothing matches, which is the normal case. Anything
@@ -847,7 +848,7 @@ function petPidAlive() {
   try {
     const pid = Number(fs.readFileSync(path.join(petStateDir(), "pet.pid"), "utf8").trim());
     if (!Number.isInteger(pid) || pid <= 1) return null;
-    const cmd = execFileSync("/usr/bin/ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" }).trim();
+    const cmd = execFileSync(tool("ps"), ["-p", String(pid), "-o", "command="], { encoding: "utf8" }).trim();
     return /BabyZillaPet|bzpet/.test(cmd) ? pid : null;
   } catch { return null; }
 }
@@ -913,7 +914,7 @@ function petStart() {
     const pid = petPidAlive() ?? (petRunning()[0] ? Number(petRunning()[0]) : null);
     if (pid) return pid;
     if (failed) return null;
-    execFileSync("/bin/sleep", ["0.15"]);
+    execFileSync(tool("sleep"), ["0.15"]);
   }
   return null;
 }
@@ -1425,6 +1426,7 @@ function main() {
   mark [done|question|error|none]                the status badge (no arg: show it)
   emit <id> [--hold 2] [--say "text"]            make it react right now
   think "text" [--voice <id>] | say "text"      a thought (quiet bubble) or a spoken line
+  chat [--close]                                 open the chat log (what it said, kept)
   gallery                                        open the sprite field guide
 
 A pack is a second look built from a sprite sheet; see docs/PET.md.
@@ -1576,6 +1578,24 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
           })();
           return;
         }
+        if (sub === "chat") {
+          const on = !rest.includes("--close");
+          petEmit({ kind: "chat", on });
+          // the app writes last-chat.json when the window is actually up
+          const ackFile = path.join(petStateDir(), "last-chat.json");
+          let ack = null;
+          for (const deadline = Date.now() + 1400; Date.now() < deadline;) {
+            try {
+              const got = JSON.parse(fs.readFileSync(ackFile, "utf8"));
+              if (got?.open === on) { ack = got; break; }
+            } catch { /* not written yet */ }
+            try { execFileSync(tool("sleep"), ["0.1"]); } catch { /* keep polling */ }
+          }
+          out(ack
+            ? `chat ${on ? "open" : "closed"} — ${ack.lines} line${ack.lines === 1 ? "" : "s"} held\n`
+            : `chat ${on ? "open" : "closed"} — no pet answered (is it running?)\n`);
+          return;
+        }
         if (sub === "think" || sub === "say") {
           const text = rest.slice(rest.indexOf(sub) + 1).filter((a) => !a.startsWith("--")).join(" ").trim();
           if (!text) { out(`usage: babyzilla pet ${sub} "text"\n`); process.exitCode = 2; return; }
@@ -1605,11 +1625,14 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
               const got = JSON.parse(fs.readFileSync(ackFile, "utf8"));
               if (got?.text === line) { ack = got; break; }
             } catch { /* not written yet */ }
-            try { execFileSync("/bin/sleep", ["0.1"]); } catch { /* keep polling */ }
+            try { execFileSync(tool("sleep"), ["0.1"]); } catch { /* keep polling */ }
           }
-          if (ack) out(`  ${c(GREEN)}shown${c(RESET)} at ${new Date(ack.t).toLocaleTimeString()} (${ack.thought ? "thought" : "speech"})\n`);
+          if (ack) {
+            const dwell = typeof ack.hold === "number" ? ` for ${ack.hold.toFixed(1)}s` : "";
+            out(`  ${c(GREEN)}shown${c(RESET)} at ${new Date(ack.t).toLocaleTimeString()}${dwell} (${ack.thought ? "thought" : "speech"})\n`);
+          }
           else if (!petPidAlive()) out(`  ${c(YELLOW)}not running${c(RESET)} — babyzilla pet start\n`);
-          else out(`  ${c(YELLOW)}queued${c(RESET)} — another bubble is up; this appears when it clears\n`);
+          else out(`  ${c(YELLOW)}not shown yet${c(RESET)} — another bubble is up; it is in the chat log (babyzilla pet chat)\n`);
           return;
         }
         if (sub === "mark") {
@@ -1638,7 +1661,7 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
               const got = JSON.parse(fs.readFileSync(ackFile, "utf8"));
               if ((got?.mark ?? null) === kind) { ack = got; break; }
             } catch { /* not written yet */ }
-            try { execFileSync("/bin/sleep", ["0.1"]); } catch { /* keep polling */ }
+            try { execFileSync(tool("sleep"), ["0.1"]); } catch { /* keep polling */ }
           }
           if (ack) out(`  ${c(GREEN)}shown${c(RESET)} at ${new Date(ack.t).toLocaleTimeString()}${ack.shown ? "" : " (pet is hidden)"}\n`);
           else if (!petPidAlive()) out(`  ${c(YELLOW)}not running${c(RESET)} — babyzilla pet start\n`);
@@ -1813,7 +1836,7 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
         if (sub === "gallery") {
           const file = path.join(petStateDir(), "gallery.html");
           if (!fs.existsSync(file)) { out("no gallery installed — run: babyzilla pet install\n"); process.exitCode = 1; return; }
-          execFileSync("/usr/bin/open", [file]);
+          execFileSync(tool("open"), [file]);
           out(`opened ${file}\n`);
           return;
         }

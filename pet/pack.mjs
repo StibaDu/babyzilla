@@ -18,6 +18,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { decodePng, encodePng } from "./png.mjs";
+import { tool } from "../lib/tool.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
@@ -66,7 +67,7 @@ function loadSheet(file) {
   if (/\.png$/i.test(file)) return decodePng(fs.readFileSync(file));
   const tmp = path.join(os.tmpdir(), `bz-pack-${process.pid}.png`);
   try {
-    execFileSync("/usr/bin/sips", ["-s", "format", "png", file, "--out", tmp], { stdio: "ignore" });
+    execFileSync(tool("sips"), ["-s", "format", "png", file, "--out", tmp], { stdio: "ignore" });
   } catch {
     console.error(`cannot read ${file}: pass a PNG, or install macOS sips for webp sheets`);
     process.exit(1);

@@ -2,6 +2,36 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.31.0] — 2026-10-26
+
+### Added
+
+- **A chat window: the bubble's lines, kept.** Click the pet to open it (click
+  again, `Esc`, or the menu to close), scroll back through what it said, and watch
+  new lines arrive. Thoughts are dim blue, speech is bright, newest at the bottom.
+  It opens with the last 40 lines from `events.jsonl` instead of a blank page, and
+  it keeps **every line it was asked to say** — including the ones a bubble dropped
+  because another was already up. `babyzilla pet chat [--close]` does it from the
+  shell, and the app writes `last-chat.json` so the CLI can prove the window is up.
+
+### Changed
+
+- **Bubbles stay long enough to read.** A thought held 1.8s minimum; it now holds
+  `max(3.8s, 70ms/char)` up to 11s, and speech `max(4.0s, 80ms/char)` up to 16s.
+- **A thought no longer cuts off the thought on screen.** The newest line waits its
+  turn (one queued thought, latest wins), which is what made the bubble read as a
+  flicker even though the pet was talking steadily.
+- `babyzilla pet think`/`say` print how long the line will stay on screen (`shown at
+  1:34:23 PM for 4.3s`).
+
+### Fixed
+
+- **`ps`/`kill` were looked up in `/usr/bin`, which no longer has them** (macOS 26+
+  keeps both in `/bin`). `petPidAlive()` therefore always answered "no", so
+  `pet status` could claim the pet was not running while it was, and a queued
+  bubble was reported as "not running". All system tools are now resolved once at
+  runtime (`lib/tool.mjs`) instead of hardcoded.
+
 ## [0.30.1] — 2026-10-26
 
 ### Fixed

@@ -144,7 +144,8 @@ tool, compaction and error events. No sockets, no network, no daemon: if the pet
 is closed the plugin writes a few bytes. Turn it off with `"pet": false`.
 
 It also **talks about you**: one line per step, reduced locally from the model's
-reasoning and aimed at its human. Each pet has its own voice — the dino is a caveman
+reasoning and aimed at its human. Click the pet to open its **chat log** — the same
+lines kept, scrollable, closing only when you say so. Each pet has its own voice — the dino is a caveman
 ("Human keep ask for bigger pet"), the anime packs are not — and only the caveman
 rewrites words. Set `"petThoughts": "verbatim"` for the model's own sentences
 instead, or `false` to turn it off. Try it with

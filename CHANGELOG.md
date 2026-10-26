@@ -2,6 +2,36 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.33.0] — 2026-10-26
+
+### Added
+
+- **German.** `babyzilla pet lang de` (or `BABYZILLA_PET_LANG=de` for one shell)
+  switches the pet's language; the running pet adopts it immediately, no restart.
+  - Everything the pet *authors* is German: asides, event lines (`bash
+    fehlgeschlagen`, `Kontext wird gepresst…`), its canned speech, and the app's
+    menus and windows (`Mehr Pets…`, `Gesprächigkeit`, `Chat öffnen…`, `Pet nehmen`).
+  - Asides are written per **register**: the dino keeps its own cave German, the
+    other eleven voices share three (terse, warm, formal). English never leaks into
+    a German bubble.
+  - A German mood is read from German words (`Fehler`/`kaputt` → angry, `unklar` →
+    confused, `klappt` → smug); without that every German thought landed in `flat`.
+  - `pet lang` with no argument reports the current language; `pet status` and
+    `pet think` show it too.
+- The bubble font gained `ä ö ü ß Ä Ö Ü` (5×7, diaeresis on the top row), so German
+  is spelled correctly instead of being stripped to `a o u ss`.
+
+### Changed
+
+- Accented Latin folds to its base letter before a thought is drawn (`Café` →
+  `Cafe`) rather than losing the character entirely.
+
+### Not translated, on purpose
+
+- **The quoted thought is the model's own sentence.** There is no translation call
+  in the pet: inventing your work in German would be worse than quoting it in
+  English. A German conversation usually gets German reasoning anyway.
+
 ## [0.32.0] — 2026-10-26
 
 ### Added

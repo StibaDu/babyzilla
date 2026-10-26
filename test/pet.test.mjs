@@ -18,7 +18,10 @@ import {
 } from "../lib/pet-map.mjs";
 import { decodePng, encodePng } from "../pet/png.mjs";
 import { characterCrop, installPetPackage } from "../pet/pet-package.mjs";
-import { houseVoice } from "../lib/pet-voice.mjs";
+import { houseVoice, VOICE_IDS, poolsFor } from "../lib/pet-voice.mjs";
+import {
+  LANGUAGES, cavemanDe, germanMoods, isLanguage, line as langLine, readMoodDe, resolveLanguage,
+} from "../lib/pet-lang.mjs";
 import { analyze } from "../pet/pixelate.mjs";
 
 const run = promisify(execFile);
@@ -839,6 +842,88 @@ test("cli: pet packs lists what is installed, and use rejects unknown names", as
 
   const bad = run(process.execPath, [BIN, "pet", "use", "not-a-pack"], { env });
   await assert.rejects(bad, (e) => e.code === 2);
+});
+
+test("lang: every voice speaks German in its own register", () => {
+  const moods = ["angry", "confused", "bored", "smug", "tease", "flat"];
+  for (const id of VOICE_IDS) {
+    const table = germanMoods(id);
+    for (const mood of moods) {
+      assert.ok(table[mood]?.close?.length >= 3, `${id}/${mood} has German closers`);
+      assert.ok(table[mood]?.open?.length >= 1, `${id}/${mood} has German openers`);
+    }
+  }
+  // the dino keeps its cave; everybody else gets a register, not the dino's
+  assert.notDeepEqual(germanMoods("caveman"), germanMoods("plain"));
+  assert.deepEqual(germanMoods("claude"), germanMoods("doubao"), "one warm register");
+  // no English aside may leak into a German bubble
+  const english = /(?:Human|human|rock|Dino (?:wait|see|work)|Me |Thrilling|Nailed it)/;
+  for (const id of VOICE_IDS) {
+    for (const mood of moods) {
+      for (const text of [...germanMoods(id)[mood].open, ...germanMoods(id)[mood].close]) {
+        assert.doesNotMatch(text, english, `${id}/${mood}: ${text}`);
+      }
+    }
+  }
+});
+
+test("lang: a German thought keeps its umlauts and reads its own mood", () => {
+  const source = "Ich muss den Fehler nochmal prüfen, weil der Parser wieder kaputt ist.";
+  assert.equal(readMoodDe(source), "angry");
+  assert.equal(readMoodDe("Unklar, warum das nicht läuft"), "confused");
+  assert.equal(readMoodDe("Fertig, jetzt klappt es"), "smug");
+  const said = thought(source, { language: "de", max: 200 });
+  assert.match(said.text, /prüfen/, "the umlaut survived the sanitiser");
+  assert.equal(said.mood, "angry");
+  assert.ok(said.aside, "a German mood gets a German aside");
+  assert.match(said.aside, /[a-zäöüß]/i);
+  // the German caveman drops articles, never letters
+  assert.equal(cavemanDe("Ich muss die Datei in dem Ordner prüfen"), "Ich Datei in Ordner prüfen");
+  // other accents fold to their base letter instead of vanishing (plain voice, so
+  // the caveman transform is not the thing being tested)
+  assert.match(gist("Das Café an der Straße", { language: "de", voice: "plain" }), /Cafe an der Straße/);
+  assert.match(gist("The café is closed", { voice: "plain" }), /The cafe is closed/);
+});
+
+test("lang: the pet's event lines and the language resolution", () => {
+  assert.equal(langLine("de", "toolFailed", "bash"), "bash fehlgeschlagen");
+  assert.equal(langLine("en", "toolFailed", "bash"), "bash failed");
+  assert.match(langLine("de", "compacted", 1200, 300, 75), /Zusammengefasst: 1200 → 300 tok/);
+  assert.equal(budgetExpression(96, "de").say, "Ich bin voll — gleich wird gepresst.");
+  assert.equal(errorExpression("fetch failed", "de").say, "Netz nicht erreichbar.");
+  assert.equal(updateExpression("0.33.0", "0.32.0", "de").say, "v0.33.0 ist da (du hast v0.32.0).");
+  assert.ok(isLanguage("de"));
+  assert.ok(!isLanguage("fr"), "a language without a table is not offered");
+  // env wins over the config, and an unknown value is ignored rather than adopted
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ language: "de" }));
+  const saved = process.env.BABYZILLA_PET_LANG;
+  try {
+    delete process.env.BABYZILLA_PET_LANG;
+    assert.equal(resolveLanguage(dir), "de");
+    process.env.BABYZILLA_PET_LANG = "en";
+    assert.equal(resolveLanguage(dir), "en");
+    process.env.BABYZILLA_PET_LANG = "klingon";
+    assert.equal(resolveLanguage(dir), "de", "a typo falls back to the config");
+  } finally {
+    if (saved === undefined) delete process.env.BABYZILLA_PET_LANG;
+    else process.env.BABYZILLA_PET_LANG = saved;
+  }
+  assert.deepEqual(Object.keys(LANGUAGES).sort(), ["de", "en"]);
+});
+
+test("cli: pet lang sets the pet's language and the thought follows it", async () => {
+  const dir = tmp();
+  const env = { ...process.env, BABYZILLA_PET_STATE: dir, BABYZILLA_NO_UPDATE_CHECK: "1" };
+  const cli = (...args) => run(process.execPath, [BIN, ...args], { env });
+  assert.match((await cli("pet", "lang")).stdout, /language: en \(English\)/);
+  assert.match((await cli("pet", "lang", "de")).stdout, /language: de \(Deutsch\)/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8")).language, "de");
+  assert.match((await cli("pet", "status")).stdout, /language\s+Deutsch \(de\)/);
+  const said = await cli("pet", "think", "Ich muss den Fehler nochmal prüfen, weil der Cache alt ist.");
+  assert.match(said.stdout, /language\s+de \(Deutsch\)/);
+  assert.match(said.stdout, /prüfen/);
+  await assert.rejects(cli("pet", "lang", "fr"), (e) => e.code === 2 && /unknown language/.test(e.stdout));
 });
 
 test("data file: matches the catalogue", (t) => {

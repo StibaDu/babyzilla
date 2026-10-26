@@ -48,6 +48,7 @@ import {
 } from "./lib/updates.mjs";
 import { petEnabled, expr as petExpr, say as petSay, think as petThink, mark as petMark } from "./lib/pet.mjs";
 import { thought as petThoughtText, latestThought } from "./lib/pet-thought.mjs";
+import { resolveLanguage, line as petLine } from "./lib/pet-lang.mjs";
 import { classifyTurn, lastAnswer } from "./lib/pet-mark.mjs";
 import { resolveVoice } from "./lib/pet-voice.mjs";
 import { toolExpression, outcomeExpression, compactionExpression, budgetExpression, updateExpression } from "./lib/pet-map.mjs";
@@ -699,6 +700,9 @@ export default {
       const said = petThoughtText(latestThought(messages), {
         style: opts.petThoughts === "verbatim" ? "verbatim" : "voice",
         voice: resolveVoice().id,
+        // read on every thought, not at load: `pet lang de` must take effect
+        // without restarting OpenCode
+        language: resolveLanguage(),
       });
       if (!said || said.text === lastThought) return;
       lastThought = said.text;
@@ -804,7 +808,7 @@ export default {
           if (r?.ok && r.newer) {
             log(`update available: v${r.current} → v${r.latest} (run: babyzilla update)`);
             petOn(() => {
-              const u = updateExpression(r.latest, r.current);
+              const u = updateExpression(r.latest, r.current, resolveLanguage());
               petExpr(u.id, u.hold);
               petSay(u.say);
             });
@@ -833,7 +837,7 @@ export default {
           petOn(() => {
             const o = outcomeExpression({ name: toolName, ok: !failed, ms: Number(event?.durationMs ?? event?.duration) || 0 });
             if (o) petExpr(o.id, o.hold);
-            if (failed) petSay(`${toolName} failed`);
+            if (failed) petSay(petLine(resolveLanguage(), "toolFailed", toolName));
           });
           try { SELFTUNE?.noteToolUse(sid, toolName, out || err); } catch { /* telemetry only */ }
           void writeJournal(sid, {
@@ -941,7 +945,7 @@ export default {
             petThought(messages);
             if (window) {
               const pct = (estimateMessagesTokens(event?.messages) / window) * 100;
-              const b = budgetExpression(pct);
+              const b = budgetExpression(pct, resolveLanguage());
               if (b && petThrottled("budget", 120000)) { petExpr(b.id, b.hold); if (b.say) petSay(b.say); }
             }
           });
@@ -1015,7 +1019,7 @@ export default {
         petOn(() => {
           const c = compactionExpression("start");
           petExpr(c.id, c.hold);
-          petSay("Squeezing the context…");
+          petSay(petLine(resolveLanguage(), "compacting"));
         });
         try {
           if (event?.result) {
@@ -1156,7 +1160,7 @@ export default {
           petOn(() => {
             const c = compactionExpression("end");
             petExpr(c.id, c.hold);
-            petSay(`Compacted: ${fmt(rawTokens)} → ${fmt(packTokens)} tok (${summaryStats.savedPct}% smaller).`);
+            petSay(petLine(resolveLanguage(), "compacted", fmt(rawTokens), fmt(packTokens), summaryStats.savedPct));
           });
         } catch (e) {
           log("compaction distillation failed — falling back to native compaction:", e?.message ?? e);

@@ -113,16 +113,18 @@ final class PetBrowser: NSObject, NSTableViewDataSource, NSTableViewDelegate, NS
     private var fetchedOnce = false
     /// Called with a pack id; returns false when the pack is not there to switch to.
     private var onUse: ((String) -> Bool)?
+    private var l10n = L10n("en")
     /// Only used by `--browse-install`: reports the outcome and lets the test exit.
     private var onInstalled: ((String, Bool) -> Void)?
 
     var isOpen: Bool { window?.isVisible ?? false }
 
     func show(installed: [(id: String, label: String)], active: String?, prefill: String = "",
-              onUse: @escaping (String) -> Bool) {
+              l10n: L10n = L10n("en"), onUse: @escaping (String) -> Bool) {
         self.installed = installed
         self.active = active
         self.onUse = onUse
+        self.l10n = l10n
         build()
         reload()
         if !prefill.isEmpty {
@@ -139,12 +141,13 @@ final class PetBrowser: NSObject, NSTableViewDataSource, NSTableViewDelegate, NS
     private func build() {
         guard window == nil else { return }
         let win = PetBrowserWindow()
+        win.title = l10n.t("Pets")
         let content = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 430))
         content.autoresizingMask = [.width, .height]
 
         let field = NSSearchField(frame: NSRect(x: 14, y: 386, width: 432, height: 26))
         field.autoresizingMask = [.width, .minYMargin]
-        field.placeholderString = "search 1300+ pets"
+        field.placeholderString = l10n.t("search 1300+ pets")
         field.delegate = self
         field.sendsSearchStringImmediately = true
         content.addSubview(field)
@@ -171,22 +174,23 @@ final class PetBrowser: NSObject, NSTableViewDataSource, NSTableViewDelegate, NS
         content.addSubview(scroll)
 
         let label = NSTextField(labelWithString: "")
-        label.frame = NSRect(x: 14, y: 20, width: 344, height: 18)
+        label.frame = NSRect(x: 14, y: 20, width: 306, height: 18)
         label.autoresizingMask = [.width, .maxYMargin]
         label.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         label.textColor = .secondaryLabelColor
         label.lineBreakMode = .byTruncatingTail
         content.addSubview(label)
 
-        let spin = NSProgressIndicator(frame: NSRect(x: 350, y: 19, width: 16, height: 16))
+        let spin = NSProgressIndicator(frame: NSRect(x: 312, y: 19, width: 16, height: 16))
         spin.style = .spinning
         spin.controlSize = .small
         spin.isDisplayedWhenStopped = false
         spin.autoresizingMask = [.minXMargin, .maxYMargin]
         content.addSubview(spin)
 
-        let use = NSButton(title: "Use pet", target: self, action: #selector(useSelected))
-        use.frame = NSRect(x: 370, y: 14, width: 76, height: 26)
+        let use = NSButton(title: l10n.t("Use pet"), target: self, action: #selector(useSelected))
+        // wide enough for "Pet nehmen": a truncated button is a broken button
+        use.frame = NSRect(x: 332, y: 14, width: 114, height: 26)
         use.bezelStyle = .rounded
         use.autoresizingMask = [.minXMargin, .maxYMargin]
         use.keyEquivalent = "\r"
@@ -250,25 +254,25 @@ final class PetBrowser: NSObject, NSTableViewDataSource, NSTableViewDelegate, NS
         guard let label = status else { return }
         if busy { return }
         if catalog.isEmpty {
-            label.stringValue = "no catalog yet — fetching once…"
+            label.stringValue = l10n.t("no catalog yet — fetching once…")
             return
         }
         label.stringValue = shown.isEmpty
-            ? "nothing matches"
-            : "\(shown.count) of \(rows.count) pets · \(installed.count) installed"
+            ? l10n.t("nothing matches")
+            : l10n.count(shown.count, rows.count, installed.count)
     }
 
     private func fetchCatalogIfNeeded() {
         guard !busy, catalog.isEmpty else { return }
         busy = true
         spinner.startAnimation(nil)
-        status.stringValue = "fetching the catalog (once)…"
+        status.stringValue = l10n.t("fetching the catalog (once)…")
         PetCLI.run(["pet", "catalog"]) { [weak self] code, text in
             guard let self else { return }
             self.busy = false
             self.spinner.stopAnimation(nil)
             if code != 0 {
-                self.status.stringValue = "catalog fetch failed — is the network up?"
+                self.status.stringValue = self.l10n.t("catalog fetch failed — is the network up?")
                 self.noteLast(text)
                 return
             }
@@ -289,7 +293,7 @@ final class PetBrowser: NSObject, NSTableViewDataSource, NSTableViewDelegate, NS
             let switched = onUse?(pet.id) == true
             onInstalled?(pet.id, switched)
             if switched { close() }
-            else { status.stringValue = "\(pet.label) could not be loaded" }
+            else { status.stringValue = "\(pet.label) \(l10n.t("could not be loaded"))" }
             return
         }
         install(pet)
@@ -299,14 +303,14 @@ final class PetBrowser: NSObject, NSTableViewDataSource, NSTableViewDelegate, NS
         busy = true
         spinner.startAnimation(nil)
         useButton.isEnabled = false
-        status.stringValue = "installing \(pet.label) from openpets.dev…"
+        status.stringValue = l10n.installing(pet.label)
         PetCLI.run(["pet", "add", pet.id]) { [weak self] code, text in
             guard let self else { return }
             self.spinner.stopAnimation(nil)
             self.useButton.isEnabled = true
             self.busy = false
             guard code == 0, Packs.directory(pet.id) != nil else {
-                self.status.stringValue = "install failed — \(pet.id)"
+                self.status.stringValue = "\(self.l10n.t("install failed")) — \(pet.id)"
                 self.noteLast(text)
                 self.onInstalled?(pet.id, false)
                 return
@@ -314,7 +318,7 @@ final class PetBrowser: NSObject, NSTableViewDataSource, NSTableViewDelegate, NS
             let switched = self.onUse?(pet.id) == true
             self.onInstalled?(pet.id, switched)
             if switched { self.close() }
-            else { self.reload(); self.status.stringValue = "\(pet.label) installed — pick it again" }
+            else { self.reload(); self.status.stringValue = self.l10n.installedNote(pet.label) }
         }
     }
 
@@ -363,7 +367,7 @@ final class PetBrowser: NSObject, NSTableViewDataSource, NSTableViewDelegate, NS
         let mark = pet.id == active ? "● " : (pet.installed ? "· " : "  ")
         let tail = pet.installed ? "" : "   \(pet.category)"
         cell.textField?.stringValue = "\(mark)\(pet.label)\(tail)"
-        cell.textField?.toolTip = pet.installed ? "installed" : "click Use pet to install it from OpenPets"
+        cell.textField?.toolTip = pet.installed ? l10n.t("installed") : l10n.t("Use pet")
         return cell
     }
 

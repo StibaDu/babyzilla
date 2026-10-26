@@ -152,6 +152,10 @@ instead, or `false` to turn it off. Try it with
 `babyzilla pet think "The user wants a bigger pet."` (add `--voice claude` to hear
 another pet say it).
 
+It can speak **German** too: `babyzilla pet lang de` switches the pet's asides, its
+event lines and the app's menus (`BABYZILLA_PET_LANG=de` for one shell only). The
+model's own sentence is quoted as written — there is no translation call.
+
 A fresh install wears **Lil Dino**, and **right-click → Pet → More pets…** opens a
 browser over the [OpenPets](https://openpets.dev) catalog: search 1300+ pets, pick
 one, and it installs itself and hops on screen. The same from a terminal:

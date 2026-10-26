@@ -23,9 +23,11 @@ struct PetConfig: Codable {
     var pack: String? = nil         // nil = the built-in BabyZilla art
     /// Turned off from the menu bar. Persisted so a login start does not undo it.
     var hidden: Bool = false
+    /// The pet's language ("en", "de"). Unknown values read as English.
+    var language: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case scale, x, y, chattiness, muted, followCursor, pack, hidden
+        case scale, x, y, chattiness, muted, followCursor, pack, hidden, language
     }
 
     /// Decode field by field. The synthesized initializer requires every
@@ -44,6 +46,7 @@ struct PetConfig: Codable {
         followCursor = try c.decodeIfPresent(Bool.self, forKey: .followCursor) ?? true
         pack = try c.decodeIfPresent(String.self, forKey: .pack)
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+        language = try c.decodeIfPresent(String.self, forKey: .language)
     }
 
     static func load(_ url: URL) -> PetConfig {
@@ -525,6 +528,8 @@ struct ChatLine {
 
 final class ChatView: NSView {
     var lines: [ChatLine] = []
+    /// The app's words (header, empty state) in the pet's language.
+    var l10n = L10n("en")
     /// Pixels scrolled back from the newest line. 0 = pinned to the bottom.
     private var scrollBack: CGFloat = 0
 
@@ -600,8 +605,8 @@ final class ChatView: NSView {
 
         // header: what this is, and how to leave it
         let titleBaseline = bounds.maxY - Self.padY - CGFloat(PixelFont.glyphHeight)
-        PixelFont.draw("chat", at: NSPoint(x: Self.padX, y: titleBaseline), alpha: 0.9, color: Self.thoughtInk)
-        let hint = "esc / click pet"
+        PixelFont.draw(l10n.t("chat"), at: NSPoint(x: Self.padX, y: titleBaseline), alpha: 0.9, color: Self.thoughtInk)
+        let hint = l10n.t("esc / click pet")
         PixelFont.draw(hint, at: NSPoint(x: bounds.width - Self.padX - PixelFont.width(hint), y: titleBaseline),
                        alpha: 0.45, color: Self.thoughtInk)
         let rule = NSBezierPath()
@@ -613,7 +618,7 @@ final class ChatView: NSView {
 
         if lines.isEmpty {
             let y = Self.padY
-            PixelFont.draw("nothing yet.", at: NSPoint(x: Self.textX, y: y), alpha: 0.45, color: Self.thoughtInk)
+            PixelFont.draw(l10n.t("nothing yet."), at: NSPoint(x: Self.textX, y: y), alpha: 0.45, color: Self.thoughtInk)
             return
         }
 
@@ -696,6 +701,7 @@ final class PetController: NSObject {
     let spriteSize: Int
     let pack: PackData?
     var onPackChange: (() -> Void)?
+    var l10n: L10n { L10n(config.language) }
     var onVisibilityChange: (() -> Void)?
     var window: PetPanel!
     var bubble: BubbleWindow!
@@ -1355,11 +1361,14 @@ final class PetController: NSObject {
             view.lines = chatLines
             win.contentView = view
             win.onClose = { [weak self] in self?.hideChat() }
+            view.l10n = l10n
             chatView = view
             chatWindow = win
         } else {
             chatView?.setLines(chatLines)
         }
+        chatView?.l10n = l10n
+        chatView?.needsDisplay = true
         layoutChat()
         chatWindow?.orderFrontRegardless()
         chatOpen = true
@@ -1567,7 +1576,7 @@ final class PetController: NSObject {
         if !dragMoved {
             dragMoved = true
             setExpression("poke", hold: 0.9)
-            say(pick(["Hey!", "Careful!", "Put me down!"]), hold: 2.0)
+            say(pick([l10n.t("Hey!"), l10n.t("Careful!"), l10n.t("Put me down!")]), hold: 2.0)
         }
         let side = CGFloat(spriteSize * config.scale)
         x = mouse.x - dragGrab.x + side / 2
@@ -1603,14 +1612,14 @@ final class PetController: NSObject {
         title.isEnabled = false
         menu.addItem(title)
         menu.addItem(.separator())
-        let hide = NSMenuItem(title: hidden ? "Show Dino" : "Hide Dino",
+        let hide = NSMenuItem(title: l10n.t(hidden ? "Show Dino" : "Hide Dino"),
                               action: #selector(toggleVisibility), keyEquivalent: "")
         hide.target = self
         menu.addItem(hide)
         menu.addItem(.separator())
 
         for scale in [1, 2, 3] {
-            let item = NSMenuItem(title: "Size \(scale)×", action: #selector(setScale(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: "\(l10n.t("Size")) \(scale)×", action: #selector(setScale(_:)), keyEquivalent: "")
             item.target = self
             item.tag = scale
             item.state = config.scale == scale ? .on : .off
@@ -1619,26 +1628,27 @@ final class PetController: NSObject {
         menu.addItem(.separator())
         Packs.installMenu(into: menu, target: self, action: #selector(choosePack(_:)),
                           current: config.pack, more: #selector(openPetBrowser))
-        let mute = NSMenuItem(title: "Mute speech", action: #selector(toggleMute), keyEquivalent: "")
+        let mute = NSMenuItem(title: l10n.t("Mute speech"), action: #selector(toggleMute), keyEquivalent: "")
         mute.target = self
         mute.state = config.muted ? .on : .off
         menu.addItem(mute)
         for level in ["quiet", "normal", "chatty"] {
-            let item = NSMenuItem(title: "Chattiness: \(level)", action: #selector(setChattiness(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: "\(l10n.t("Chattiness")): \(l10n.level(level))",
+                                  action: #selector(setChattiness(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = level
             item.state = config.chattiness == level ? .on : .off
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        let chat = NSMenuItem(title: chatOpen ? "Close chat" : "Open chat…",
+        let chat = NSMenuItem(title: l10n.t(chatOpen ? "Close chat" : "Open chat…"),
                               action: #selector(toggleChatItem), keyEquivalent: "")
         chat.target = self
         menu.addItem(chat)
-        let gallery = NSMenuItem(title: "Gallery…", action: #selector(openGallery), keyEquivalent: "")
+        let gallery = NSMenuItem(title: l10n.t("Gallery…"), action: #selector(openGallery), keyEquivalent: "")
         gallery.target = self
         menu.addItem(gallery)
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: l10n.t("Quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         menu.popUp(positioning: nil, at: point, in: nil)
     }
 
@@ -1683,7 +1693,8 @@ final class PetController: NSObject {
     func browsePets(prefill query: String) {
         PetBrowser.shared.show(installed: Packs.available(),
                                active: config.pack ?? PetDefaults.pack,
-                               prefill: query) { [weak self] id in
+                               prefill: query,
+                               l10n: l10n) { [weak self] id in
             self?.usePack(id) ?? false
         }
     }
@@ -1778,6 +1789,14 @@ final class PetController: NSObject {
         case "mark":
             // null clears it: the human decided something
             setMark((ev["mark"] as? String).flatMap(PetMark.init(rawValue:)))
+        case "lang":
+            // `pet lang de` while the pet is running: adopt it now, and write it so
+            // the next launch and the next thought agree with the screen.
+            if let wanted = ev["language"] as? String, (wanted == "en" || wanted == "de") {
+                config.language = wanted
+                persist()
+                if chatOpen { showChat() }
+            }
         case "chat":
             if (ev["on"] as? Bool) ?? true { showChat() } else { hideChat() }
         case "ping":
@@ -2069,17 +2088,18 @@ extension AppDelegate: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         guard let c = controller else {
-            menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+            menu.addItem(NSMenuItem(title: L10n(nil).t("Quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
             return
         }
-        let toggle = NSMenuItem(title: c.hidden ? "Show Dino" : "Hide Dino",
+        let l = c.l10n
+        let toggle = NSMenuItem(title: l.t(c.hidden ? "Show Dino" : "Hide Dino"),
                                 action: #selector(togglePet), keyEquivalent: "")
         toggle.target = self
         toggle.state = c.hidden ? .off : .on
         menu.addItem(toggle)
         menu.addItem(.separator())
 
-        let sizeItem = NSMenuItem(title: "Size", action: nil, keyEquivalent: "")
+        let sizeItem = NSMenuItem(title: l.t("Size"), action: nil, keyEquivalent: "")
         let sizes = NSMenu()
         for scale in [1, 2, 3] {
             let item = NSMenuItem(title: "\(scale)×", action: #selector(PetController.setScale(_:)), keyEquivalent: "")
@@ -2091,7 +2111,7 @@ extension AppDelegate: NSMenuDelegate {
         sizeItem.submenu = sizes
         menu.addItem(sizeItem)
 
-        let mute = NSMenuItem(title: "Mute speech", action: #selector(PetController.toggleMute), keyEquivalent: "")
+        let mute = NSMenuItem(title: l.t("Mute speech"), action: #selector(PetController.toggleMute), keyEquivalent: "")
         mute.target = c
         mute.state = c.config.muted ? .on : .off
         menu.addItem(mute)
@@ -2100,14 +2120,14 @@ extension AppDelegate: NSMenuDelegate {
                           current: c.config.pack, more: #selector(PetController.openPetBrowser))
 
         menu.addItem(.separator())
-        let chat = NSMenuItem(title: c.chatOpen ? "Close chat" : "Open chat…",
+        let chat = NSMenuItem(title: l.t(c.chatOpen ? "Close chat" : "Open chat…"),
                               action: #selector(PetController.toggleChatItem), keyEquivalent: "")
         chat.target = c
         menu.addItem(chat)
-        let gallery = NSMenuItem(title: "Gallery…", action: #selector(PetController.openGallery), keyEquivalent: "")
+        let gallery = NSMenuItem(title: l.t("Gallery…"), action: #selector(PetController.openGallery), keyEquivalent: "")
         gallery.target = c
         menu.addItem(gallery)
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: l.t("Quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 }
 

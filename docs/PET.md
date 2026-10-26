@@ -349,6 +349,42 @@ A pet's voice follows the active pack, so `babyzilla pet use doubao` changes bot
 body and the way it talks. `babyzilla pet think "…" --voice claude` previews one
 without switching.
 
+### Language: the pet speaks German
+
+Language is a separate axis from voice: the same dino, the same moods, the same
+honesty rules — only the words it was born into change.
+
+```sh
+babyzilla pet lang de        # Deutsch
+babyzilla pet lang           # what it speaks now
+babyzilla pet lang en        # back
+```
+
+`pet lang` writes `language` into `config.json`, so the app, the plugin and the CLI
+agree, and the running pet adopts it immediately (`pet lang` emits an event; no
+restart). `BABYZILLA_PET_LANG=de` overrides it per shell.
+
+What is localised, and what is deliberately not:
+
+- **Everything the pet authors**: the asides, the event lines (`bash
+  fehlgeschlagen`, `Kontext wird gepresst…`, `Zusammengefasst: …`), the pet's own
+  canned speech, and the app's menus and windows (`Mehr Pets…`, `Gesprächigkeit`,
+  `Chat öffnen…`).
+- **The thought it quotes is the model's own sentence and is passed through
+  untouched.** There is no translation call: a pet that invented your work in German
+  would be worse than an English quote. German humans usually get German reasoning
+  anyway, because the model mirrors the conversation.
+- **German asides are written per register**, not per voice: the dino keeps its own
+  cave German (`Ich Fehler nochmal prüfen. Mensch wieder was kaputt.`), and the other
+  eleven voices share three registers — terse, warm, formal. A pack with its own
+  German can be given one later without touching the callers.
+- The bubble font gained `ä ö ü ß Ä Ö Ü`, so nothing is misspelled into `a o u ss`;
+  other accents fold to their base letter (`Café` → `Cafe`) instead of vanishing.
+
+A German mood is read with German words: `Fehler`/`kaputt` is angry, `unklar` is
+confused, `klappt` is smug — otherwise every German thought would land in the same
+shrug.
+
 ### The chat: what the bubble said, kept
 
 A bubble is an event and fades on purpose — the pet is not supposed to become a

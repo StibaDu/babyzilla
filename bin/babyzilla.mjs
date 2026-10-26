@@ -28,6 +28,7 @@ import { emit as petEmit, petDir as petStateDir, eventsPath } from "../lib/pet.m
 import { thought as thoughtLine } from "../lib/pet-thought.mjs";
 import { MARKS, readMark, writeMark } from "../lib/pet-mark.mjs";
 import { VOICES, VOICE_IDS, resolveVoice } from "../lib/pet-voice.mjs";
+import { LANGUAGES, isLanguage, resolveLanguage } from "../lib/pet-lang.mjs";
 import { catalog as petCatalog, pickPets, findPet, isRemoteSource } from "../lib/pet-catalog.mjs";
 import { installPetSource } from "../pet/pet-package.mjs";
 import { tool } from "../lib/tool.mjs";
@@ -955,7 +956,7 @@ function writeRetired(set) {
 function petInstall({ login = false, build = true } = {}) {
   const root = repoRoot();
   const src = path.join(root, "apps", "pet");
-  const swift = ["main.swift", "PetApp.swift", "PetBrowser.swift", "PixelFont.swift"].map((f) => path.join(src, f));
+  const swift = ["main.swift", "PetApp.swift", "PetBrowser.swift", "PixelFont.swift", "L10n.swift"].map((f) => path.join(src, f));
   for (const f of swift) if (!fs.existsSync(f)) throw new Error(`missing source ${f}`);
   const macos = path.join(PET_APP, "Contents", "MacOS");
   fs.mkdirSync(macos, { recursive: true });
@@ -1606,6 +1607,26 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
           })();
           return;
         }
+        if (sub === "lang" || sub === "language") {
+          const wanted = rest[rest.indexOf(sub) + 1];
+          if (!wanted) {
+            const now = resolveLanguage(petStateDir());
+            out(`language: ${now} (${LANGUAGES[now].label})\n`);
+            out(`  ${c(DIM)}change with: babyzilla pet lang ${now === "en" ? "de" : "en"}${c(RESET)}\n`);
+            return;
+          }
+          if (!isLanguage(wanted)) {
+            out(`${c(YELLOW)}unknown language${c(RESET)} ${wanted} — try: ${Object.keys(LANGUAGES).join(", ")}\n`);
+            process.exitCode = 2;
+            return;
+          }
+          const cfg = readPetConfig();
+          cfg.language = wanted;
+          writePetConfig(cfg);
+          out(`language: ${wanted} (${LANGUAGES[wanted].label})\n`);
+          petEmitLine({ kind: "lang", language: wanted });
+          return;
+        }
         if (sub === "chat") {
           const on = !rest.includes("--close");
           petEmit({ kind: "chat", on });
@@ -1639,11 +1660,15 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
             return;
           }
           const voice = asked ?? resolveVoice(petStateDir()).id;
-          const reduced = sub === "think" && !raw ? thoughtLine(text, { voice }) : null;
+          const language = resolveLanguage(petStateDir());
+          const reduced = sub === "think" && !raw ? thoughtLine(text, { voice, language }) : null;
           const line = reduced?.text ?? text;
           petEmitLine({ kind: sub, text: line });
           out(`${sub === "think" ? "thought" : "said"}: ${line}\n`);
-          if (sub === "think") out(`  ${c(DIM)}voice     ${VOICES[voice]?.label ?? voice}${c(RESET)}\n`);
+          if (sub === "think") {
+            out(`  ${c(DIM)}voice     ${VOICES[voice]?.label ?? voice}${c(RESET)}\n`);
+            out(`  ${c(DIM)}language  ${language} (${LANGUAGES[language].label})${c(RESET)}\n`);
+          }
           // Proof, not faith: the app writes last-bubble.json when a bubble is on
           // screen, so this can tell "no pet running" from "pet was busy".
           const ackFile = path.join(petStateDir(), "last-bubble.json");
@@ -1891,6 +1916,8 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
         out(`  mark      ${readMark(petStateDir()) ?? `${c(DIM)}none${c(RESET)}`}\n`);
         const activeVoice = resolveVoice(petStateDir());
         out(`  voice     ${activeVoice.label} ${c(DIM)}(${activeVoice.id})${c(RESET)}\n`);
+        const lang = resolveLanguage(petStateDir());
+        out(`  language  ${LANGUAGES[lang].label} ${c(DIM)}(${lang})${c(RESET)}\n`);
         out(`  config    ${path.join(petStateDir(), "config.json")}\n`);
         return;
       }

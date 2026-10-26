@@ -11,4 +11,8 @@ assets/pet/raw/
 
 # Pet packs built from third-party sheets: art licensing is the pack author's,
 # so only the builder (pet/pack.mjs) is versioned.
-assets/pet/packs/
+assets/pet/packs/*
+# ...except the one that ships as the default pet. An install used to open as the
+# legacy built-in because there was nothing else to wear; this is the pet that
+# fixes that, so it is versioned and attributed in NOTICE.
+!assets/pet/packs/lil-dino/

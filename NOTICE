@@ -1,6 +1,11 @@
 BabyZilla
 Copyright 2026 Sebastian (StibaDu)
 
+Bundled pet art: `assets/pet/packs/lil-dino` is "PACK - Lil Dino Free" by
+LukeProductions (free sprite pack), converted to BabyZilla's pack format and
+shipped as the default pet. The art belongs to its author; the pack records the
+source in its `pack.json`. It is not covered by BabyZilla's MIT license.
+
 This product includes software developed as part of the lowfat project
 (https://github.com/zdk/lowfat, Copyright zdk <di.warachet@gmail.com>,
 Apache License 2.0).

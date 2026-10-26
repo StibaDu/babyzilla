@@ -1,0 +1,139 @@
+{
+  "kind": "pack",
+  "name": "lil-dino",
+  "label": "Lil Dino",
+  "size": 48,
+  "source": "PACK - Lil Dino Free.png",
+  "license": "LukeProductions free pack",
+  "animations": {
+    "idle": [
+      "idle-1",
+      "idle-2",
+      "idle-3",
+      "idle-4",
+      "idle-5",
+      "idle-6"
+    ],
+    "walk": [
+      "walk-1",
+      "walk-2",
+      "walk-3",
+      "walk-4",
+      "walk-5",
+      "walk-6"
+    ],
+    "jump": [
+      "jump-1",
+      "jump-2",
+      "jump-3",
+      "jump-4",
+      "jump-5",
+      "jump-6"
+    ],
+    "dash": [
+      "dash-1",
+      "dash-2",
+      "dash-3",
+      "dash-4"
+    ],
+    "nod": [
+      "nod-1",
+      "nod-2",
+      "nod-3"
+    ],
+    "sway": [
+      "sway-1",
+      "sway-2",
+      "sway-3"
+    ],
+    "shake": [
+      "shake-1",
+      "shake-2",
+      "shake-3",
+      "shake-4"
+    ],
+    "stretch": [
+      "stretch-1",
+      "stretch-2",
+      "stretch-3"
+    ],
+    "turn": [
+      "turn-1",
+      "turn-2",
+      "turn-3",
+      "turn-4"
+    ],
+    "lean": [
+      "lean-1",
+      "lean-2",
+      "lean-3",
+      "lean-4"
+    ],
+    "bounce": [
+      "bounce-1",
+      "bounce-2",
+      "bounce-3",
+      "bounce-4"
+    ],
+    "slump": [
+      "slump-1",
+      "slump-2",
+      "slump-3"
+    ]
+  },
+  "fps": {
+    "idle": 6,
+    "walk": 12,
+    "jump": 12,
+    "dash": 12,
+    "nod": 8,
+    "sway": 8,
+    "shake": 14,
+    "stretch": 5,
+    "turn": 7,
+    "lean": 5,
+    "bounce": 12,
+    "slump": 3
+  },
+  "defaultScale": 3,
+  "expressions": {
+    "compressing": "dash",
+    "ship-it": "dash",
+    "self-tune": "dash",
+    "determined": "dash",
+    "thinking": "nod",
+    "listening": "nod",
+    "retrieve": "nod",
+    "recall": "nod",
+    "tool-question": "turn",
+    "celebrate": "sway",
+    "shell-ok": "sway",
+    "pack-created": "sway",
+    "update-available": "sway",
+    "tool-todo": "nod",
+    "waiting": "turn",
+    "shell-fail": "shake",
+    "oops": "shake",
+    "conflict": "shake",
+    "model-error": "shake",
+    "offline": "shake",
+    "rate-limited": "shake",
+    "tool-task": "stretch",
+    "subagent-wait": "stretch",
+    "budget-low": "slump",
+    "tool-read": "lean",
+    "tool-grep": "lean",
+    "tool-list": "lean",
+    "tool-webfetch": "lean",
+    "tool-websearch": "lean",
+    "tool-lsp": "lean",
+    "tool-mcp": "lean",
+    "tool-edit": "bounce",
+    "tool-write": "bounce",
+    "tool-bash": "bounce",
+    "tool-imagegen": "bounce",
+    "typing": "bounce",
+    "budget-full": "slump"
+  },
+  "voice": "caveman"
+}

@@ -27,10 +27,39 @@ walk cycle: legs can move when a sheet was drawn for it.
 ```sh
 babyzilla pet packs          # what is installed, and which is active
 babyzilla pet use lil-dino   # switch, restarts the pet if it was running
-babyzilla pet use babyzilla  # back to the generated art
 ```
 
 The same switch is in the pet's right-click menu under **Pet**.
+
+### Choosing a pet: what ships, and the browser
+
+A fresh install wears **Lil Dino** — the pack is part of the plugin, at its own
+48px scale, with the caveman voice. The generated art from the first versions is
+still copied into the state dir as a fallback (a broken pack should not leave a
+blank window), but it is **not** a pet you can pick, and `pet packs` does not
+list it.
+
+**Pet → More pets…** opens the browser:
+
+- Every pet in the OpenPets catalog — 1300+ — with search over the names.
+- The packs already on disk come first, marked `●` when active and `·` when
+  installed; everything else is a catalog entry with its category.
+- Picking a catalog pet **installs it** (`pet add`, download + pack conversion)
+  and switches to it. `Use pet` or a double-click does that; `Esc` closes.
+- The catalog is fetched once and cached for a day. The browser fetches it on
+  first open if it is missing, so it works before you have ever run the CLI.
+
+The same in a terminal:
+
+```sh
+babyzilla pet catalog --search cat
+babyzilla pet add hoodie-cat
+babyzilla pet use hoodie-cat
+```
+
+The app is a login item, not a shell: it has no `PATH`, so `pet install` pins the
+absolute `node` and CLI paths in `~/.opencode/pet/cli.json` and the browser calls
+them from there. (The same lesson as the lowfat report, one layer down.)
 
 ### Building a pack from a sheet
 
@@ -450,12 +479,13 @@ which is exactly what it should do when the agent needs an answer from you.
 
 ## Removing a pet
 
-`pet install` puts the built-in pet in your state dir. If you only ever use a pack,
-the built-in art is dead weight:
+`pet install` copies the legacy built-in art into your state dir as a fallback. It
+is dead weight once a pack is in place, and it is not a pet you can choose any more:
 
 ```sh
 babyzilla pet use lil-dino      # you cannot remove what you are wearing
-babyzilla pet remove babyzilla  # or: pet remove <pack-id>
+babyzilla pet remove babyzilla  # the legacy art
+babyzilla pet remove <pack-id>  # any other pack
 ```
 
 `remove` refuses to delete the active pet (that would leave a blank window on the

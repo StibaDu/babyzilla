@@ -127,6 +127,11 @@ enum Paths {
 
 // ── sprites ──────────────────────────────────────────────────────────────────
 
+enum PetDefaults {
+    /// What a fresh install wears: the pack that ships with the plugin.
+    static let pack = "lil-dino"
+}
+
 /// Where packs live: the installed state dir, plus the repo/dev location.
 enum Packs {
     static func roots() -> [URL] {
@@ -153,12 +158,14 @@ enum Packs {
     }
 
 
-    /// Put the pet list in a menu. Always — a fresh install has nothing to switch
-    /// to yet, and hiding the submenu behind `count > 1` meant a new user saw no
-    /// pet list at all, only the built-in they could not name or change.
-    static func installMenu(into menu: NSMenu, target: AnyObject, action: Selector, current: String?) {
+    /// Put the pet list in a menu. Always — and always with a way out of it: the
+    /// menu can only hold what is on disk, so "More pets…" is the door to the
+    /// 1300+ in the OpenPets catalog. Before this, a fresh install could not
+    /// choose anything at all without knowing the CLI.
+    static func installMenu(into menu: NSMenu, target: AnyObject, action: Selector,
+                            current: String?, more: Selector?) {
         let pets = available()
-        let active = current ?? "babyzilla"
+        let active = current ?? PetDefaults.pack
         let petItem = NSMenuItem(title: "Pet", action: nil, keyEquivalent: "")
         let sub = NSMenu()
         for pet in pets {
@@ -168,20 +175,20 @@ enum Packs {
             item.state = active == pet.id ? .on : .off
             sub.addItem(item)
         }
-        if pets.count <= 1 {
-            sub.addItem(.separator())
-            // A disabled line, not a dead menu: says what to do about it.
-            let hint = NSMenuItem(title: "No other pets — babyzilla pet catalog", action: nil, keyEquivalent: "")
-            hint.isEnabled = false
-            sub.addItem(hint)
+        if !pets.isEmpty { sub.addItem(.separator()) }
+        if let more {
+            let browse = NSMenuItem(title: "More pets…", action: more, keyEquivalent: "")
+            browse.target = target
+            sub.addItem(browse)
         }
         petItem.submenu = sub
         menu.addItem(petItem)
     }
 
-    /// Always offers the built-in art first; packs found on disk follow.
+    /// Packs on disk. There is no built-in entry: the legacy art is a fallback for
+    /// a broken install, not a pet to pick, and a fresh install ships Lil Dino.
     static func available() -> [(id: String, label: String)] {
-        var out: [(id: String, label: String)] = [("babyzilla", "BabyZilla")]
+        var out: [(id: String, label: String)] = []
         for root in roots() {
             let dirs = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
             for dir in dirs.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
@@ -1610,7 +1617,8 @@ final class PetController: NSObject {
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        Packs.installMenu(into: menu, target: self, action: #selector(choosePack(_:)), current: config.pack)
+        Packs.installMenu(into: menu, target: self, action: #selector(choosePack(_:)),
+                          current: config.pack, more: #selector(openPetBrowser))
         let mute = NSMenuItem(title: "Mute speech", action: #selector(toggleMute), keyEquivalent: "")
         mute.target = self
         mute.state = config.muted ? .on : .off
@@ -1652,15 +1660,32 @@ final class PetController: NSObject {
     }
 
     @objc func choosePack(_ item: NSMenuItem) {
-        let id = item.representedObject as? String ?? "babyzilla"
-        config.pack = id == "babyzilla" ? nil : id
+        guard let id = item.representedObject as? String else { return }
+        _ = usePack(id)
+    }
+
+    /// Wear a pack that is already on disk. Returns false when it is not there,
+    /// so the browser can say so instead of switching to nothing.
+    @discardableResult
+    func usePack(_ id: String) -> Bool {
+        guard let dir = Packs.directory(id), let pack = PackData.load(dir: dir) else { return false }
+        config.pack = id
         // a pack knows how big it wants to be: its art is not the same density
-        if id != "babyzilla", let dir = Packs.directory(id), let pack = PackData.load(dir: dir),
-           let scale = pack.defaultScale {
-            config.scale = scale
-        }
+        if let scale = pack.defaultScale { config.scale = scale }
         persist()
         onPackChange?()
+        return true
+    }
+
+    /// The catalog, in a window: search it, pick one, and it installs itself.
+    @objc func openPetBrowser() { browsePets(prefill: "") }
+
+    func browsePets(prefill query: String) {
+        PetBrowser.shared.show(installed: Packs.available(),
+                               active: config.pack ?? PetDefaults.pack,
+                               prefill: query) { [weak self] id in
+            self?.usePack(id) ?? false
+        }
     }
 
     @objc private func setChattiness(_ item: NSMenuItem) {
@@ -1775,7 +1800,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let base = Paths.resolveSprites()
         var pack: PackData?
         var packDir: URL?
-        if let name = cfg.pack, let dir = Packs.directory(name), let loaded = PackData.load(dir: dir) {
+        // No choice in config.json means a fresh install (or an upgrade from the
+        // version that shipped the legacy art): wear the dino that ships, not the
+        // built-in nobody asked for. An explicit choice is never overridden.
+        var wanted = cfg.pack
+        if wanted == nil || Packs.directory(wanted!) == nil {
+            wanted = Packs.directory(PetDefaults.pack) != nil ? PetDefaults.pack : nil
+        }
+        if let name = wanted, let dir = Packs.directory(name), let loaded = PackData.load(dir: dir) {
             pack = loaded
             packDir = dir
         }
@@ -1801,6 +1833,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func captureAndExit(_ path: String, after delay: TimeInterval) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, let c = self.controller, let pet: PetPanel = c.window else { exit(1) }
+            if PetBrowser.shared.isOpen, PetBrowser.shared.snapshot(to: path) {
+                print("captured \(path) browser")
+                exit(0)
+            }
             // Every window that is actually up, drawn into one bitmap: the pet, the
             // bubble, and the chat log. A screenshot needs a screen permission this
             // setup does not have; drawing the views does not.
@@ -1808,7 +1844,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let v = pet.contentView { panels.append((pet.frame, v)) }
             if let b = c.bubble, b.isVisible, let v = b.contentView { panels.append((b.frame, v)) }
             if c.chatOpen, let chat = c.chatWindow, let v = chat.contentView { panels.append((chat.frame, v)) }
-            let union = panels.map(\.0).reduce(NSRect.zero) { $0.union($1) }
+            // Start from the first panel, not NSRect.zero: zero is a rect at the
+            // origin, so a pet sitting at x=900 made every capture 900px of empty
+            // desktop wide.
+            guard var union = panels.first?.0 else { exit(1) }
+            for (rect, _) in panels.dropFirst() { union = union.union(rect) }
             let W = union.width + 20, H = union.height + 20
             let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(W), pixelsHigh: Int(H),
                                        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -1911,10 +1951,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // What this install can see in its Pet menu. Printed, not photographed:
         // menus are the one surface a screenshot cannot reach, and "no pet list"
         // is exactly the kind of report where the list itself is the evidence.
+        if let i = CommandLine.arguments.firstIndex(of: "--browse-install"), i + 1 < CommandLine.arguments.count {
+            let id = CommandLine.arguments[i + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                self.controller?.browsePets(prefill: "")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    PetBrowser.shared.chooseById(id) { petId, ok in
+                        print("browse install \(petId) ok=\(ok)")
+                        exit(ok ? 0 : 1)
+                    }
+                }
+            }
+        }
+        if CommandLine.arguments.contains("--browse") || CommandLine.arguments.contains("--browse-search") {
+            var query = ""
+            if let i = CommandLine.arguments.firstIndex(of: "--browse-search"), i + 1 < CommandLine.arguments.count {
+                query = CommandLine.arguments[i + 1]
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { self.controller?.browsePets(prefill: query) }
+        }
         if CommandLine.arguments.contains("--pets") {
             let pets = Packs.available()
             for pet in pets { print("pet\t\(pet.id)\t\(pet.label)") }
-            if pets.count <= 1 { print("hint\tNo other pets — babyzilla pet catalog") }
+            if pets.count <= 1 { print("hint\tMore pets… in the Pet menu") }
             print("roots\t" + Packs.roots().map(\.path).joined(separator: ","))
             exit(0)
         }
@@ -2037,7 +2096,8 @@ extension AppDelegate: NSMenuDelegate {
         mute.state = c.config.muted ? .on : .off
         menu.addItem(mute)
 
-        Packs.installMenu(into: menu, target: c, action: #selector(PetController.choosePack(_:)), current: c.config.pack)
+        Packs.installMenu(into: menu, target: c, action: #selector(PetController.choosePack(_:)),
+                          current: c.config.pack, more: #selector(PetController.openPetBrowser))
 
         menu.addItem(.separator())
         let chat = NSMenuItem(title: c.chatOpen ? "Close chat" : "Open chat…",

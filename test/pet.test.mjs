@@ -312,15 +312,23 @@ test("cli: pet think speaks in the active pet's voice, and --voice previews anot
   assert.match(String(bad.stdout ?? bad.message), /unknown voice/);
 });
 
-test("cli: pet remove deletes a pet you are not wearing, and install restores it", async () => {
+test("cli: pet install ships Lil Dino, and removing the pet you wear is refused", async () => {
   const dir = tmp();
   const env = { ...process.env, BABYZILLA_PET_STATE: dir, BABYZILLA_NO_UPDATE_CHECK: "1" };
   const cli = (...args) => run(process.execPath, [BIN, ...args], { env });
+  const listing = async () => (await cli("pet", "packs")).stdout;
   await cli("pet", "install", "--no-build", "--no-start");
   assert.ok(fs.existsSync(path.join(dir, "sprites", "idle.png")), "sprites installed");
 
-  // never delete the art the app is drawing from
-  await assert.rejects(cli("pet", "remove", "babyzilla"), (e) => e.code === 2 && /refusing/.test(e.stdout));
+  // the pack that ships is the pet a new install wears — not the legacy art
+  const shipped = path.join(dir, "packs", "lil-dino");
+  assert.ok(fs.existsSync(path.join(shipped, "pack.json")), "Lil Dino shipped with the install");
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8")).pack, "lil-dino");
+  assert.match(await listing(), /lil-dino\s+Lil Dino[^\n]*active/);
+  assert.doesNotMatch(await listing(), /BabyZilla \(built-in\)/, "the legacy pet is not a choice");
+
+  // never delete the pet the app is drawing
+  await assert.rejects(cli("pet", "remove", "lil-dino"), (e) => e.code === 2 && /refusing/.test(e.stdout));
 
   // stand up a second pet and wear it
   const pack = path.join(dir, "packs", "fakey");
@@ -331,36 +339,64 @@ test("cli: pet remove deletes a pet you are not wearing, and install restores it
   fs.copyFileSync(path.join(dir, "sprites", "idle.png"), path.join(pack, "sprites", "idle-1.png"));
   await cli("pet", "use", "fakey");
 
-  const removed = await cli("pet", "remove", "babyzilla");
-  assert.match(removed.stdout, /removed BabyZilla \(built-in\)/);
-  assert.equal(fs.readdirSync(path.join(dir, "sprites")).filter((f) => f.endsWith(".png")).length, 0, "no built-in art left");
+  const removed = await cli("pet", "remove", "lil-dino");
+  assert.match(removed.stdout, /removed Lil Dino/);
+  assert.ok(!fs.existsSync(shipped), "the pack is gone from disk");
+  assert.match(await listing(), /removed: lil-dino/, "and says how to get it back");
+  await assert.rejects(cli("pet", "use", "lil-dino"), (e) => e.code === 2 && /was removed/.test(e.stdout));
+
+  // a reinstall must not undo the decision ...
+  const reinstalled = await cli("pet", "install", "--no-build", "--no-start");
+  assert.match(reinstalled.stdout, /skipped\s+lil-dino/);
+  assert.ok(!fs.existsSync(shipped), "still gone");
+  // ... restore is the explicit way back
+  const restored = await cli("pet", "restore", "lil-dino");
+  assert.match(restored.stdout, /restored lil-dino/);
+  assert.ok(fs.existsSync(path.join(shipped, "pack.json")), "restore puts the pack back");
+  await cli("pet", "use", "lil-dino");
+  assert.match(await listing(), /lil-dino\s+Lil Dino[^\n]*active/);
+
+  // the legacy art is still removable — it is a fallback, not a pet
+  await cli("pet", "use", "fakey");
+  const legacy = await cli("pet", "remove", "babyzilla");
+  assert.match(legacy.stdout, /removed BabyZilla \(built-in\)/);
+  assert.equal(fs.readdirSync(path.join(dir, "sprites")).filter((f) => f.endsWith(".png")).length, 0);
   assert.ok(!fs.existsSync(path.join(dir, "pet-data.json")));
-
-  const list = await cli("pet", "packs");
-  assert.doesNotMatch(list.stdout, /BabyZilla \(built-in\)/, "the listing hides it");
-  assert.match(list.stdout, /removed: babyzilla/, "and says how to get it back");
-
-  await assert.rejects(cli("pet", "use", "babyzilla"), (e) => e.code === 2 && /was removed/.test(e.stdout));
 
   // The app owns config.json and re-encodes it from its own struct, so a removal
   // recorded there would vanish on the next drag. It must live in its own file.
   fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({
     scale: 3, chattiness: "normal", muted: false, followCursor: true, pack: "fakey",
   }));
-  assert.doesNotMatch((await cli("pet", "packs")).stdout, /BabyZilla \(built-in\)/, "the app's save must not undo the removal");
+  assert.match(await listing(), /removed: babyzilla/, "the app's save must not undo the removal");
+});
 
-  // an install must not quietly bring it back — that would undo a decision
-  const reinstalled = await cli("pet", "install", "--no-build", "--no-start");
-  assert.match(reinstalled.stdout, /skipped\s+babyzilla/);
-  assert.equal(fs.readdirSync(path.join(dir, "sprites")).filter((f) => f.endsWith(".png")).length, 0, "still gone");
-  assert.doesNotMatch((await cli("pet", "packs")).stdout, /BabyZilla \(built-in\)/, "still hidden");
+test("cli: pet install pins node and the CLI for the app", async () => {
+  const dir = tmp();
+  const env = { ...process.env, BABYZILLA_PET_STATE: dir, BABYZILLA_NO_UPDATE_CHECK: "1" };
+  await run(process.execPath, [BIN, "pet", "install", "--no-build", "--no-start"], { env });
+  const pinned = JSON.parse(fs.readFileSync(path.join(dir, "cli.json"), "utf8"));
+  // a login item has no PATH: both paths must be absolute and real
+  assert.ok(path.isAbsolute(pinned.node), "node is absolute");
+  assert.ok(path.isAbsolute(pinned.cli), "cli is absolute");
+  assert.ok(fs.existsSync(pinned.node), "node exists");
+  assert.ok(fs.existsSync(pinned.cli), "cli exists");
+  assert.match(pinned.version, /^\d+\.\d+\.\d+$/);
+});
 
-  const restored = await cli("pet", "restore", "babyzilla");
-  assert.match(restored.stdout, /restored babyzilla/);
-  assert.ok(fs.existsSync(path.join(dir, "sprites", "idle.png")), "restore puts the art back");
-  const again = await cli("pet", "packs");
-  assert.match(again.stdout, /BabyZilla \(built-in\)/);
-  assert.doesNotMatch(again.stdout, /removed:/);
+test("pack: the shipped Lil Dino is a real pack with a voice", () => {
+  const dir = path.join(ROOT, "assets/pet/packs/lil-dino");
+  const pack = JSON.parse(fs.readFileSync(path.join(dir, "pack.json"), "utf8"));
+  assert.equal(pack.kind, "pack");
+  assert.equal(pack.name, "lil-dino");
+  assert.equal(pack.label, "Lil Dino");
+  assert.equal(pack.voice, "caveman", "the caveman is the pack's, not a hardcoded default");
+  assert.equal(pack.defaultScale, 3);
+  for (const name of ["idle", "walk", "jump"]) assert.ok(pack.animations[name]?.length, `${name} has frames`);
+  for (const frame of Object.values(pack.animations).flat()) {
+    assert.ok(fs.existsSync(path.join(dir, "sprites", `${frame}.png`)), `${frame}.png is in the repo`);
+  }
+  assert.ok(Object.keys(pack.expressions ?? {}).length > 10, "it can answer the expression ids");
 });
 
 test("pack animations: a nod and a sway from the pack's own pixels, plus the sheet row it missed", async () => {
@@ -786,10 +822,21 @@ test("pack builder: a sheet becomes coherent, complete animations", async (t) =>
   assert.deepEqual(Object.keys(pack.animations).sort(), ["idle", "jump", "walk"]);
 });
 
-test("cli: pet packs lists the built-in pet, and use rejects unknown names", async () => {
-  const env = { ...process.env, BABYZILLA_PET_STATE: tmp(), BABYZILLA_NO_UPDATE_CHECK: "1" };
+test("cli: pet packs lists what is installed, and use rejects unknown names", async () => {
+  const dir = tmp();
+  const env = { ...process.env, BABYZILLA_PET_STATE: dir, BABYZILLA_NO_UPDATE_CHECK: "1" };
+  // the shipped pack is listed before anything is copied: it is what comes with
+  // the plugin, and it is the default, so the list must not read as empty
+  const empty = await run(process.execPath, [BIN, "pet", "packs"], { env });
+  assert.match(empty.stdout, /lil-dino\s+Lil Dino/);
+  assert.doesNotMatch(empty.stdout, /BabyZilla \\(built-in\\)/, "the legacy pet is never a choice");
+
+  await run(process.execPath, [BIN, "pet", "install", "--no-build", "--no-start"], { env });
   const packs = await run(process.execPath, [BIN, "pet", "packs"], { env });
-  assert.match(packs.stdout, /babyzilla\s+BabyZilla \(built-in\)/);
+  assert.match(packs.stdout, /lil-dino\s+Lil Dino/);
+  assert.match(packs.stdout, /more pets: babyzilla pet catalog/);
+  assert.doesNotMatch(packs.stdout, /babyzilla\s+BabyZilla/);
+
   const bad = run(process.execPath, [BIN, "pet", "use", "not-a-pack"], { env });
   await assert.rejects(bad, (e) => e.code === 2);
 });

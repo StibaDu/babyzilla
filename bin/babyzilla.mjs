@@ -955,7 +955,7 @@ function writeRetired(set) {
 function petInstall({ login = false, build = true } = {}) {
   const root = repoRoot();
   const src = path.join(root, "apps", "pet");
-  const swift = ["main.swift", "PetApp.swift", "PixelFont.swift"].map((f) => path.join(src, f));
+  const swift = ["main.swift", "PetApp.swift", "PetBrowser.swift", "PixelFont.swift"].map((f) => path.join(src, f));
   for (const f of swift) if (!fs.existsSync(f)) throw new Error(`missing source ${f}`);
   const macos = path.join(PET_APP, "Contents", "MacOS");
   fs.mkdirSync(macos, { recursive: true });
@@ -1023,6 +1023,34 @@ function petInstall({ login = false, build = true } = {}) {
       packs++;
     }
   }
+  // The pet that ships: a new install opens as the dino, not the legacy art.
+  // An existing explicit choice is left alone — this is a default, not a decision.
+  const dino = path.join(petStateDir(), "packs", "lil-dino", "pack.json");
+  if (!retired.has("lil-dino") && fs.existsSync(dino)) {
+    const cfg = readPetConfig();
+    if (!cfg.pack) {
+      cfg.pack = "lil-dino";
+      // its art is 48px, not the legacy 64: without the pack's own scale the dino
+      // opens as a speck in the corner of a window sized for the old sprites
+      try {
+        const scale = JSON.parse(fs.readFileSync(dino, "utf8")).defaultScale;
+        if (Number.isInteger(scale) && !cfg.scale) cfg.scale = scale;
+      } catch { /* a broken pack.json is not a reason to fail an install */ }
+      writePetConfig(cfg);
+    }
+  }
+
+  // The app has no PATH of its own (a login item, not a shell), so it cannot find
+  // `node` or this script by name. Pin both, the same way lowfat pins its binary:
+  // absolute at install time, read back later.
+  try {
+    fs.writeFileSync(path.join(petStateDir(), "cli.json"), `${JSON.stringify({
+      node: process.execPath,
+      cli: path.resolve(process.argv[1] ?? ""),
+      version: pkgVersion(),
+    }, null, 2)}\n`);
+  } catch { /* a read-only state dir is not a reason to fail an install */ }
+
   const gallery = path.join(petStateDir(), "gallery.html");
   for (const asset of ["gallery.html", "gallery.css", "gallery-data.js"]) {
     const srcFile = path.join(root, "assets", "pet", asset);
@@ -1766,11 +1794,9 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
           const packs = listPacks();
           const cfgNow = readPetConfig();
           const retired = readRetired();
-          const active = cfgNow.pack ?? "babyzilla";
+          const dinoOnDisk = packs.some((p) => p.id === "lil-dino");
+          const active = cfgNow.pack ?? (dinoOnDisk ? "lil-dino" : "babyzilla");
           if (sub === "packs") {
-            if (!retired.has("babyzilla")) {
-              out(`  ${"babyzilla".padEnd(16)} BabyZilla ${c(DIM)}(built-in)${c(RESET)}${active === "babyzilla" ? `  ${c(GREEN)}active${c(RESET)}` : ""}\n`);
-            }
             for (const p of packs) {
               if (retired.has(p.id)) continue;
               const anims = Object.entries(p.animations ?? {}).map(([k, v]) => `${k} ${v.length}`).join(", ");
@@ -1778,10 +1804,10 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
             }
             const listed = packs.filter((p) => !retired.has(p.id)).length;
             out(`\nswitch with: babyzilla pet use <name>\n`);
-            if (!listed && retired.has("babyzilla")) {
-              out(`${c(DIM)}no pets installed — babyzilla pet catalog has 1300+ of them, then pet add <id>${c(RESET)}\n`);
-            } else if (!listed) {
-              out(`${c(DIM)}only the built-in so far — babyzilla pet catalog has 1300+ of them${c(RESET)}\n`);
+            if (!listed) {
+              out(`${c(DIM)}no pets installed — babyzilla pet install ships Lil Dino, and pet catalog has 1300+ more${c(RESET)}\n`);
+            } else {
+              out(`${c(DIM)}more pets: babyzilla pet catalog, then pet add <id>${c(RESET)}\n`);
             }
             if (retired.size) {
               out(`${c(DIM)}removed: ${[...retired].join(", ")} — babyzilla pet restore <name> brings it back${c(RESET)}\n`);

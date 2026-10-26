@@ -2,6 +2,41 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.32.0] — 2026-10-26
+
+### Added
+
+- **The pet browser: the OpenPets catalog, inside the app.** **Pet → More pets…**
+  lists all 1300+ catalog pets with search. Packs already on disk come first (`●`
+  active, `·` installed); anything else is a catalog entry with its category.
+  Picking one downloads it, converts it to a pack, and switches to it — no terminal
+  needed. The catalog is fetched once and cached for a day, and the browser fetches
+  it itself on first open. `Esc` closes it.
+- `pet install` now writes `~/.opencode/pet/cli.json` with the absolute `node` and
+  CLI paths. The app is a login item with no `PATH`, so it cannot call either by
+  name — the same lesson as the lowfat report, one layer down. The browser uses
+  those pinned paths.
+
+### Changed
+
+- **A fresh install wears Lil Dino.** The pack ships with the plugin
+  (`assets/pet/packs/lil-dino` — 50 frames, its own 48px scale, caveman voice) and
+  `pet install` sets it as the default when `config.json` has no choice yet. An
+  explicit choice is never overridden, but an upgrade from the legacy art lands on
+  the dino.
+- **BabyZilla is no longer a pet you can pick.** The generated art is still copied
+  into the state dir as a fallback for a broken pack (a blank window is worse), but
+  it is gone from the Pet menu and from `pet packs`. `pet use default` and
+  `pet restore babyzilla` still work as recovery.
+- `pet packs` lists the pets you actually have and points at the catalog for the
+  rest; the menu's empty-state line says **More pets…** instead of a CLI command.
+
+### Fixed
+
+- **Offscreen captures included a rectangle at the window origin**, so a pet
+  sitting at x=900 produced a 900px-wide strip of empty desktop around every
+  snapshot. The union now starts from the first window, not `NSRect.zero`.
+
 ## [0.31.0] — 2026-10-26
 
 ### Added

@@ -1753,7 +1753,13 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
               const anims = Object.entries(p.animations ?? {}).map(([k, v]) => `${k} ${v.length}`).join(", ");
               out(`  ${p.id.padEnd(16)} ${p.label} ${c(DIM)}${anims}${c(RESET)}${active === p.id ? `  ${c(GREEN)}active${c(RESET)}` : ""}\n`);
             }
+            const listed = packs.filter((p) => !retired.has(p.id)).length;
             out(`\nswitch with: babyzilla pet use <name>\n`);
+            if (!listed && retired.has("babyzilla")) {
+              out(`${c(DIM)}no pets installed — babyzilla pet catalog has 1300+ of them, then pet add <id>${c(RESET)}\n`);
+            } else if (!listed) {
+              out(`${c(DIM)}only the built-in so far — babyzilla pet catalog has 1300+ of them${c(RESET)}\n`);
+            }
             if (retired.size) {
               out(`${c(DIM)}removed: ${[...retired].join(", ")} — babyzilla pet restore <name> brings it back${c(RESET)}\n`);
             }

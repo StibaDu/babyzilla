@@ -184,6 +184,10 @@ lowfat --version
 
 **Expected:** `lowfat 0.9.0`.
 
+- The plugin finds that binary itself and pins its **absolute path** into every
+  rewritten command, so `~/.local/bin` does **not** need to be on the tool
+  shell's PATH. (Before 0.30.1 the rewrite emitted the bare name `lowfat`, which
+  exits 127 wherever `~/.local/bin` is missing — see the troubleshooting row.)
 - If `curl` fails: `cargo install lowfat --locked` (only if a Rust toolchain
   exists); otherwise SKIP — Layer 2 is optional, Layer 1 is already active.
 - After installing the binary, the plugin picks it up on next load (next
@@ -369,6 +373,7 @@ babyzilla --version   # must print a version, not nothing
 | `distillation failed ... falling back to native` | model/provider issue for the distill call | benign fallback; check provider auth |
 | `already in flight / yielding` log lines | duplicate compaction protection | benign, expected noise |
 | `layer 2 skipped: lowfat binary not found` | lowfat binary not installed | layer 1 works; run Step 2b for command compression |
+| `zsh: command not found: lowfat` (exit 127) on rewritten commands | babyzilla before 0.30.1: the rewrite used the bare name and the tool shell's PATH has no `~/.local/bin` | update babyzilla — the plugin now pins the absolute path (no PATH edit needed) |
 | pack exists but `verify` reports missing files | modules reference files your human moved/deleted | informational only |
 
 ## Privacy

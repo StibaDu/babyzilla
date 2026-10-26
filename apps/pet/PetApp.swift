@@ -137,7 +137,11 @@ enum Packs {
             // dev: assets/pet/packs next to the sprites directory
             roots.append(Paths.resolveSprites().deletingLastPathComponent().appendingPathComponent("packs"))
         }
-        return roots
+        // A packs directory is often a symlink — another disk, a dotfiles repo, a
+        // shared pets folder. `contentsOfDirectory` refuses a symlinked root and
+        // throws, which is caught upstream and read as "this install has no pets",
+        // so the Pet menu came up empty for exactly those users.
+        return roots.map { $0.resolvingSymlinksInPath() }
     }
 
     static func directory(_ name: String) -> URL? {
@@ -146,6 +150,33 @@ enum Packs {
             if FileManager.default.fileExists(atPath: dir.appendingPathComponent("pack.json").path) { return dir }
         }
         return nil
+    }
+
+
+    /// Put the pet list in a menu. Always — a fresh install has nothing to switch
+    /// to yet, and hiding the submenu behind `count > 1` meant a new user saw no
+    /// pet list at all, only the built-in they could not name or change.
+    static func installMenu(into menu: NSMenu, target: AnyObject, action: Selector, current: String?) {
+        let pets = available()
+        let active = current ?? "babyzilla"
+        let petItem = NSMenuItem(title: "Pet", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        for pet in pets {
+            let item = NSMenuItem(title: pet.label, action: action, keyEquivalent: "")
+            item.target = target
+            item.representedObject = pet.id
+            item.state = active == pet.id ? .on : .off
+            sub.addItem(item)
+        }
+        if pets.count <= 1 {
+            sub.addItem(.separator())
+            // A disabled line, not a dead menu: says what to do about it.
+            let hint = NSMenuItem(title: "No other pets — babyzilla pet catalog", action: nil, keyEquivalent: "")
+            hint.isEnabled = false
+            sub.addItem(hint)
+        }
+        petItem.submenu = sub
+        menu.addItem(petItem)
     }
 
     /// Always offers the built-in art first; packs found on disk follow.
@@ -1294,20 +1325,7 @@ final class PetController: NSObject {
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        let pets = Packs.available()
-        if pets.count > 1 {
-            let petItem = NSMenuItem(title: "Pet", action: nil, keyEquivalent: "")
-            let sub = NSMenu()
-            for pet in pets {
-                let item = NSMenuItem(title: pet.label, action: #selector(choosePack(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = pet.id
-                item.state = (config.pack ?? "babyzilla") == pet.id ? .on : .off
-                sub.addItem(item)
-            }
-            petItem.submenu = sub
-            menu.addItem(petItem)
-        }
+        Packs.installMenu(into: menu, target: self, action: #selector(choosePack(_:)), current: config.pack)
         let mute = NSMenuItem(title: "Mute speech", action: #selector(toggleMute), keyEquivalent: "")
         mute.target = self
         mute.state = config.muted ? .on : .off
@@ -1596,6 +1614,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 exit(0)
             }
         }
+        // What this install can see in its Pet menu. Printed, not photographed:
+        // menus are the one surface a screenshot cannot reach, and "no pet list"
+        // is exactly the kind of report where the list itself is the evidence.
+        if CommandLine.arguments.contains("--pets") {
+            let pets = Packs.available()
+            for pet in pets { print("pet\t\(pet.id)\t\(pet.label)") }
+            if pets.count <= 1 { print("hint\tNo other pets — babyzilla pet catalog") }
+            print("roots\t" + Packs.roots().map(\.path).joined(separator: ","))
+            exit(0)
+        }
         if let i = CommandLine.arguments.firstIndex(of: "--capture"), i + 1 < CommandLine.arguments.count {
             captureAndExit(CommandLine.arguments[i + 1], after: 2.0)
         }
@@ -1715,19 +1743,7 @@ extension AppDelegate: NSMenuDelegate {
         mute.state = c.config.muted ? .on : .off
         menu.addItem(mute)
 
-        if Packs.available().count > 1 {
-            let petItem = NSMenuItem(title: "Pet", action: nil, keyEquivalent: "")
-            let sub = NSMenu()
-            for pet in Packs.available() {
-                let item = NSMenuItem(title: pet.label, action: #selector(PetController.choosePack(_:)), keyEquivalent: "")
-                item.target = c
-                item.representedObject = pet.id
-                item.state = (c.config.pack ?? "babyzilla") == pet.id ? .on : .off
-                sub.addItem(item)
-            }
-            petItem.submenu = sub
-            menu.addItem(petItem)
-        }
+        Packs.installMenu(into: menu, target: c, action: #selector(PetController.choosePack(_:)), current: c.config.pack)
 
         menu.addItem(.separator())
         let gallery = NSMenuItem(title: "Gallery…", action: #selector(PetController.openGallery), keyEquivalent: "")

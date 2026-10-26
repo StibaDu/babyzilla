@@ -51,6 +51,7 @@ import { thought as petThoughtText, latestThought } from "./lib/pet-thought.mjs"
 import { classifyTurn, lastAnswer } from "./lib/pet-mark.mjs";
 import { resolveVoice } from "./lib/pet-voice.mjs";
 import { toolExpression, outcomeExpression, compactionExpression, budgetExpression, updateExpression } from "./lib/pet-map.mjs";
+import { hasBareLowfat, pinLowfat, withLowfatOnPath } from "./lib/lowfat.mjs";
 
 const execAsync = promisify(execCb);
 const execFileAsync = promisify(execFileCb);
@@ -900,7 +901,16 @@ export default {
               out = String(err?.stdout ?? "").trim();
             }
             if (out && out !== command) {
-              a.input = { ...a.input, command: out };
+              // `lowfat rewrite` names the binary by bare name, but the tool
+              // shell is spawned by the host and need not have ~/.local/bin on
+              // PATH — that made every rewritten search exit 127. Pin the path
+              // we resolved at load time; if a future rewrite shape still asks
+              // for a bare lowfat, lend the shell the directory instead.
+              const pinned = pinLowfat(out, lowfatBinary);
+              a.input = {
+                ...a.input,
+                command: hasBareLowfat(pinned) ? withLowfatOnPath(pinned, lowfatBinary) : pinned,
+              };
             }
           } catch { /* rewrite must never break execution */ }
         });

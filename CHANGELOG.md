@@ -2,6 +2,25 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.30.1] — 2026-10-26
+
+### Fixed
+
+- **Layer 2 no longer dies with `command not found: lowfat` (exit 127).**
+  `lowfat rewrite` answers with the binary's *bare* name, and the tool shell that
+  runs the rewritten line is spawned by the host — a stock macOS shell has
+  `/opt/homebrew/bin` and `/usr/bin`, but not `~/.local/bin`, where
+  `AGENT-INSTALL.md` installs lowfat. The plugin now pins the absolute path it
+  resolved at load time into every command position (`LOWFAT_PIPED=1
+  /Users/…/.local/bin/lowfat grep …`), leaves literal mentions in arguments
+  alone, and falls back to lending the shell the directory on PATH if a future
+  rewrite shape asks for a bare lowfat some other way. No PATH edit required.
+- **The pet list is visible on a fresh install.** The `Pet` submenu was only
+  added when more than one pet existed, so a new user saw no list at all and had
+  no way to discover packs; it is now always offered, with a disabled
+  "No other pets — babyzilla pet catalog" line while only the built-in exists.
+- `babyzilla pet packs` says where to get more when the built-in is all there is.
+
 ## [0.30.0] — 2026-10-25
 
 ### Added

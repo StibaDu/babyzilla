@@ -2,6 +2,37 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.33.2] — 2026-10-27
+
+### Added
+
+- **Grounding: no silent guesses.** Every request now carries one constant system
+  part (`event.system`, via a second `context` hook):
+
+  > Answer truthfully. When you are confident, answer directly; when you are not
+  > certain of a factual claim, say so or verify it before asserting it (search,
+  > read the file, run the command). Never present a guess as a fact. Label an
+  > estimate as an estimate. If the user's premise looks wrong, say so instead of
+  > going along with it. Do not ask the user to check what you can check yourself.
+
+  It is a **system part, not a prompt edit**: prompt-hook edits become the
+  canonical persisted user turn (OpenCode docs), so a directive there would live in
+  the transcript forever. `event.system` is rebuilt per request, and constant bytes
+  stay in the provider's cached prefix.
+- The directive lives in its **own** `context` hook, so `requestCompression: false`
+  cannot turn honesty off.
+
+### Changed
+
+- New default `grounding: true`. Set `grounding: false` to drop the instruction for
+  work where being wrong out loud is the point (brainstorming, first drafts).
+
+### Limits, stated
+
+- This is an instruction, not a guarantee. It makes verification the cheap path and
+  the silent guess the exception; it cannot make a model infallible. The release
+  notes say so rather than implying otherwise.
+
 ## [0.33.1] — 2026-10-26
 
 ### Added

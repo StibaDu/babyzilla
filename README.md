@@ -30,6 +30,10 @@
   `max(proactiveCompactMinTokens, proactiveCompactRatio × window)` BabyZilla
   asks OpenCode to compact (rate-limited per session), so the pack kicks in at
   ~35% of the window instead of ~90%. Disable with `proactiveCompaction: false`.
+- **Grounding — no silent guesses**: every request carries one constant system
+  part: answer directly when sure, say "I'm not sure" or check it with a tool
+  when not, never pass a guess off as a fact, and never ask you to verify what
+  the model could check itself. On by default (`grounding: false` drops it).
 - **Layer 0.5 — Vision routing**: text-only main models receive a placeholder
   instead of image pixels, so image prompts are routed *before* the request:
   when a prompt involves image content, a one-shot synthetic note tells the

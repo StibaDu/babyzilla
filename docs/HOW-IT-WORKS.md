@@ -1,7 +1,7 @@
 # How BabyZilla works
 
 OpenCode v2 gives plugins a hook on compaction and another on every outgoing
-request. BabyZilla registers four hooks and one command, and owns zero
+request. BabyZilla registers five hooks and one command, and owns zero
 OpenCode state — everything lives in `~/.opencode/contextpacks/`.
 
 ## The hooks
@@ -56,6 +56,37 @@ it, OpenCode waits for ~90% of the window — 900K+ on Kimi K3 — before Layer 
 ever gets a chance to run. Triggers are rate-limited per session
 (`proactiveCompactCooldownMs`, 10 min) so a compaction that frees little cannot
 loop.
+
+### 0b. `session.hook("context")` — grounding: don't guess, verify
+
+A second, independent `context` hook adds one constant system part to every
+request:
+
+```
+[babyzilla:grounding] Answer truthfully.
+- When you are confident, answer directly; do not hedge what you know.
+- When you are not certain of a factual claim, say so ("I'm not sure") or verify
+  it before asserting it: search, read the file, run the command. Do not ask the
+  user to check what you can check yourself.
+- Never present a guess as a fact. Label an estimate as an estimate.
+- If the user's premise looks wrong, say so instead of going along with it.
+```
+
+Three design rules, each for a reason a user would feel:
+
+- **System part, not a prompt edit.** A `prompt`-hook edit becomes the canonical
+  *persisted* user turn (OpenCode's own documentation), so the directive would
+  live in the transcript forever. `event.system` is assembled per request, so
+  this never touches history.
+- **Its own hook.** The budget hook above is gated behind `requestCompression`;
+  honesty must not disappear because someone turned compression off.
+- **Constant bytes.** The same text every request stays in the provider's cached
+  prefix. It costs its own ~80 tokens once, then cached tokens.
+
+It is on by default (`grounding: true`) and can be turned off (`grounding:
+false`) for work where being wrong out loud is the point — brainstorming, first
+drafts. It is an instruction, not a guarantee: it makes verification the cheap
+path and a silent guess the exception, and it cannot make a model infallible.
 
 ### 1. `session.hook("compaction")` — replace the summary
 

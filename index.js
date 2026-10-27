@@ -127,6 +127,7 @@ log("contextpack module loaded, data dir:", ROOT);
 
 // Defaults live in lib/defaults.mjs so the replay bench measures the real ones.
 import { defaults } from "./lib/defaults.mjs";
+import { GROUNDING_MARK, groundSystem } from "./lib/grounding.mjs";
 
 function log(...args) {
   console.warn("[contextpack]", ...args);
@@ -922,6 +923,29 @@ export default {
       } else {
         log("layer 2 skipped: lowfat binary not found on PATH or ~/.local/bin (see AGENT-INSTALL.md)");
       }
+    }
+
+    // ---- grounding: never guess, verify when feasible ---------------------
+    // A separate hook on purpose: the budget hook below is gated behind
+    // `requestCompression`, and an honesty directive must not disappear because
+    // someone turned compression off. `event.system` is rebuilt per request, so
+    // this never touches stored history; the text is constant, so it is cached.
+    // On unless explicitly disabled — a silent guess is the expensive failure:
+    // the answer looks finished and has to be asked for twice.
+    if (typeof ctx.session?.hook === "function" && opts.grounding !== false) {
+      let groundedLogged = false;
+      await ctx.session.hook("context", (event) => {
+        try {
+          if (!groundSystem(event?.system)) return;
+          if (!groundedLogged) {
+            groundedLogged = true;
+            log(`grounding: instruction added to every request (${GROUNDING_MARK})`);
+          }
+        } catch (e) {
+          // A directive is never worth a failed request.
+          log("grounding skipped:", e?.message ?? e);
+        }
+      });
     }
 
     // ---- per-request context budget (works without compaction) ------------

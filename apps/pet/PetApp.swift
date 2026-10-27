@@ -23,11 +23,14 @@ struct PetConfig: Codable {
     var pack: String? = nil         // nil = the built-in BabyZilla art
     /// Turned off from the menu bar. Persisted so a login start does not undo it.
     var hidden: Bool = false
+    /// Does not wander and does not amble toward the cursor. Idle animation
+    /// (hops, head tilts, blinks) stays — "stationary" is about position.
+    var stayPut: Bool = false
     /// The pet's language ("en", "de"). Unknown values read as English.
     var language: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case scale, x, y, chattiness, muted, followCursor, pack, hidden, language
+        case scale, x, y, chattiness, muted, followCursor, pack, hidden, stayPut, language
     }
 
     /// Decode field by field. The synthesized initializer requires every
@@ -46,6 +49,7 @@ struct PetConfig: Codable {
         followCursor = try c.decodeIfPresent(Bool.self, forKey: .followCursor) ?? true
         pack = try c.decodeIfPresent(String.self, forKey: .pack)
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+        stayPut = try c.decodeIfPresent(Bool.self, forKey: .stayPut) ?? false
         language = try c.decodeIfPresent(String.self, forKey: .language)
     }
 
@@ -1089,7 +1093,12 @@ final class PetController: NSObject {
         guard !dragging, !active else { return }
         if now < walkPauseUntil { return }
         if targetX == nil, now >= nextWander {
-            let roll = Double.random(in: 0...1)
+            // Two of the five bands below move the pet: wandering (0–0.45) and
+            // ambling toward the cursor (0.45–0.62). "Stay put" removes them by
+            // drawing the roll from the bands that are left, so hop / tilt / look
+            // keep their own proportions — deleting the bands and re-spreading
+            // the rest made a stationary pet hop three times as often.
+            let roll = config.stayPut ? Double.random(in: 0.62...1) : Double.random(in: 0...1)
             let screen = screenForPet()
             if roll < 0.45 {
                 // wander
@@ -1617,7 +1626,7 @@ final class PetController: NSObject {
         title.isEnabled = false
         menu.addItem(title)
         menu.addItem(.separator())
-        let hide = NSMenuItem(title: l10n.t(hidden ? "Show Dino" : "Hide Dino"),
+        let hide = NSMenuItem(title: l10n.t(hidden ? "Show Pet" : "Hide Pet"),
                               action: #selector(toggleVisibility), keyEquivalent: "")
         hide.target = self
         menu.addItem(hide)
@@ -1630,6 +1639,10 @@ final class PetController: NSObject {
             item.state = config.scale == scale ? .on : .off
             menu.addItem(item)
         }
+        let stay = NSMenuItem(title: l10n.t("Stay put"), action: #selector(toggleStayPut), keyEquivalent: "")
+        stay.target = self
+        stay.state = config.stayPut ? .on : .off
+        menu.addItem(stay)
         menu.addItem(.separator())
         Packs.installMenu(into: menu, target: self, action: #selector(choosePack(_:)),
                           current: config.pack, more: #selector(openPetBrowser), l10n: l10n)
@@ -1678,6 +1691,18 @@ final class PetController: NSObject {
 
     @objc func toggleMute() {
         config.muted.toggle()
+        persist()
+    }
+
+    /// Stops it where it stands. Clearing the target matters: leaving it set made
+    /// the pet finish the stroll it had already started, which reads as "the
+    /// option did nothing" for as long as the walk lasts.
+    @objc func toggleStayPut() {
+        config.stayPut.toggle()
+        if config.stayPut {
+            targetX = nil
+            vx = 0
+        }
         persist()
     }
 
@@ -1995,6 +2020,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 exit(0)
             }
         }
+        // Headless proof that "Stay put" is wired to the pet, not just to a menu
+        // title: the switch must clear a walk already in progress and land in
+        // config.json, or the next launch turns the pet back into a walker.
+        if CommandLine.arguments.contains("--stay-test") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                guard let self, let c = self.controller else { print("no controller"); exit(1) }
+                print("initial\tstayPut=\(c.config.stayPut)\t\(c.probeHeadless())")
+                c.walkHeadless(toX: 400)
+                c.toggleStayPut()
+                print("on\tstayPut=\(c.config.stayPut)\tconfig=\(PetConfig.load(Paths.config).stayPut)\t\(c.probeHeadless())")
+                // Longer than the 3–9s decision timer, so at least one idle
+                // decision fires. x must be byte-identical afterwards: a checkbox
+                // that does not stop the walk is the bug this guards.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 12.0) {
+                    print("held\t\(c.probeHeadless())")
+                    c.toggleStayPut()
+                    print("off\tstayPut=\(c.config.stayPut)\tconfig=\(PetConfig.load(Paths.config).stayPut)")
+                    exit(0)
+                }
+            }
+        }
         // What this install can see in its Pet menu. Printed, not photographed:
         // menus are the one surface a screenshot cannot reach, and "no pet list"
         // is exactly the kind of report where the list itself is the evidence.
@@ -2159,7 +2205,7 @@ extension AppDelegate: NSMenuDelegate {
             return
         }
         let l = c.l10n
-        let toggle = NSMenuItem(title: l.t(c.hidden ? "Show Dino" : "Hide Dino"),
+        let toggle = NSMenuItem(title: l.t(c.hidden ? "Show Pet" : "Hide Pet"),
                                 action: #selector(togglePet), keyEquivalent: "")
         toggle.target = self
         toggle.state = c.hidden ? .off : .on
@@ -2177,6 +2223,11 @@ extension AppDelegate: NSMenuDelegate {
         }
         sizeItem.submenu = sizes
         menu.addItem(sizeItem)
+
+        let stay = NSMenuItem(title: l.t("Stay put"), action: #selector(PetController.toggleStayPut), keyEquivalent: "")
+        stay.target = c
+        stay.state = c.config.stayPut ? .on : .off
+        menu.addItem(stay)
 
         let mute = NSMenuItem(title: l.t("Mute speech"), action: #selector(PetController.toggleMute), keyEquivalent: "")
         mute.target = c

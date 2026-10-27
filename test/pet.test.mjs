@@ -937,3 +937,66 @@ test("data file: matches the catalogue", (t) => {
     assert.ok(MOTIONS.has(e.motion));
   }
 });
+
+// ── the app's own menu ──────────────────────────────────────────────────────
+// Menus are the one surface a screenshot cannot reach, so the app prints them
+// (`--menu`) in the language it is set to. That is enough to pin the wording of
+// an action — it must speak about "the pet", not about one pack's art — and to
+// prove the Stay put switch reflects the config rather than always reading off.
+
+const PET_APP_BIN = path.join(os.homedir(), "Applications", "BabyZillaPet.app",
+                              "Contents", "MacOS", "BabyZillaPet");
+
+/** The built app, or null after marking the test skipped. */
+function petApp(t) {
+  if (process.platform !== "darwin") { t.skip("macOS app"); return null; }
+  if (!fs.existsSync(PET_APP_BIN)) { t.skip("pet app not built (babyzilla pet install)"); return null; }
+  return PET_APP_BIN;
+}
+
+function petAppState(config) {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify(config));
+  return { dir, env: { ...process.env, BABYZILLA_PET_STATE: dir, BABYZILLA_NO_UPDATE_CHECK: "1" } };
+}
+
+test("pet app: both menus say Hide/Show Pet, never the dino's name", async (t) => {
+  const bin = petApp(t);
+  if (!bin) return;
+  const { dir, env } = petAppState({ language: "en" });
+  const { stdout } = await run(bin, ["--menu"], { env, timeout: 30_000 });
+  // Two menus: the pet's right-click menu and the menu bar.
+  assert.equal((stdout.match(/^Hide Pet/gm) ?? []).length, 2, stdout);
+  assert.equal((stdout.match(/^Stay put/gm) ?? []).length, 2, stdout);
+  assert.doesNotMatch(stdout, /Dino/, "the action is about the pet, not about Lil Dino");
+  assert.doesNotMatch(stdout, /^Stay put {2}\*/m, "off by default: no checkmark");
+
+  const de = petAppState({ language: "de" });
+  const german = await run(bin, ["--menu"], { env: de.env, timeout: 30_000 });
+  assert.equal((german.stdout.match(/^Pet verstecken/gm) ?? []).length, 2, german.stdout);
+  assert.equal((german.stdout.match(/^Stehen bleiben/gm) ?? []).length, 2, german.stdout);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(de.dir, { recursive: true, force: true });
+});
+
+test("pet app: Stay put stops a walk in progress and persists", async (t) => {
+  const bin = petApp(t);
+  if (!bin) return;
+  const { dir, env } = petAppState({ language: "en" });
+  const { stdout } = await run(bin, ["--stay-test"], { env, timeout: 30_000 });
+  // The switch is wired to the state, written to config.json, and a pending
+  // wander target is dropped — otherwise it finishes the stroll it started and
+  // the option looks broken for the length of that walk.
+  assert.match(stdout, /^initial\tstayPut=false\t/m, stdout);
+  assert.match(stdout, /^on\tstayPut=true\tconfig=true\t.*target=none$/m, stdout);
+  // The real question: did it stay there? The harness waits 12s — longer than
+  // the 3–9s decision timer — so at least one idle decision fired.
+  const onX = stdout.match(/^on\t[^\n]*\bx=([\d.]+)/m)?.[1];
+  const heldX = stdout.match(/^held\t[^\n]*\bx=([\d.]+)/m)?.[1];
+  assert.ok(onX && heldX, stdout);
+  assert.equal(heldX, onX, "same pixel after 12s: the pet did not walk");
+  assert.match(stdout, /^held\t[^\n]*target=none$/m, stdout);
+  assert.match(stdout, /^off\tstayPut=false\tconfig=false$/m, stdout);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8")).stayPut, false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

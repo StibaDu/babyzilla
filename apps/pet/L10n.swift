@@ -37,8 +37,11 @@ struct L10n {
         // pet + menu bar
         "Pet": "Pet",
         "More pets…": "Mehr Pets…",
-        "Show Dino": "Dino zeigen",
-        "Hide Dino": "Dino verstecken",
+        // The action is about *any* pet, not the dino: a pack is a second look,
+        // and a menu that keeps saying "Dino" after switching is a lie.
+        "Show Pet": "Pet zeigen",
+        "Hide Pet": "Pet verstecken",
+        "Stay put": "Stehen bleiben",
         "Mute speech": "Sprache stumm",
         "Size": "Größe",
         "Chattiness": "Gesprächigkeit",

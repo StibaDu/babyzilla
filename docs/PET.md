@@ -242,24 +242,37 @@ sets or clears it by hand (useful when testing the look, or to shut the dino up)
 |---|---|
 | drag | move it, throw it, it falls and squashes |
 | click | poke (it reacts) |
-| right-click | hide/show, size 1×/2×/3×, pet, mute, chattiness, gallery, quit |
-| menu bar icon | **Hide Dino / Show Dino**, size, pet, mute, gallery, quit |
+| right-click | hide/show, size 1×/2×/3×, stay put, pet, mute, chattiness, gallery, quit |
+| menu bar icon | **Hide Pet / Show Pet**, size, stay put, pet, mute, gallery, quit |
 
-Position, size, chattiness and whether it is on persist in
+Position, size, chattiness, whether it walks and whether it is on persist in
 `~/.opencode/pet/config.json`.
+
+### Stay put
+
+By default the pet decides what to do every 3–9 seconds and two of those choices
+move it: wander somewhere on the screen, or amble toward the pointer. **Stay put**
+(in either menu, `stayPut` in `config.json`) removes those two and keeps the rest —
+hops, head tilts, blinks and looking around still happen, in their original
+proportions rather than four times as often. Switching it on mid-walk stops the pet
+where it stands instead of letting it finish the stroll.
+
+It does not touch what you do: dragging and throwing still work, and an explicit
+`walk` event (nothing in the plugin sends one today) is still honoured — the option
+is about the pet's own decisions, not about commands.
 
 ### Turning it off
 
 The menu bar icon *is* the dino's face — the pack's own idle frame, cropped to the
 character and drawn nearest-neighbour, so it is the same creature and not a generic
-glyph. Click it and the first item is **Hide Dino**; the icon dims while the pet is
+glyph. Click it and the first item is **Hide Pet**; the icon dims while the pet is
 off, so the menu bar tells you its state without opening anything.
 
 Off is a real stop, not a fade: the windows are ordered out, the 30 Hz timer is
 invalidated (no CPU while it is off), and the event file is skipped rather than
 queued — otherwise turning it back on after an hour of work would replay a burst of
 old bubbles. The choice is written to `config.json`, so `pet install --login` starts
-the app at login but leaves a hidden dino hidden.
+the app at login but leaves a hidden pet hidden.
 
 ## How the connection works
 

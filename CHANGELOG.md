@@ -2,6 +2,42 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.33.4] — 2026-10-27
+
+### Added
+
+- **Stay put — a pet that holds its ground.** The pet decides what to do every
+  3–9 seconds, and two of those five choices move it: wander somewhere else on the
+  screen, or amble toward the pointer (`followCursor`). *Stay put*, in the pet's
+  right-click menu **and** the menu bar, removes those two and keeps the rest —
+  hops, head tilts, blinks and looking around still happen.
+
+  - The remaining idle behaviour keeps its **original proportions**: the roll is
+    drawn from the 0.62–1.0 band rather than the movement bands being deleted and
+    the rest re-spread, which would have made a stationary pet hop ~3× as often.
+  - Switching it on **stops the pet where it stands** — a pending wander target is
+    cleared, so it does not finish the stroll it already started and look broken
+    for the length of that walk.
+  - It is about the pet's own decisions, not your input: dragging/throwing still
+    work, and an explicit `walk` event is still honoured.
+  - Persisted as `stayPut` in `~/.opencode/pet/config.json` (default `false`), so a
+    restart or `pet install --login` does not turn it back into a walker.
+
+### Changed
+
+- The menu bar action is **Hide Pet / Show Pet** (German **Pet verstecken /
+  Pet zeigen**) instead of *Hide Dino / Show Dino*. A pack is a second look, so an
+  action named after the default pack's art went stale the moment you switched
+  pets. The pack label **Lil Dino** is the creature's name and is unchanged.
+
+### Verification
+
+Two new app tests (`test/pet.test.mjs`), skipped when the app is not built and off
+macOS: both menus are printed via `--menu` and checked for the wording and the
+checkmark state, and `--stay-test` drives the real switch — toggling it clears a
+pending walk, writes `config.json`, and 12 seconds later (longer than the 3–9 s
+decision timer) the pet is on the same pixel.
+
 ## [0.33.3] — 2026-10-27
 
 ### Added

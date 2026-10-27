@@ -76,6 +76,55 @@ node pet/pack.mjs   --sheet ~/Downloads/PACK.png   --name lil-dino --label "Lil 
 - `pack.json` records the animations, their frame rate, the canvas size, the
   default scale, and where the art came from.
 
+### Stream Avatars: the sheet's hats come with it
+
+Stream Avatars (on Steam) ships each avatar as a zip: `data.txt` with the cell
+size, the animation list **in order** and the per-frame pivot of every gear layer;
+one grid sheet where rows are animations and columns are frames; and `gear/`
+folders of hats, masks, faces and held items. That is the shape `pet/pack.mjs`
+already reads, so one script makes a pack out of it — sprites, walk cycle, and the
+dress-up layers with their pivots:
+
+```sh
+node pet/import-streamavatars.mjs \
+  --zip "$HOME/Library/Application Support/Steam/steamapps/common/Stream Avatars/Contents/premade/littlewalker.zip"
+
+node pet/import-streamavatars.mjs --zip …/premade/*.zip --zip …/StreamingAssets/*.zip
+```
+
+- Every avatar in an archive becomes its own pack; `--only littlewalker` picks
+  one, `--dir` takes an already-unpacked avatar.
+- The sheet's own `expressions` come along: an avatar with a `sit` row sits for
+  `sit`, `doze`, `sleep` and `bored-waiting` instead of hopping through them.
+- **Paid art stays local.** The importer writes only into
+  `~/.opencode/pet/packs`, refuses an `--out` inside the repository, and records
+  the licence in `pack.json`: personal use is not redistribution.
+- A layer drawn on a bigger canvas than the body — a 48px hair sheet on a 32px
+  avatar — hangs off the same ground line, because that is how the artist placed
+  it. The pet's window is its own cell, so a layer that reaches past that square
+  (a few emotes and chairs) is clipped at the edge rather than making the pet's
+  window bigger than the pet.
+
+### Wearing it: hats, masks, held items
+
+A pack built from such a sheet carries a **Wear** submenu in both menus, grouped
+the way the sheet's folders are (`Hats`, `Masks`, `Items`, `Hair`, …):
+
+```
+Wear  ▸
+  Nothing            take everything off
+  Hats   ▸  Nothing / Crown / Top hat / …
+  Masks  ▸  Nothing / Glasses / Beard / …
+```
+
+One layer per group, so a hat and a mask and a held banana can be worn at once.
+The choice is `worn` in `config.json` (`{"littlehats": "littlehats/crown"}`);
+switching to a pet that never came with that layer drops it instead of persisting
+a checkbox that draws nothing. Layers the sheet puts behind the body — backpacks,
+chairs, the off hand — are drawn behind it, everything else on top, and the whole
+layer flips, bobs and squashes with the pet. A hat that animates by itself (a
+flame, a balloon) keeps its own clock while the pet stands still.
+
 ### Known packs: OpenPet AI Girls
 
 Five anime pets from [AwesomeHou/openpet-ai-girls](https://github.com/AwesomeHou/openpet-ai-girls)
@@ -242,11 +291,11 @@ sets or clears it by hand (useful when testing the look, or to shut the dino up)
 |---|---|
 | drag | move it, throw it, it falls and squashes |
 | click | poke (it reacts) |
-| right-click | hide/show, size 1×/2×/3×, stay put, pet, mute, chattiness, gallery, quit |
-| menu bar icon | **Hide Pet / Show Pet**, size, stay put, pet, mute, gallery, quit |
+| right-click | hide/show, size 1×/2×/3×, stay put, pet, wear, mute, chattiness, gallery, quit |
+| menu bar icon | **Hide Pet / Show Pet**, size, stay put, pet, wear, mute, gallery, quit |
 
-Position, size, chattiness, whether it walks and whether it is on persist in
-`~/.opencode/pet/config.json`.
+Position, size, chattiness, whether it walks, whether it is on, and what it wears
+persist in `~/.opencode/pet/config.json`.
 
 ### Stay put
 

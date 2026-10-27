@@ -1000,3 +1000,199 @@ test("pet app: Stay put stops a walk in progress and persists", async (t) => {
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8")).stayPut, false);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ── Stream Avatars: gear on a third-party sheet ─────────────────────────────
+// The importer is the only place stream-avatar art enters this machine, so the
+// test builds an avatar of its own: two animations, one hat on a 16px cell, one
+// strip that animates by itself. Nothing here ships Steam art.
+
+/** A 16x16 cell with a solid square, so a frame is never empty. */
+function cellPng(size = 16) {
+  const data = Buffer.alloc(size * size * 4);
+  for (let y = 3; y < size - 3; y++) for (let x = 3; x < size - 3; x++) {
+    const i = (y * size + x) * 4;
+    data[i] = 210; data[i + 1] = 120; data[i + 2] = 90; data[i + 3] = 255;
+  }
+  return encodePng(size, size, data);
+}
+
+function writeSheet(file, cell, cols, fills) {
+  const one = decodePng(cellPng(cell));
+  const width = cell * cols, height = cell * fills.length;
+  const data = Buffer.alloc(width * height * 4);
+  for (let r = 0; r < fills.length; r++) for (let c = 0; c < fills[r]; c++) {
+    for (let y = 0; y < cell; y++) for (let x = 0; x < cell; x++) {
+      const s = (y * cell + x) * 4;
+      const d = ((r * cell + y) * width + (c * cell + x)) * 4;
+      for (let k = 0; k < 4; k++) data[d + k] = one.data[s + k];
+    }
+  }
+  fs.writeFileSync(file, encodePng(width, height, data));
+}
+
+/** An unpacked Stream Avatars avatar: data.txt + avatars/ + gear/. */
+function fakeAvatar(dir, { id = "testimp", cell = 16 } = {}) {
+  fs.mkdirSync(path.join(dir, "avatars"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "gear", "hats"), { recursive: true });
+  const frame = (x = 0, y = 0) => ({
+    gearPivot: { hats: { x: 1, y: 0 } },
+    uniquePivot: { hats: { crown: { x, y } } },
+  });
+  fs.writeFileSync(path.join(dir, "data.txt"), JSON.stringify({
+    avatar: {
+      [id]: {
+        width: cell, height: cell,
+        animationData: {
+          idle: { frameData: [frame(), frame(0, 2)] },
+          walk: { frameData: [frame(), frame(), frame()] },
+          sit: { frameData: [] },
+          stand: { frameData: [frame()] },
+          jump: { frameData: [frame()] },
+        },
+      },
+    },
+  }));
+  writeSheet(path.join(dir, "avatars", `${id}.png`), cell, 3, [2, 3, 1, 1]);
+  fs.writeFileSync(path.join(dir, "gear", "hats", "crown.png"), cellPng(cell));
+  // three cells wide: a hat that animates on its own clock
+  const strip = decodePng(cellPng(cell));
+  const width = cell * 3;
+  const data = Buffer.alloc(width * cell * 4);
+  for (let c = 0; c < 3; c++) for (let y = 0; y < cell; y++) for (let x = 0; x < cell; x++) {
+    const s = (y * cell + x) * 4;
+    const d = ((y) * width + (c * cell + x)) * 4;
+    for (let k = 0; k < 4; k++) data[d + k] = strip.data[s + k];
+  }
+  fs.writeFileSync(path.join(dir, "gear", "hats", "fire.png"), encodePng(width, cell, data));
+}
+
+test("stream avatars: a sheet becomes a pack with its gear and pivots", async () => {
+  const work = tmp();
+  const avatar = path.join(work, "avatar");
+  fakeAvatar(avatar);
+  const state = path.join(work, "state");
+  const env = { ...process.env, BABYZILLA_PET_STATE: state, BABYZILLA_NO_UPDATE_CHECK: "1" };
+
+  const res = await run(process.execPath, [path.join(ROOT, "pet/import-streamavatars.mjs"),
+    "--dir", avatar, "--out", path.join(state, "packs")], { env });
+  assert.match(res.stdout, /testimp/);
+
+  const dir = path.join(state, "packs", "testimp");
+  const pack = JSON.parse(fs.readFileSync(path.join(dir, "pack.json"), "utf8"));
+  assert.equal(pack.name, "testimp");
+  assert.equal(pack.label, "Testimp");
+  // rows are the sheet's animations in order, and an animation with no frames
+  // does not get a row — `sit` is empty above and must not shift `stand`
+  assert.deepEqual(Object.keys(pack.animations), ["idle", "walk", "stand", "jump"]);
+  assert.deepEqual(Object.values(pack.animations).map((f) => f.length), [2, 3, 1, 1]);
+  assert.match(pack.license, /personal use/i);
+  assert.equal(pack.atlas.cols, 3);
+  for (const frame of Object.values(pack.animations).flat()) {
+    const img = decodePng(fs.readFileSync(path.join(dir, "sprites", `${frame}.png`)));
+    assert.equal(img.width, pack.size, `${frame} is the pack's cell`);
+  }
+
+  const gear = pack.gear;
+  assert.equal(gear.avatarW, 16);
+  assert.deepEqual(gear.rows, ["idle", "walk", "stand", "jump"]);
+  const crown = gear.items.find((i) => i.id === "hats/crown");
+  const fire = gear.items.find((i) => i.id === "hats/fire");
+  assert.equal(crown.mode, "single");
+  assert.equal(crown.group, "Hats");
+  assert.equal(fire.mode, "strip");
+  assert.equal(fire.cols, 3);
+  assert.ok(fse(fire.file, dir), "the overlay art is copied next to the pack");
+  // the sheet's own placement survives: every walk frame is offset by one pixel,
+  // and the crown is corrected by its per-item pivot
+  assert.deepEqual(gear.pivots.hats.walk.slice(0, 3), [[1, 0], [1, 0], [1, 0]]);
+  assert.deepEqual(gear.unique["hats/crown"].idle, [[0, 0], [0, 2]]);
+
+  fs.rmSync(work, { recursive: true, force: true });
+});
+
+function fse(rel, dir) {
+  return fs.existsSync(path.join(dir, rel));
+}
+
+test("stream avatars: never overwrites a pet that came from somewhere else", async () => {
+  const work = tmp();
+  const avatar = path.join(work, "avatar");
+  fakeAvatar(avatar);
+  const state = path.join(work, "state");
+  const foreign = path.join(state, "packs", "testimp");
+  fs.mkdirSync(foreign, { recursive: true });
+  fs.writeFileSync(path.join(foreign, "pack.json"), JSON.stringify({
+    kind: "pack", name: "testimp", label: "Someone Else's Cat", size: 48, animations: { idle: ["idle-1"] },
+  }));
+  const env = { ...process.env, BABYZILLA_PET_STATE: state, BABYZILLA_NO_UPDATE_CHECK: "1" };
+  await assert.rejects(
+    run(process.execPath, [path.join(ROOT, "pet/import-streamavatars.mjs"),
+      "--dir", avatar, "--out", path.join(state, "packs")], { env }),
+    (error) => /already installed/.test(error.stdout + error.stderr),
+  );
+  // The refusal is the point: a catalog pet named `thor` must survive `--zip thor`.
+  assert.equal(JSON.parse(fs.readFileSync(path.join(foreign, "pack.json"), "utf8")).label, "Someone Else's Cat");
+  fs.rmSync(work, { recursive: true, force: true });
+});
+
+test("stream avatars: refuses to write paid art into the repository", async () => {  const work = tmp();
+  const avatar = path.join(work, "avatar");
+  fakeAvatar(avatar);
+  const env = { ...process.env, BABYZILLA_PET_STATE: path.join(work, "state"), BABYZILLA_NO_UPDATE_CHECK: "1" };
+  await assert.rejects(
+    run(process.execPath, [path.join(ROOT, "pet/import-streamavatars.mjs"),
+      "--dir", avatar, "--out", path.join(ROOT, "assets/pet/packs")], { env }),
+    (error) => /refusing to write/.test(error.stdout + error.stderr)
+      && /personal use|paid Steam/i.test(error.stdout + error.stderr),
+  );
+  fs.rmSync(work, { recursive: true, force: true });
+});
+
+test("pet app: a worn gear layer resolves to a real rect and persists", async (t) => {
+  const bin = petApp(t);
+  if (!bin) return;
+  const { dir, env } = petAppState({ language: "en", pack: "worn-test", scale: 2 });
+  const packDir = path.join(dir, "packs", "worn-test");
+  fs.mkdirSync(path.join(packDir, "sprites"), { recursive: true });
+  fs.mkdirSync(path.join(packDir, "gear", "hats"), { recursive: true });
+  for (const frame of ["idle-1", "walk-1", "walk-2", "jump-1"]) {
+    fs.writeFileSync(path.join(packDir, "sprites", `${frame}.png`), cellPng(32));
+  }
+  fs.writeFileSync(path.join(packDir, "gear", "hats", "crown.png"), cellPng(16));
+  fs.writeFileSync(path.join(packDir, "pack.json"), JSON.stringify({
+    kind: "pack", name: "worn-test", label: "Worn Test", size: 32, defaultScale: 2,
+    animations: { idle: ["idle-1"], walk: ["walk-1", "walk-2"], jump: ["jump-1"] },
+    fps: { idle: 6, walk: 12, jump: 12 },
+    gear: {
+      avatarW: 16, avatarH: 16, rows: ["idle", "walk", "jump"],
+      pivots: { hats: { walk: [[1, 0], [1, 1]] } },
+      items: [{ id: "hats/crown", label: "Crown", group: "Hats", set: "hats",
+        file: "gear/hats/crown.png", cellW: 16, cellH: 16, cols: 1, rows: 1, mode: "single" }],
+    },
+  }));
+
+  // Nothing worn: the menu still offers the layer, and nothing is drawn.
+  const menu = await run(bin, ["--menu"], { env, timeout: 30_000 });
+  assert.match(menu.stdout, /^Wear {2}>$/m, menu.stdout);
+  assert.match(menu.stdout, /^ {2}Hats {2}>$/m, menu.stdout);
+  assert.match(menu.stdout, /^ {4}Crown$/m, menu.stdout);
+
+  const before = await run(bin, ["--gear"], { env, timeout: 30_000 });
+  assert.match(before.stdout, /^pack\tworn-test\titems=1\tgroups=1\tworn=\(none\)$/m, before.stdout);
+  assert.match(before.stdout, /^draw\tnone$/m, before.stdout);
+
+  // Picking the real menu item writes config.json and draws a 32px layer (16px
+  // cell on a 16px sheet at scale 2).
+  const set = await run(bin, ["--wear-set", "hats/crown"], { env, timeout: 30_000 });
+  assert.match(set.stdout, /^wear\thats=hats\/crown\tconfig=hats=hats\/crown\tlayers=1$/m, set.stdout);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8")).worn.hats, "hats/crown");
+
+  const after = await run(bin, ["--gear"], { env, timeout: 30_000 });
+  assert.match(after.stdout, /^draw\tsource=0,0,16,16\tdest=0\.0,0\.0,64\.0,64\.0$/m, after.stdout);
+
+  // And the group's own "nothing" takes it off again without touching the rest.
+  const off = await run(bin, ["--wear-set", "hats|"], { env, timeout: 30_000 });
+  assert.match(off.stdout, /^wear\t\(none\)\tconfig=\(none\)\tlayers=0$/m, off.stdout);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8")).worn, {});
+  fs.rmSync(dir, { recursive: true, force: true });
+});

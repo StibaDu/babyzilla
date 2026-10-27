@@ -21,6 +21,9 @@ struct PetConfig: Codable {
     var muted: Bool = false
     var followCursor: Bool = true
     var pack: String? = nil         // nil = the built-in BabyZilla art
+    /// Dress-up: gear set -> `set/name` from the pack's own `gear/` art. One layer
+    /// per set (hats, masks, held items), which is what a sheet actually provides.
+    var worn: [String: String] = [:]
     /// Turned off from the menu bar. Persisted so a login start does not undo it.
     var hidden: Bool = false
     /// Does not wander and does not amble toward the cursor. Idle animation
@@ -30,7 +33,7 @@ struct PetConfig: Codable {
     var language: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case scale, x, y, chattiness, muted, followCursor, pack, hidden, stayPut, language
+        case scale, x, y, chattiness, muted, followCursor, pack, worn, hidden, stayPut, language
     }
 
     /// Decode field by field. The synthesized initializer requires every
@@ -48,6 +51,7 @@ struct PetConfig: Codable {
         muted = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
         followCursor = try c.decodeIfPresent(Bool.self, forKey: .followCursor) ?? true
         pack = try c.decodeIfPresent(String.self, forKey: .pack)
+        worn = try c.decodeIfPresent([String: String].self, forKey: .worn) ?? [:]
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
         stayPut = try c.decodeIfPresent(Bool.self, forKey: .stayPut) ?? false
         language = try c.decodeIfPresent(String.self, forKey: .language)
@@ -221,6 +225,8 @@ struct PackData: Decodable {
     let expressions: [String: String]?
     let defaultScale: Int?
     let source: String?
+    /// hats, masks and held items the sheet was drawn with (Stream Avatars packs)
+    let gear: PackGear?
 
     /// Expressions that should use the jump animation rather than idle.
     static let energetic: Set<String> = [
@@ -232,6 +238,64 @@ struct PackData: Decodable {
         guard let d = try? Data(contentsOf: dir.appendingPathComponent("pack.json")),
               let p = try? JSONDecoder().decode(PackData.self, from: d) else { return nil }
         return p
+    }
+}
+
+/// One overlay the sheet came with: a hat, a mask, a held item.
+///
+/// `mode` is how to find the right cell in its PNG: `grid` follows the pet's own
+/// animation frame, `strip` plays on its own clock (a burning hat), `single` is
+/// one cell used for every frame.
+struct GearItem: Decodable {
+    let id: String
+    let label: String
+    let group: String
+    let set: String
+    let file: String
+    let cellW: Int
+    let cellH: Int
+    let cols: Int
+    let rows: Int
+    let mode: String
+    let fps: Double?
+}
+
+/// The overlay art a pack carries, and the pivots that place it.
+///
+/// Pivots are in the *sheet's* pixels, not the pack's: the app scales them by the
+/// same factor it scales the sprite (a 32px sheet becomes a 64px cell), so one
+/// imported pack still lines its hats up at 2×.
+struct PackGear: Decodable {
+    let avatarW: Int
+    let avatarH: Int
+    /// animation rows of the sheet, top to bottom
+    let rows: [String]
+    let items: [GearItem]
+    /// gear set -> animation -> frame -> [dx, dy]
+    let pivots: [String: [String: [[Double]]]]?
+    /// "set/name" -> animation -> frame -> [dx, dy]
+    let unique: [String: [String: [[Double]]]]?
+    let skipped: Int?
+
+    /// Layers that belong behind the body: a backpack, a chair, an item held in
+    /// the off hand. Everything else is drawn on top.
+    static let behind: Set<String> = ["b_back", "b_chairs", "b_offhand"]
+
+    func item(_ id: String) -> GearItem? { items.first { $0.id == id } }
+
+    /// `gearPivot` places the whole layer, `uniquePivot` corrects one item on one
+    /// avatar — a crown sits lower on a big head. Both apply.
+    func offset(set: String, item: String, anim: String, frame: Int) -> (CGFloat, CGFloat) {
+        let a = Self.pair(pivots?[set]?[anim], frame)
+        let b = Self.pair(unique?[item]?[anim], frame)
+        return (a.0 + b.0, a.1 + b.1)
+    }
+
+    private static func pair(_ list: [[Double]]?, _ frame: Int) -> (CGFloat, CGFloat) {
+        guard let list, !list.isEmpty else { return (0, 0) }
+        let row = list[min(max(0, frame), list.count - 1)]
+        guard row.count >= 2 else { return (0, 0) }
+        return (CGFloat(row[0]), CGFloat(row[1]))
     }
 }
 
@@ -283,8 +347,18 @@ final class PetView: NSView {
         t.scaleX(by: c.renderScaleX, yBy: c.renderScaleY)
         t.translateX(by: -bounds.width / 2, yBy: 0)
         t.concat()
+        // Worn layers are drawn inside the same transform, so a hat flips, bobs and
+        // squashes with the pet instead of sliding off when it turns around.
+        for g in c.gearDraws(in: rect, behind: true) {
+            g.image.draw(in: g.dest, from: g.source, operation: .sourceOver, fraction: 1.0,
+                         respectFlipped: true, hints: [.interpolation: NSImageInterpolation.none.rawValue])
+        }
         img.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0,
                  respectFlipped: true, hints: [.interpolation: NSImageInterpolation.none.rawValue])
+        for g in c.gearDraws(in: rect, behind: false) {
+            g.image.draw(in: g.dest, from: g.source, operation: .sourceOver, fraction: 1.0,
+                         respectFlipped: true, hints: [.interpolation: NSImageInterpolation.none.rawValue])
+        }
         NSGraphicsContext.restoreGraphicsState()
     }
 
@@ -810,6 +884,12 @@ final class PetController: NSObject {
     private var lastRendered = ""
     private var packClock: TimeInterval = 0
     private var packAnim = "idle"
+    /// Which frame of the pack's current animation is on screen, and how many it
+    /// has. A hat in `grid` mode needs both; a one-frame idle must not freeze the
+    /// breathing bob, which is what `frameCount` is for.
+    private(set) var packFrame = 0
+    private(set) var packFrameCount = 1
+    private var gearImages: [String: NSImage] = [:]
     private var lastExprAt = Date.distantPast
     private var lastWatchPoll = Date.distantPast
 
@@ -880,6 +960,8 @@ final class PetController: NSObject {
         setExpression("wave", hold: 1.6)
     }
 
+    /// How much room the pet's window needs.
+    ///
     private func screenForPet() -> NSScreen {
         let point = NSPoint(x: x, y: floorY)
         return NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main ?? NSScreen.screens[0]
@@ -1257,15 +1339,18 @@ final class PetController: NSObject {
         packClock += dt
         let frames = pack.animations[anim] ?? pack.animations["idle"] ?? []
         guard !frames.isEmpty else { return }
-        let id: String
+        let index: Int
         if anim == "walk" {
             // One cycle per stride of floor covered, not per second of wall clock:
             // this is what stops the legs outrunning the ground.
-            id = frames[Int(walkPhase * Double(frames.count)) % frames.count]
+            index = Int(walkPhase * Double(frames.count)) % frames.count
         } else {
             let fps = max(1.0, pack.fps?[anim] ?? 8)
-            id = frames[Int(packClock * fps) % frames.count]
+            index = Int(packClock * fps) % frames.count
         }
+        packFrame = index
+        packFrameCount = frames.count
+        let id = frames[index]
         if id != lastRendered {
             lastRendered = id
             currentImage = lib.image(id)
@@ -1292,8 +1377,9 @@ final class PetController: NSObject {
         default: break
         }
         // while a locomotion frame is showing, the art already carries the
-        // vertical motion — an extra breathing bob would double it
-        if movingFrame != nil || pack != nil { bob = 0 }
+        // vertical motion — an extra breathing bob would double it. A pack whose
+        // idle is a single frame has no motion of its own, so it keeps the bob.
+        if movingFrame != nil || (pack != nil && packFrameCount > 1) { bob = 0 }
         if walkSquash > 0 {
             sy = min(sy, 1 - walkSquash * 0.10)
             sx = max(sx, 1 + walkSquash * 0.08)
@@ -1344,6 +1430,82 @@ final class PetController: NSObject {
         currentImage = lib.image(lastRendered)
         view.needsDisplay = true
         bubbleView.needsDisplay = true
+    }
+
+    // ── gear ─────────────────────────────────────────────────────────────────
+
+    /// One overlay resolved to a picture and two rects.
+    struct GearDraw {
+        let image: NSImage
+        let source: NSRect
+        let dest: NSRect
+    }
+
+    /// Every worn layer, for one half of the pet: backpacks and chairs sit behind
+    /// the body, hats and held items in front of it.
+    func gearDraws(in petRect: NSRect, behind: Bool) -> [GearDraw] {
+        guard let gear = pack?.gear, !config.worn.isEmpty else { return [] }
+        var out: [GearDraw] = []
+        for (set, id) in config.worn.sorted(by: { $0.key < $1.key }) {
+            guard let item = gear.item(id), item.set == set,
+                  PackGear.behind.contains(set) == behind,
+                  let image = gearImage(item),
+                  // ±1000 means "hide this layer in this frame": a chair only exists
+                  // while the pet sits, and drawing it at -1000 would be a chair
+                  // somewhere off the bottom of the screen.
+                  gear.offset(set: item.set, item: item.id, anim: packAnim, frame: packFrame).1 > -500
+            else { continue }
+            out.append(draw(item, image: image, gear: gear, petRect: petRect))
+        }
+        return out
+    }
+
+    /// Both the overlay art and the pivots are in the sheet's pixels, so the whole
+    /// layer scales by one factor: the pet's rect over the sheet's cell.
+    private func draw(_ item: GearItem, image: NSImage, gear: PackGear, petRect: NSRect) -> GearDraw {
+        let k = petRect.width / CGFloat(max(1, gear.avatarW))
+        var row = 0
+        var col = 0
+        switch item.mode {
+        case "grid":
+            // The overlay sheet has the pet's own rows, so the current animation
+            // frame picks both — a hat that turns with the head.
+            row = gear.rows.firstIndex(of: packAnim) ?? 0
+            col = min(packFrame, max(0, item.cols - 1))
+        case "strip":
+            // Its own clock: a flame hat keeps burning while the pet stands still.
+            col = Int(time * (item.fps ?? 8)) % max(1, item.cols)
+        default:
+            break
+        }
+
+        let (dx, dy) = gear.offset(set: item.set, item: item.id, anim: packAnim, frame: packFrame)
+        let w = CGFloat(item.cellW) * k
+        let h = CGFloat(item.cellH) * k
+        // Gear art hangs off the same ground line as the body: a 48px hair or chair
+        // canvas is 1.5 cells because it reaches higher, not because the character
+        // is bigger — so it is centred horizontally and stood on the pet's feet,
+        // then moved by its pivot.
+        let dest = NSRect(x: petRect.midX + dx * k - w / 2,
+                          y: petRect.minY + dy * k,
+                          width: w, height: h)
+        // NSImage source rects start bottom-left; the sheet's rows start at the top.
+        let rowIndex = min(max(0, row), max(0, item.rows - 1))
+        let source = NSRect(x: CGFloat(col * item.cellW),
+                            y: CGFloat((item.rows - 1 - rowIndex) * item.cellH),
+                            width: CGFloat(item.cellW),
+                            height: CGFloat(item.cellH))
+        return GearDraw(image: image, source: source, dest: dest)
+    }
+
+    /// Loaded on first wear, not at start: a pack can carry 600 overlays and the
+    /// pet only ever wears a handful.
+    private func gearImage(_ item: GearItem) -> NSImage? {
+        if let hit = gearImages[item.id] { return hit }
+        let dir = lib.base.deletingLastPathComponent()
+        guard let img = NSImage(contentsOf: dir.appendingPathComponent(item.file)) else { return nil }
+        gearImages[item.id] = img
+        return img
     }
 
     // ── public actions ───────────────────────────────────────────────────────
@@ -1646,6 +1808,10 @@ final class PetController: NSObject {
         menu.addItem(.separator())
         Packs.installMenu(into: menu, target: self, action: #selector(choosePack(_:)),
                           current: config.pack, more: #selector(openPetBrowser), l10n: l10n)
+        if let wear = WearMenu.item(pack: pack, worn: config.worn, l10n: l10n,
+                                    target: self, action: #selector(chooseWear(_:))) {
+            menu.addItem(wear)
+        }
         let mute = NSMenuItem(title: l10n.t("Mute speech"), action: #selector(toggleMute), keyEquivalent: "")
         mute.target = self
         mute.state = config.muted ? .on : .off
@@ -1711,12 +1877,33 @@ final class PetController: NSObject {
         _ = usePack(id)
     }
 
+    /// Wear, or take off, one of the pack's own gear layers. The id is `set/name`
+    /// inside *this* pack, so a switch to another pet cannot resurrect a hat that
+    /// pet never came with — `usePack` drops it instead.
+    ///
+    /// `""` clears every layer; `"set|"` clears one group's slot.
+    @objc func chooseWear(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? String else { return }
+        if id.isEmpty {
+            config.worn = [:]
+        } else if let bar = id.firstIndex(of: "|") {
+            config.worn[String(id[..<bar])] = nil
+        } else if let entry = pack?.gear?.item(id) {
+            config.worn[entry.set] = id
+        }
+        persist()
+        view.needsDisplay = true
+    }
+
     /// Wear a pack that is already on disk. Returns false when it is not there,
     /// so the browser can say so instead of switching to nothing.
     @discardableResult
     func usePack(_ id: String) -> Bool {
         guard let dir = Packs.directory(id), let pack = PackData.load(dir: dir) else { return false }
         config.pack = id
+        // A hat belongs to the sheet it was drawn on. Keeping a foreign id would
+        // persist a layer that draws nothing and cannot be unticked in the menu.
+        config.worn = config.worn.filter { pack.gear?.item($0.value) != nil }
         // a pack knows how big it wants to be: its art is not the same density
         if let scale = pack.defaultScale { config.scale = scale }
         persist()
@@ -2063,6 +2250,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { self.controller?.browsePets(prefill: query) }
         }
+        // Dress-up, headless: what the active pack offers, and where the worn
+        // layer actually lands. A hat that decodes but draws nowhere is the bug
+        // this prints against, not something a menu screenshot could show.
+        if CommandLine.arguments.contains("--gear") {
+            guard let c = controller else { print("no controller"); exit(1) }
+            let gear = c.pack?.gear
+            let groups = gear?.items.reduce(into: [String]()) { if !$0.contains($1.group) { $0.append($1.group) } } ?? []
+            let worn = c.config.worn.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
+            print("pack\t\(c.config.pack ?? "(builtin)")\titems=\(gear?.items.count ?? 0)\tgroups=\(groups.count)\tworn=\(worn.isEmpty ? "(none)" : worn)")
+            print("groups\t" + groups.joined(separator: ","))
+            let rect = NSRect(x: 0, y: 0, width: c.window.frame.width, height: c.window.frame.height)
+            let draws = c.gearDraws(in: rect, behind: true) + c.gearDraws(in: rect, behind: false)
+            for g in draws {
+                print(String(format: "draw\tsource=%.0f,%.0f,%.0f,%.0f\tdest=%.1f,%.1f,%.1f,%.1f",
+                             g.source.origin.x, g.source.origin.y, g.source.width, g.source.height,
+                             g.dest.origin.x, g.dest.origin.y, g.dest.width, g.dest.height))
+            }
+            if draws.isEmpty { print("draw\tnone") }
+            exit(0)
+        }
+        // The real menu item, not a direct assignment: proof that picking a hat
+        // writes config.json and resolves to a draw call.
+        if let i = CommandLine.arguments.firstIndex(of: "--wear-set"), i + 1 < CommandLine.arguments.count,
+           let c = controller {
+            let wanted = CommandLine.arguments[i + 1]
+            let root = WearMenu.item(pack: c.pack, worn: c.config.worn, l10n: c.l10n, target: c,
+                                     action: #selector(PetController.chooseWear(_:)))
+            var found: NSMenuItem?
+            func walk(_ menu: NSMenu) {
+                for item in menu.items {
+                    if (item.representedObject as? String) == wanted { found = item }
+                    if let sub = item.submenu { walk(sub) }
+                }
+            }
+            if let sub = root?.submenu { walk(sub) }
+            guard let item = found else { print("unknown wear \(wanted)"); exit(2) }
+            c.chooseWear(item)
+            let worn = c.config.worn.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
+            let saved = PetConfig.load(Paths.config).worn.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
+            let rect = NSRect(x: 0, y: 0, width: c.window.frame.width, height: c.window.frame.height)
+            let layers = c.gearDraws(in: rect, behind: true).count + c.gearDraws(in: rect, behind: false).count
+            print("wear\t\(worn.isEmpty ? "(none)" : worn)\tconfig=\(saved.isEmpty ? "(none)" : saved)\tlayers=\(layers)")
+            exit(0)
+        }
         if CommandLine.arguments.contains("--pets") {
             let pets = Packs.available()
             for pet in pets { print("pet\t\(pet.id)\t\(pet.label)") }
@@ -2239,6 +2470,10 @@ extension AppDelegate: NSMenuDelegate {
 
         Packs.installMenu(into: menu, target: c, action: #selector(PetController.choosePack(_:)),
                           current: c.config.pack, more: #selector(PetController.openPetBrowser), l10n: l)
+        if let wear = WearMenu.item(pack: c.pack, worn: c.config.worn, l10n: l,
+                                    target: c, action: #selector(PetController.chooseWear(_:))) {
+            menu.addItem(wear)
+        }
 
         menu.addItem(.separator())
         let chat = NSMenuItem(title: l.t(c.chatOpen ? "Close chat" : "Open chat…"),

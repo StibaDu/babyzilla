@@ -2,6 +2,41 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.34.0] — 2026-10-27
+
+### Added
+
+- **Gear: the hats, masks and held items a sheet was drawn with.** A pack imported
+  from a Stream Avatars avatar now carries a **Wear** submenu in both menus, grouped
+  by the sheet's own folders — one layer per group, so a hat, a mask and a banana
+  can be worn at once. Each layer is placed by the sheet's pivots (`gearPivot` plus
+  the item's `uniquePivot`), drawn behind the body for backpacks, chairs and the off
+  hand, and flips, bobs and squashes with the pet. A hat that animates on its own
+  (a flame, a balloon) keeps its own clock while the pet stands still. Persisted as
+  `worn` in `config.json`; switching to a pet that never came with a layer drops it
+  instead of leaving a checkbox that draws nothing.
+
+- **`pet/import-streamavatars.mjs`** turns Stream Avatars (Steam) archives into local
+  packs: cell size, animation order and per-frame pivots from `data.txt`, the sheet
+  through `pet/pack.mjs`, then `gear/` with the pivots that place it and an
+  `expressions` map for the postures the avatar actually has (a `sit` row answers
+  `sit`, `doze`, `sleep` and `bored-waiting` instead of hopping through them). The
+  four premade avatars, `block_man` with its 608 layers, and the 26 hero sheets
+  import in one command. **Paid art stays local**: it writes only into
+  `~/.opencode/pet/packs`, refuses an `--out` inside the repository, and records the
+  licence in `pack.json`.
+
+### Changed
+
+- A pack whose idle is a single frame keeps the breathing bob. The bob was
+  suppressed for every pack, which made a one-frame idle look like a frozen sprite —
+  and most hand-drawn sheets have exactly one idle frame.
+
+- `pet/pack.mjs` counts a cell as drawn only when it carries more than a couple of
+  pixels of ink. A stray pixel in a sheet's margin used to become a blank extra
+  frame that the animation then stuttered through — `block_man`'s `custom6` had
+  exactly one.
+
 ## [0.33.4] — 2026-10-27
 
 ### Added

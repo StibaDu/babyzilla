@@ -44,8 +44,19 @@ struct L10n {
         "Stay put": "Stehen bleiben",
         "Mute speech": "Sprache stumm",
         "Size": "Größe",
-        "Chattiness": "Gesprächigkeit",
-        "Language": "Sprache",
+        "Wear": "Tragen",
+        "Nothing": "Nichts",
+        "Hats": "Hüte",
+        "Heads": "Köpfe",
+        "Hair": "Haare",
+        "Faces": "Gesichter",
+        "Masks": "Masken",
+        "Back": "Rücken",
+        "Main hand": "Rechte Hand",
+        "Off hand": "Linke Hand",
+        "Chairs": "Stühle",
+        "Items": "Dinge",
+        "Chattiness": "Gesprächigkeit",        "Language": "Sprache",
         "Open chat…": "Chat öffnen…",
         "Close chat": "Chat schließen",
         "Gallery…": "Galerie…",
@@ -100,8 +111,7 @@ struct L10n {
 
 /// The language submenu. Both menus (the pet's own and the menu bar's) build it, so
 /// a new language is one entry in `ids` and one row in the table above.
-enum LanguageMenu {
-    /// In display order, with the names a person recognises without translating.
+enum LanguageMenu {    /// In display order, with the names a person recognises without translating.
     static let ids = ["en", "de"]
 
     static func item(l10n: L10n, target: AnyObject, action: Selector,
@@ -116,6 +126,56 @@ enum LanguageMenu {
             item.representedObject = id
             item.state = active == id ? .on : .off
             sub.addItem(item)
+        }
+        title.submenu = sub
+        return title
+    }
+}
+
+/// The dress-up submenu: one entry per gear layer the active pack carries.
+///
+/// A pack only gets this menu when its sheet came with gear art, so the pet that
+/// shipped with the plugin (and every OpenPets sheet) is unchanged. Groups are the
+/// sheet's own folders — hats, masks, held items — because that is how the artist
+/// organised them.
+enum WearMenu {
+    static func item(pack: PackData?, worn: [String: String], l10n: L10n, target: AnyObject,
+                     action: Selector) -> NSMenuItem? {
+        guard let gear = pack?.gear, !gear.items.isEmpty else { return nil }
+        let title = NSMenuItem(title: l10n.t("Wear"), action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+
+        // One "nothing" that takes every layer off, and one per group below: a pet
+        // with a hat and a backpack needs to be able to keep the hat.
+        let none = NSMenuItem(title: l10n.t("Nothing"), action: action, keyEquivalent: "")
+        none.target = target
+        none.representedObject = ""
+        none.isEnabled = !worn.isEmpty
+        sub.addItem(none)
+        sub.addItem(.separator())
+
+        var groups: [String] = []
+        for item in gear.items where !groups.contains(item.group) { groups.append(item.group) }
+        for group in groups {
+            let groupItem = NSMenuItem(title: l10n.t(group), action: nil, keyEquivalent: "")
+            let items = NSMenu()
+            // A group in these packs is exactly one gear set: that is the slot.
+            let set = gear.items.first { $0.group == group }?.set ?? ""
+            let off = NSMenuItem(title: l10n.t("Nothing"), action: action, keyEquivalent: "")
+            off.target = target
+            off.representedObject = "\(set)|"
+            off.state = worn[set] == nil ? .on : .off
+            items.addItem(off)
+            items.addItem(.separator())
+            for wearItem in gear.items where wearItem.group == group {
+                let row = NSMenuItem(title: wearItem.label, action: action, keyEquivalent: "")
+                row.target = target
+                row.representedObject = wearItem.id
+                row.state = worn[set] == wearItem.id ? .on : .off
+                items.addItem(row)
+            }
+            groupItem.submenu = items
+            sub.addItem(groupItem)
         }
         title.submenu = sub
         return title

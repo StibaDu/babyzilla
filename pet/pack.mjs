@@ -144,7 +144,10 @@ for (let r = 0; r < rows.length; r++) {
     let img = cropCell(r, c);
     let opaque = 0;
     for (let i = 3; i < img.data.length; i += 4) if (img.data[i]) opaque++;
-    if (opaque === 0) continue;
+    // Empty means "nothing drawn", not "one speck of dirt": sheets carry stray
+    // pixels in their margins, and a single one would become a blank extra frame
+    // that the animation then stutters through.
+    if (opaque < Math.max(2, upscale * upscale * 2)) continue;
     if (resize > 0) img = resizeSquare(img, resize);
     const id = `${anim}-${frames.length + 1}`;
     fs.writeFileSync(path.join(outDir, "sprites", `${id}.png`), encodePng(img.width, img.height, img.data));

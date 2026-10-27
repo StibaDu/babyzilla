@@ -15,6 +15,7 @@ import { anchorModule } from "../lib/anchor.mjs";
 const PACK_ROOT = path.join(os.homedir(), ".opencode", "contextpacks", "sessions");
 
 async function loadPlugin(options = {}) {
+  options = { calibrate: false, ...options }; // no fake samples in the real root
   const handlers = new Map();
   const distillPrompts = [];
   const ctx = {

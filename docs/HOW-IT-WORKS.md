@@ -219,6 +219,63 @@ babyzilla recall 8c1f0b7a9d2e4c15        # whole output
 babyzilla recall 8c1f0b7a9d2e4c15:120-180 # a span
 ```
 
+## Token calibration (`babyzilla calibrate`)
+
+Every absolute number here rests on `chars / 4`: the budget floor and cap, the
+proactive-compaction threshold, the overflow valve, the savings percentages. That
+heuristic is right for English prose and wrong elsewhere — code and JSON carry
+more tokens per character, non-English text fewer, and the gap differs per model.
+
+Bundling a real tokenizer was the alternative (`deepseek-recipe`, a model's
+`tokenizer.json`). Rejected on three counts: a multi-MB asset, correct for one
+model family only, and encoding a 100K-token context on every request costs more
+than the compression it guides.
+
+So the plugin *measures* the gap instead of modelling it:
+
+1. **In the request path**, after compression, one ~120-byte line per request goes
+   to `calibration/requests.jsonl`: `{at, sid, model, sys, msg, tools, est}`. The
+   estimate covers system + messages + tool schemas — the three things providers
+   bill as input.
+2. **Offline**, `babyzilla calibrate` reads OpenCode's own usage rows
+   (`tokens.input + tokens.cache.read`) and pairs them with those lines, one per
+   request, by time within the session. An aborted request leaves a gap rather
+   than shifting every later sample.
+3. **Per model**, the median of `billed / estimated` is stored in
+   `calibration.json`, clamped to 0.6–1.8, and only once at least 12 samples back
+   it. Fewer than that and nothing is applied — thin evidence must not move a
+   threshold.
+
+Samples below 8K estimated tokens, or where messages are less than 40% of the
+request, are counted but not used: they measure the system prompt and the tool
+schemas, not the messages the budget governs. The report shows how many were
+skipped rather than averaging them in.
+
+The factor is applied where a *provider* number is compared with an *estimated*
+one — the budget cap and floor, the `requestMinTokens` "don't bother" floor, the
+`max(proactiveCompactMinTokens, ratio × window)` trigger, the overflow valve —
+by converting the threshold into estimate space (`estForReal`). Savings
+percentages are ratios and cancel out, so they are left alone.
+
+```
+$ babyzilla calibrate
+  token calibration (chars/4 vs provider billing)
+  ────────────────────
+  model                                  samples  factor         p25–p90  state
+  deepseek-v4.1-flash:1017                    62   ×1.06       1.02–1.18  applied
+```
+
+That is the real measurement on this machine: ~6% at the median, 18% at the 90th
+percentile (JSON-heavy prompts). Which is the honest outcome — for this model the
+estimate was already close, and the correction is small. The mechanism exists
+because the same heuristic is *not* close for CJK text or code-heavy sessions, and
+because the factor is per model: a 3× tokenizer difference between two models
+should not be invisible.
+
+`--dry` reports without writing; `--reset` deletes the file, and the plugin goes
+back to raw `chars/4` on its next 30-second re-read. Disable sampling entirely
+with `calibrate: false` (the learned factors still apply).
+
 ## Library promotion
 
 Hot modules (`state`, `decisions`) plus cold `tool` and `errors` modules from
@@ -237,6 +294,8 @@ write nothing.
 ```
 ~/.opencode/contextpacks/
 ├── debug.log                        # plugin log (console.warn is unreliable)
+├── calibration.json                 # learned billed/estimated factor per model
+├── calibration/requests.jsonl       # one estimate per request (measurement buffer)
 ├── sessions/<sessionID>/
 │   ├── index.json                   # stats: rawTokens/packTokens/savedPct, module rows, projectDir
 │   ├── 00-state.md                  # hot

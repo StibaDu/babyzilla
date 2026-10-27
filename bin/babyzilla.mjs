@@ -14,6 +14,10 @@ for (const stream of [process.stdout, process.stderr]) {
   stream.on("error", (error) => { if (error.code === "EPIPE") process.exit(0); });
 }
 import { sessionCosts, totals, defaultDbPath, openDb, hasTable, auditPrices } from "../lib/cost.mjs";
+import {
+  MIN_SAMPLES, calibrationPath, pairSamples, pruneLedger, readCalibration, readLedger,
+  resetCalibration, summarize, writeCalibration,
+} from "../lib/calibration.mjs";
 import { readPage, prunePages } from "../lib/pages.mjs";
 import { extractProbes, scorePack, missingFactsModule } from "../lib/eval.mjs";
 import { loadDB, explain as explainModels } from "../lib/modeldb.mjs";
@@ -306,6 +310,13 @@ export function renderStats(root = packRoot()) {
     const rcol = savingsColor(req.savedPct);
     s.push(`  ${c(DIM)}requests${c(RESET)} ${c(BOLD)}${req.requests}${c(RESET)} ${c(DIM)}capped across ${req.sessions} sessions · ~${fmtTokens(req.before)} → ~${fmtTokens(req.after)} tok (${rcol}${c(BOLD)}${req.savedPct.toFixed(1)}%${c(RESET)} ${c(DIM)}smaller, Layer 1b)${c(RESET)}`);
   }
+  // A measured correction changes what "45K tokens" means, so it belongs on the
+  // same screen as the numbers it scales.
+  const applied = Object.entries(readCalibration(root).models).filter(([, v]) => v.applied);
+  if (applied.length) {
+    const shown = applied.slice(0, 2).map(([m, v]) => `×${v.factor.toFixed(2)} ${c(DIM)}${m} (${v.samples})${c(RESET)}`).join(" · ");
+    s.push(`  ${c(DIM)}calibration${c(RESET)} chars/4 ${shown}`);
+  }
   s.push("");
   const maxRaw = Math.max(...packs.map((p) => p.rawTokens), 1);
   for (const p of packs.slice(0, 10)) {
@@ -357,6 +368,7 @@ export function renderCost({ filter = null, limit = 20 } = {}) {
 export function statsJson(root = packRoot()) {
   const packs = loadPacks(root);
   const [libProjects, libModules] = libraryStats(root);
+  const cal = readCalibration(root);
   return {
     root,
     sessions: packs.length,
@@ -365,12 +377,132 @@ export function statsJson(root = packRoot()) {
     savedPct: Math.round10(aggregatePct(packs), 1),
     requests: aggregateRequestStats(root),
     library: { projects: libProjects, modules: libModules },
+    calibration: cal,
     perSession: packs.map((p) => ({
       sessionID: p.sessionId, created: p.created,
       rawTokens: p.rawTokens, packTokens: p.packTokens,
       savedPct: Math.round10(savingsPct(p), 1), modules: p.modules.length,
     })),
   };
+}
+
+// ── calibration ────────────────────────────────────────────────────────────
+
+const positive = (v) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
+
+/**
+ * Provider-billed input per assistant message: the ground truth that
+ * `babyzilla calibrate` measures the estimate against.
+ *
+ * `tokens.input` is the uncached part and `tokens.cache.read` the cached prefix;
+ * the provider bills both as prompt tokens, so the prompt is their sum.
+ */
+export function usageRows({ dbPath = defaultDbPath(), since = 0 } = {}) {
+  if (!fs.existsSync(dbPath)) return [];
+  let db;
+  try {
+    db = openDb(dbPath);
+  } catch {
+    return [];
+  }
+  try {
+    if (!hasTable(db, "session_message")) return [];
+    const rows = db
+      .prepare("select session_id, time_created, data from session_message where type='assistant' and time_created >= ?")
+      .all(Math.max(0, Math.floor(since)));
+    const out = [];
+    for (const r of rows) {
+      let d;
+      try {
+        d = JSON.parse(r.data);
+      } catch {
+        continue;
+      }
+      const t = d?.tokens;
+      if (!t) continue;
+      const billed = positive(t.input) + positive(t.cache?.read);
+      if (billed < 100) continue;
+      out.push({
+        sid: r.session_id,
+        at: Number(r.time_created) || Number(d?.time?.created) || 0,
+        billed,
+        model: d?.model?.id ?? null,
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  } finally {
+    try {
+      db.close?.();
+    } catch {
+      /* already closed */
+    }
+  }
+}
+
+/**
+ * Measure and store the per-model correction.
+ *
+ * `dry` computes and reports without writing, which is the honest way to look
+ * at the number before letting it move a threshold.
+ */
+export function calibrate({ root = packRoot(), dbPath = defaultDbPath(), dry = false, minSamples = MIN_SAMPLES } = {}) {
+  const ledger = readLedger(root);
+  const oldest = ledger.reduce((n, r) => Math.min(n, Number(r.at) || Infinity), Infinity);
+  const usage = usageRows({ dbPath, since: Number.isFinite(oldest) ? oldest - 86_400_000 : 0 });
+  const samples = pairSamples(ledger, usage);
+  const summary = summarize(samples, { minSamples });
+  const previous = readCalibration(root);
+  const written = dry ? null : writeCalibration(root, summary);
+  const pruned = dry ? 0 : pruneLedger(root, samples);
+  return {
+    root,
+    dbPath,
+    ledger: ledger.length,
+    usage: usage.length,
+    samples: samples.length,
+    pruned,
+    dry,
+    ...summary,
+    previous: previous.models,
+    written,
+  };
+}
+
+export function renderCalibration(r) {
+  const s = [];
+  s.push(`  ${c(BOLD)}token calibration${c(RESET)} ${c(DIM)}(chars/4 vs provider billing)${c(RESET)}`);
+  s.push("  " + c(DIM) + "─".repeat(20) + c(RESET));
+  const models = Object.entries(r.models ?? {});
+  if (!models.length) {
+    if (!r.ledger) {
+      s.push(`  ${c(DIM)}No samples recorded yet. The plugin appends one line per request;${c(RESET)}`);
+      s.push(`  ${c(DIM)}send a few turns, then run this again.${c(RESET)}`);
+    } else {
+      s.push(`  ${c(DIM)}${r.ledger} samples recorded, ${r.paired ?? 0} paired with billed usage.${c(RESET)}`);
+      s.push(`  ${c(DIM)}${r.skipped ?? 0} skipped (too small / mostly system+tools), ${r.outliers ?? 0} outliers.${c(RESET)}`);
+      s.push(`  ${c(DIM)}Usage rows are written after the response — run this again later.${c(RESET)}`);
+    }
+    s.push("");
+    return s.join("\n") + "\n";
+  }
+  s.push(`  ${c(DIM)}${"model".padEnd(38)}${"samples".padStart(8)}${"factor".padStart(8)}${"p25–p90".padStart(16)}  state${c(RESET)}`);
+  for (const [model, v] of models) {
+    const state = v.applied ? `${c(GREEN)}applied${c(RESET)}` : `${c(YELLOW)}${v.needed} more${c(RESET)}`;
+    s.push([
+      `  ${c(CYAN)}${model.slice(0, 37).padEnd(38)}${c(RESET)}`,
+      `${c(DIM)}${String(v.samples).padStart(8)}${c(RESET)}`,
+      `${v.applied ? c(BOLD) : c(DIM)}${`×${v.factor.toFixed(2)}`.padStart(8)}${c(RESET)}`,
+      `${c(DIM)}${`${v.p25.toFixed(2)}–${v.p90.toFixed(2)}`.padStart(16)}${c(RESET)}`,
+      `  ${state}`,
+    ].join(""));
+  }
+  s.push(`  ${c(DIM)}${r.samples} paired · ${r.skipped} skipped · ${r.outliers} outliers · factor = billed ÷ estimated${r.pruned ? ` · ${r.pruned} ledger row(s) pruned` : ""}${c(RESET)}`);
+  if (r.dry) s.push(`  ${c(DIM)}--dry: nothing written.${c(RESET)}`);
+  else if (r.written) s.push(`  ${c(GREEN)}written${c(RESET)} ${c(DIM)}${calibrationPath(r.root)}${c(RESET)}`);
+  s.push("");
+  return s.join("\n") + "\n";
 }
 
 export const aggregatePct = (packs) => {
@@ -776,6 +908,9 @@ Usage:
   babyzilla stats [--json]          aggregate savings across all packs
   babyzilla cost [sessionID] [--limit N] [--json]
                                     provider-side spend from the OpenCode database
+  babyzilla calibrate [--dry] [--json] [--reset] [--db PATH] [--min N]
+                                    measure how far the chars/4 token estimate
+                                    drifts from provider billing, per model
   babyzilla verify [sessionID]      check path:line pointers still resolve
   babyzilla models [--lanes] [--json]
                                     Ollama Cloud model knowledge base: caps,
@@ -1226,6 +1361,20 @@ function main() {
         out(rest.includes("--json")
           ? JSON.stringify({ sessions: sessionCosts({ filter, limit }) }, null, 2) + "\n"
           : renderCost({ filter, limit }));
+        break;
+      }
+      case "calibrate": {
+        const root = packRoot();
+        if (rest.includes("--reset")) {
+          out(resetCalibration(root)
+            ? "calibration reset — the plugin uses chars/4 unchanged\n"
+            : "no calibration file to reset\n");
+          break;
+        }
+        const dbPath = rest.includes("--db") ? rest[rest.indexOf("--db") + 1] : undefined;
+        const minSamples = rest.includes("--min") ? Number(rest[rest.indexOf("--min") + 1]) : MIN_SAMPLES;
+        const r = calibrate({ root, dbPath, dry: rest.includes("--dry"), minSamples });
+        out(rest.includes("--json") ? JSON.stringify(r, null, 2) + "\n" : renderCalibration(r));
         break;
       }
       case "verify": out(renderVerify(rest[0] || undefined)); break;

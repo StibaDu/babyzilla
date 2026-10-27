@@ -10,6 +10,7 @@ import path from "node:path";
 import plugin from "../index.js";
 
 async function loadPlugin(options, dir) {
+  options = { calibrate: false, ...options }; // no fake samples in the real root
   const handlers = new Map();
   const ctx = {
     options,

@@ -34,6 +34,12 @@
   part: answer directly when sure, say "I'm not sure" or check it with a tool
   when not, never pass a guess off as a fact, and never ask you to verify what
   the model could check itself. On by default (`grounding: false` drops it).
+- **Token calibration — `babyzilla calibrate`**: `chars/4` is the estimate behind
+  every absolute number (budget floor/cap, compaction trigger, reported savings),
+  and it drifts by model and by content. The plugin appends one line per request;
+  the command pairs those lines with what the provider actually billed and stores
+  a per-model correction. Measured here: **×1.06** for DeepSeek V4.1 Flash
+  (62 requests, p25–p90 1.02–1.18) — small at the median, real at the tail.
 - **Layer 0.5 — Vision routing**: text-only main models receive a placeholder
   instead of image pixels, so image prompts are routed *before* the request:
   when a prompt involves image content, a one-shot synthetic note tells the

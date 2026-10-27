@@ -28,7 +28,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { estTokens, estimateMessagesTokens, compressToolText, compressToolResult, routeDistill, selectCompressibleParts, selectStableParts, applyStableCompression, compactMessagesForRequest } from "./lib/text.mjs";
+import { estTokens, estimateMessagesTokens, compressToolText, compressToolResult, routeDistill, selectCompressibleParts, selectStableParts, applyStableCompression, compactMessagesForRequest, estForReal } from "./lib/text.mjs";
 import { writePage, pageHash } from "./lib/pages.mjs";
 import {
   fmt, dirSlug,
@@ -128,6 +128,7 @@ log("contextpack module loaded, data dir:", ROOT);
 // Defaults live in lib/defaults.mjs so the replay bench measures the real ones.
 import { defaults } from "./lib/defaults.mjs";
 import { GROUNDING_MARK, groundSystem } from "./lib/grounding.mjs";
+import { factorFor, readCalibration, recordRequest, requestEstimate } from "./lib/calibration.mjs";
 
 function log(...args) {
   console.warn("[contextpack]", ...args);
@@ -362,7 +363,13 @@ function maybeRequestCompaction(ctx, event, stats, opts) {
     if ((compactionInFlight.get(sessionID) ?? 0) > Date.now()) return;
     const limit = Number(event?.model?.limit?.context) || 0;
     const ratio = opts.proactiveCompactRatio ?? 0.35;
-    const threshold = Math.max(opts.proactiveCompactMinTokens ?? 120_000, Math.round(limit * ratio));
+    // The window and the floor are provider tokens; `stats.before` is an
+    // estimate. Convert the threshold, never the estimate.
+    const factor = opts.tokenFactor ?? 1;
+    const threshold = Math.max(
+      estForReal(opts.proactiveCompactMinTokens ?? 120_000, factor),
+      Math.round(estForReal(limit, factor) * ratio),
+    );
     if (stats.before < threshold) return;
     const now = Date.now();
     if (now - (proactiveRequested.get(sessionID) ?? 0) < (opts.proactiveCompactCooldownMs ?? 600_000)) return;
@@ -682,6 +689,48 @@ export default {
   setup: async (ctx) => {
     const opts = { ...defaults, ...(ctx.options ?? {}) };
 
+    // ---- token calibration (see lib/calibration.mjs) ----------------------
+    // `babyzilla calibrate` learns how far chars/4 drifts from what the provider
+    // actually bills. This only reads that small result — at most every 30s, so
+    // a fresh calibration lands without restarting OpenCode — and feeds it to
+    // the few places where an absolute token number is compared.
+    let calibration = readCalibration(ROOT);
+    let calibrationReadAt = Date.now();
+    const currentCalibration = () => {
+      if (Date.now() - calibrationReadAt < 30_000) return calibration;
+      calibrationReadAt = Date.now();
+      const next = readCalibration(ROOT);
+      const before = JSON.stringify(calibration.models);
+      calibration = next;
+      // Only when the numbers actually move: this is the one place a threshold
+      // silently changes meaning, so it gets a line in the log.
+      if (JSON.stringify(next.models) !== before) {
+        const parts = Object.entries(next.models).map(([m, v]) => `${m} ×${v.factor.toFixed(2)} (${v.samples} samples)`);
+        log(`calibration: ${parts.length ? parts.join(", ") : "none"} — absolute thresholds scaled by billed/estimated`);
+      }
+      return calibration;
+    };
+    // One sample per outgoing request, taken after compression so the estimate
+    // describes the bytes that are actually billed. Fire-and-forget: the line is
+    // a measurement, never a precondition of the turn.
+    const recordSample = (event) => {
+      if (opts.calibrate === false) return;
+      try {
+        if (!event?.sessionID) return;
+        const est = requestEstimate(event);
+        if (!est.total) return;
+        recordRequest(ROOT, {
+          at: Date.now(),
+          sid: event.sessionID,
+          model: event?.model?.id ?? null,
+          sys: est.system,
+          msg: est.messages,
+          tools: est.tools,
+          est: est.total,
+        });
+      } catch { /* measurement must never reach a turn */ }
+    };
+
     // ---- desktop pet bridge -------------------------------------------------
     // Fire-and-forget appends to ~/.opencode/pet/events.jsonl. A pet that is
     // closed, crashed or never installed costs a few bytes; a pet bug must
@@ -964,11 +1013,14 @@ export default {
           const messages = event?.messages;
           if (!Array.isArray(messages) || !messages.length) return;
           const window = Number(event?.model?.limit?.context ?? event?.model?.limit?.input) || 0;
+          // Provider tokens per estimated token, learned offline (lib/calibration).
+          // 1 when unmeasured, which keeps every number identical to before.
+          const tokenFactor = factorFor(currentCalibration(), event?.model?.id);
           petOn(() => {
             if (petThrottled("ctx", 900)) petExpr("thinking", 1.6);
             petThought(messages);
             if (window) {
-              const pct = (estimateMessagesTokens(event?.messages) / window) * 100;
+              const pct = ((estimateMessagesTokens(event?.messages) * tokenFactor) / window) * 100;
               const b = budgetExpression(pct, resolveLanguage());
               if (b && petThrottled("budget", 120000)) { petExpr(b.id, b.hold); if (b.say) petSay(b.say); }
             }
@@ -982,14 +1034,17 @@ export default {
             // Window management is a different concern from prefix stability:
             // asking the host to compact still makes sense at the usual
             // thresholds, and it is the host's own summary either way.
-            maybeRequestCompaction(ctx, event, stable, opts);
+            maybeRequestCompaction(ctx, event, stable, { ...opts, tokenFactor });
             const ratio = Number(opts.stableOverflowRatio ?? 0.9);
             const est = estimateMessagesTokens(messages);
-            if (!window || est < window * ratio) return;
+            // Both sides of this comparison are provider tokens; the estimate
+            // is not, so the window is converted rather than the estimate scaled.
+            if (!window || est < estForReal(window, tokenFactor) * ratio) return;
             log(`overflow valve: ${fmt(est)} tok > ${Math.round(ratio * 100)}% of ${fmt(window)} tok window`);
           }
           const stats = compactMessagesForRequest(messages, {
             ...opts,
+            tokenFactor,
             modelContext: Number(event?.model?.limit?.context ?? event?.model?.limit?.input) || undefined,
             // Persist the exact bytes of anything paged out, so the marker's
             // `babyzilla recall <hash>` handle is always true.
@@ -1027,13 +1082,25 @@ export default {
             big.sort((a, b) => b.tok - a.tok);
             log(`skip diagnostics: ${big.slice(0, 4).map((p) => `${p.role}/${p.type}=${fmt(p.tok)}`).join(" ")}`);
           }
-          maybeRequestCompaction(ctx, event, stats, opts);
+          maybeRequestCompaction(ctx, event, stats, { ...opts, tokenFactor });
         } catch (e) {
           // Never break a request: any partial rewrite is text-only, so the
           // messages remain structurally valid and the request still runs.
           log("request compression skipped:", e?.message ?? e);
+        } finally {
+          // Sample the payload as it will be sent — after every rewrite above,
+          // and including the grounding instruction pushed by the other hook.
+          recordSample(event);
         }
       });
+    }
+
+    // Measurement must survive `requestCompression: false`: the gap between
+    // chars/4 and billing has nothing to do with whether we rewrite a request.
+    // (With compression on, the hook above records at the end of its own body,
+    // which is where the final payload is known.)
+    if (typeof ctx.session?.hook === "function" && opts.requestCompression === false && opts.calibrate !== false) {
+      await ctx.session.hook("context", (event) => recordSample(event));
     }
 
     // ---- compaction replacement ------------------------------------------

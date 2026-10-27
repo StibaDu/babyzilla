@@ -7,6 +7,9 @@ import plugin from "../index.js";
 import { estimateMessagesTokens } from "../lib/text.mjs";
 
 async function loadPlugin(options = {}) {
+  // Calibration samples go to BABYZILLA_ROOT, which these tests do not
+  // sandbox — a fake session must not land in the user's ledger.
+  options = { calibrate: false, ...options };
   const handlers = new Map();
   const compactCalls = [];
   const ctx = {

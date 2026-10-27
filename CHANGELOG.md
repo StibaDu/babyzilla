@@ -2,6 +2,46 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.33.3] — 2026-10-27
+
+### Added
+
+- **Token calibration — `babyzilla calibrate`.** `chars/4` is the estimate behind
+  every absolute number in the plugin: the budget floor/cap, the proactive
+  compaction trigger, the overflow valve, the reported savings. The plugin now
+  records one line per request (system + messages + tool schemas, taken *after*
+  compression, so the sample describes the bytes that are billed) and the command
+  pairs those lines with provider usage (`tokens.input + tokens.cache.read`) to
+  learn a per-model `billed / estimated` factor.
+
+  - Median over samples, clamped to 0.6–1.8, applied only with ≥12 samples.
+  - Samples under 8K estimated tokens, or where messages are <40% of the request,
+    are counted but not used — they measure the system prompt and tool schemas,
+    not the messages a budget governs.
+  - Pairing is by time within the session, so an aborted request leaves a gap
+    rather than shifting every later sample.
+  - The factor scales **absolute thresholds only** (`estForReal`); savings
+    percentages are ratios and are left alone.
+  - `--dry` reports without writing, `--reset` drops the factors, `calibrate:
+    false` stops sampling. The plugin re-reads `calibration.json` every 30s, so a
+    fresh measurement lands without restarting.
+
+### Measured on this machine (not an estimate)
+
+```
+model                                  samples  factor         p25–p90  state
+deepseek-v4.1-flash:1017                    62   ×1.06       1.02–1.18  applied
+```
+
+~6% at the median, 18% at the p90 (JSON-heavy prompts). Small for this model —
+which is the honest result: `chars/4` was already close here. The mechanism
+exists for the models and content where it is not, and because the bias is
+per-model by nature.
+
+### Changed
+
+- New default `calibrate: true` (one ~120-byte JSONL line per request).
+
 ## [0.33.2] — 2026-10-27
 
 ### Added

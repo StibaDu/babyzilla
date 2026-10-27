@@ -262,11 +262,11 @@ $ babyzilla calibrate
   token calibration (chars/4 vs provider billing)
   ────────────────────
   model                                  samples  factor         p25–p90  state
-  deepseek-v4.1-flash:1017                    62   ×1.06       1.02–1.18  applied
+  deepseek-v4.1-flash:1017                    80   ×1.07       1.05–1.18  applied
 ```
 
-That is the real measurement on this machine: ~6% at the median, 18% at the 90th
-percentile (JSON-heavy prompts). Which is the honest outcome — for this model the
+That is the real measurement on this machine: ~7% at the median, 18% at the 90th
+percentile (JSON-heavy prompts), and the sample count keeps growing with use. Which is the honest outcome — for this model the
 estimate was already close, and the correction is small. The mechanism exists
 because the same heuristic is *not* close for CJK text or code-heavy sessions, and
 because the factor is per model: a 3× tokenizer difference between two models

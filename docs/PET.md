@@ -93,9 +93,16 @@ node pet/import-streamavatars.mjs --zip …/premade/*.zip --zip …/StreamingAss
 ```
 
 - Every avatar in an archive becomes its own pack; `--only littlewalker` picks
-  one, `--dir` takes an already-unpacked avatar.
+  one, `--dir` takes an already-unpacked avatar, and a glob after `--zip` means
+  every archive it matched.
+- Rows keep the **frame rate the sheet states** (9 for nearly every avatar, up
+  to 17 for the fast emotes), and a row the sheet named keeps that name: the
+  hero sheets are `custom1`/`custom2` because that is all their labels say, while
+  `block_man` has `attack`, `wave`, `hover`, `clap` and `sign_*`. `idle`, `walk`
+  and `jump` are never renamed — the app drives those three by name.
 - The sheet's own `expressions` come along: an avatar with a `sit` row sits for
-  `sit`, `doze`, `sleep` and `bored-waiting` instead of hopping through them.
+  `sit`, `doze` and `bored-waiting` instead of hopping through them, and a named
+  `wave`, `clap`, `dance` or `sleep` row answers exactly that expression.
 - **Paid art stays local.** The importer writes only into
   `~/.opencode/pet/packs`, refuses an `--out` inside the repository, and records
   the licence in `pack.json`: personal use is not redistribution.

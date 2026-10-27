@@ -38,7 +38,16 @@ const arg = (name, fallback = null) => {
   const v = args[i + 1];
   return v && !v.startsWith("--") ? v : true;
 };
-const all = (name) => args.reduce((out, a, i) => (a === `--${name}` && args[i + 1] && !args[i + 1].startsWith("--") ? [...out, args[i + 1]] : out), []);
+// `--zip a.zip b.zip` and `--zip dir/*.zip` both mean every archive up to the
+// next flag: a shell expands the glob into one argument per file.
+const all = (name) => {
+  const out = [];
+  args.forEach((a, i) => {
+    if (a !== `--${name}`) return;
+    for (let j = i + 1; j < args.length && !args[j].startsWith("--"); j++) out.push(args[j]);
+  });
+  return out;
+};
 
 /** Where packs live. The only directory this importer is allowed to write to. */
 export function packsRoot() {
@@ -86,8 +95,14 @@ const GROUPS = {
   stuff: "Items",
 };
 
-/** Animations the sheets have, and the frame rate each one reads best at. */
+/** Frame rate to fall back on when a sheet does not state one. */
 const FPS = { idle: 6, walk: 12, jump: 12, sit: 6, stand: 6, dance: 8 };
+
+/** The animations the app drives by name; a row's own label never renames them. */
+const DRIVEN = new Set(["idle", "walk", "jump"]);
+
+/** Row labels that say nothing: `custom1`, `custom2`, … are placeholders. */
+const placeholder = (name) => !name || /^custom\d*$/i.test(name) || /^(none|default)$/i.test(name);
 
 /**
  * Postures for the expressions a face-less avatar cannot draw. A pet that sits
@@ -96,6 +111,18 @@ const FPS = { idle: 6, walk: 12, jump: 12, sit: 6, stand: 6, dance: 8 };
 const POSTURES = {
   sit: ["sit", "doze", "zzz", "sleep", "bored-waiting", "waiting-approval"],
   dance: ["party", "dance", "celebrate"],
+};
+
+/**
+ * A row the sheet bothered to name says what it means: a `wave` row is a wave,
+ * a `clap` is applause, a `sleep` row really is sleep. These win over the
+ * postures above, which only guess from the body.
+ */
+const NAMED = {
+  dance: ["party", "dance", "celebrate"],
+  wave: ["wave"],
+  clap: ["success", "ship-it"],
+  sleep: ["sleep", "zzz", "doze"],
 };
 
 export function labelFor(id) {
@@ -173,9 +200,24 @@ export function installAvatar(dir, { outRoot, name = null, upscale = 0, scale = 
     // Rows are animations *in declaration order*, and an animation with no
     // frames has no row — the sheet only carries rows that were drawn.
     const anims = Object.entries(av.animationData ?? {})
-      .map(([anim, v]) => ({ anim, frames: (v.frameData ?? []).length }))
+      .map(([anim, v]) => ({
+        anim,
+        frames: (v.frameData ?? []).length,
+        customName: v.customName,
+        fps: v.framesPerSecond,
+      }))
       .filter((a) => a.frames > 0);
     if (!anims.length) throw new Error(`${key}: no animation frames`);
+    // A sheet often names its own rows: `custom2` labelled "wave" plays as
+    // `wave`, not as the sheet's internal key. Placeholder labels and the three
+    // animations the app drives by name keep their row key.
+    const taken = new Set(anims.map((a) => a.anim));
+    for (const a of anims) {
+      const named = String(a.customName ?? "").trim().toLowerCase().replace(/\s+/g, "-");
+      const usable = /^[a-z][a-z0-9_-]*$/.test(named) && !placeholder(named) && !DRIVEN.has(a.anim) && !taken.has(named);
+      a.id = usable ? named : a.anim;
+      taken.add(a.id);
+    }
     const cols = Math.min(
       Math.max(...anims.map((a) => a.frames)),
       Math.floor(sheet.width / cellW),
@@ -192,7 +234,11 @@ export function installAvatar(dir, { outRoot, name = null, upscale = 0, scale = 
     const size = square ? cellW * up : Math.max(cellW, cellH);
     const shown = Math.max(1, Number(scale) || (size <= 80 ? 2 : 1));
 
-    const fps = Object.fromEntries(anims.map(({ anim }) => [anim, FPS[anim] ?? 8]));
+    // The sheet states a frame rate per row (9 for nearly every avatar, 17 for
+    // the fast emotes); only a sheet that omits one falls back to the defaults.
+    const fps = Object.fromEntries(
+      anims.map((a) => [a.id, Number(a.fps) || (FPS[a.id] ?? FPS[a.anim] ?? 8)]),
+    );
     const out = path.join(outRoot, id);
     // Never eat someone else's pet: a catalog id like `thor` may already exist.
     // Only a pack this importer wrote may be replaced.
@@ -213,7 +259,7 @@ export function installAvatar(dir, { outRoot, name = null, upscale = 0, scale = 
       "--label", labelFor(key),
       "--cell", square ? String(cellW) : `${cellW}x${cellH}`,
       "--cols", String(cols),
-      "--rows", anims.map((a) => a.anim).join(","),
+      "--rows", anims.map((a) => a.id).join(","),
       "--scale", String(shown),
       "--license", LICENSE,
       "--fps", Object.entries(fps).map(([k, v]) => `${k}:${v}`).join(","),
@@ -233,7 +279,7 @@ export function installAvatar(dir, { outRoot, name = null, upscale = 0, scale = 
     pack.atlas = { sheet: `${sheet.width}x${sheet.height}`, cell: `${cellW}x${cellH}`, cols, rows, animations: anims.length };
 
     const expressions = {};
-    for (const [anim, ids] of Object.entries(POSTURES)) {
+    for (const [anim, ids] of Object.entries({ ...POSTURES, ...NAMED })) {
       if (!pack.animations[anim]?.length) continue;
       for (const expr of ids) expressions[expr] = anim;
     }
@@ -294,25 +340,27 @@ function importGear(dir, out, av, avatar, anims) {
       });
     }
   }
-  if (!items.length) return skipped ? { avatarW: avatar.cellW, avatarH: avatar.cellH, rows: anims.map((a) => a.anim), items: [], skipped } : null;
+  if (!items.length) return skipped ? { avatarW: avatar.cellW, avatarH: avatar.cellH, rows: anims.map((a) => a.id), items: [], skipped } : null;
 
   const pivots = {};
   const unique = {};
-  for (const { anim } of anims) {
+  // Pivots are stored under the *pack's* animation name, so a row renamed from
+  // `custom2` to `wave` still places its hat on the wave frames.
+  for (const { anim, id } of anims) {
     const frames = av.animationData?.[anim]?.frameData ?? [];
     frames.forEach((frame, i) => {
       for (const [set, xy] of Object.entries(frame.gearPivot ?? {})) {
         pivots[set] ??= {};
-        pivots[set][anim] ??= [];
-        pivots[set][anim][i] = [Number(xy.x) || 0, Number(xy.y) || 0];
+        pivots[set][id] ??= [];
+        pivots[set][id][i] = [Number(xy.x) || 0, Number(xy.y) || 0];
       }
       for (const [set, per] of Object.entries(frame.uniquePivot ?? {})) {
         for (const [gid, xy] of Object.entries(per ?? {})) {
           if (typeof xy !== "object" || xy === null) continue;
           const key = `${set}/${gid}`;
           unique[key] ??= {};
-          unique[key][anim] ??= [];
-          unique[key][anim][i] = [Number(xy.x) || 0, Number(xy.y) || 0];
+          unique[key][id] ??= [];
+          unique[key][id][i] = [Number(xy.x) || 0, Number(xy.y) || 0];
         }
       }
     });
@@ -326,7 +374,7 @@ function importGear(dir, out, av, avatar, anims) {
   return {
     avatarW: avatar.cellW,
     avatarH: avatar.cellH,
-    rows: anims.map((a) => a.anim),
+    rows: anims.map((a) => a.id),
     ...(Object.keys(clean(pivots)).length ? { pivots: clean(pivots) } : {}),
     ...(Object.keys(clean(unique)).length ? { unique: clean(unique) } : {}),
     items,

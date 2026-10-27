@@ -1042,17 +1042,22 @@ function fakeAvatar(dir, { id = "testimp", cell = 16 } = {}) {
     avatar: {
       [id]: {
         width: cell, height: cell,
+        // The sheet states its own frame rate per row, and names the rows it
+        // drew for a purpose: `custom1` here is a wave. `custom2` is a
+        // placeholder label and must keep its key.
         animationData: {
-          idle: { frameData: [frame(), frame(0, 2)] },
-          walk: { frameData: [frame(), frame(), frame()] },
+          idle: { frameData: [frame(), frame(0, 2)], framesPerSecond: 9 },
+          walk: { frameData: [frame(), frame(), frame()], framesPerSecond: 9 },
           sit: { frameData: [] },
-          stand: { frameData: [frame()] },
-          jump: { frameData: [frame()] },
+          stand: { frameData: [frame()], framesPerSecond: 9 },
+          jump: { frameData: [frame()], framesPerSecond: 9 },
+          custom1: { customName: "wave", frameData: [frame()], framesPerSecond: 16 },
+          custom2: { customName: "custom2", frameData: [frame()], framesPerSecond: 9 },
         },
       },
     },
   }));
-  writeSheet(path.join(dir, "avatars", `${id}.png`), cell, 3, [2, 3, 1, 1]);
+  writeSheet(path.join(dir, "avatars", `${id}.png`), cell, 3, [2, 3, 1, 1, 1, 1]);
   fs.writeFileSync(path.join(dir, "gear", "hats", "crown.png"), cellPng(cell));
   // three cells wide: a hat that animates on its own clock
   const strip = decodePng(cellPng(cell));
@@ -1083,8 +1088,12 @@ test("stream avatars: a sheet becomes a pack with its gear and pivots", async ()
   assert.equal(pack.label, "Testimp");
   // rows are the sheet's animations in order, and an animation with no frames
   // does not get a row — `sit` is empty above and must not shift `stand`
-  assert.deepEqual(Object.keys(pack.animations), ["idle", "walk", "stand", "jump"]);
-  assert.deepEqual(Object.values(pack.animations).map((f) => f.length), [2, 3, 1, 1]);
+  assert.deepEqual(Object.keys(pack.animations), ["idle", "walk", "stand", "jump", "wave", "custom2"]);
+  assert.deepEqual(Object.values(pack.animations).map((f) => f.length), [2, 3, 1, 1, 1, 1]);
+  // The sheet's own frame rate wins over the importer's defaults, and a row the
+  // sheet named is the expression it says it is.
+  assert.deepEqual(pack.fps, { idle: 9, walk: 9, stand: 9, jump: 9, wave: 16, custom2: 9 });
+  assert.equal(pack.expressions.wave, "wave", "a named wave row answers the wave expression");
   assert.match(pack.license, /personal use/i);
   assert.equal(pack.atlas.cols, 3);
   for (const frame of Object.values(pack.animations).flat()) {
@@ -1094,7 +1103,7 @@ test("stream avatars: a sheet becomes a pack with its gear and pivots", async ()
 
   const gear = pack.gear;
   assert.equal(gear.avatarW, 16);
-  assert.deepEqual(gear.rows, ["idle", "walk", "stand", "jump"]);
+  assert.deepEqual(gear.rows, ["idle", "walk", "stand", "jump", "wave", "custom2"]);
   const crown = gear.items.find((i) => i.id === "hats/crown");
   const fire = gear.items.find((i) => i.id === "hats/fire");
   assert.equal(crown.mode, "single");

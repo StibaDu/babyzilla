@@ -2,6 +2,33 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.35.0] — 2026-10-27
+
+### Changed
+
+- **An imported pack moves at the sheet's own speed.** The Stream Avatars importer
+  assumed 6 fps for idle and 12 for everything else; `data.txt` states a rate per
+  row — 9 for nearly every avatar, up to 17 for the fast emotes — and that is what
+  the pack now plays at. Walking is unaffected: its cycle is driven by the ground
+  covered, not by the clock.
+
+- **A row the sheet named is an animation with that name.** `block_man` has
+  `attack`, `wave`, `dance`, `hover`, `stomp`, `squat`, `clap`, `spit` and
+  `sign_*` instead of `custom1…custom14`; placeholder labels (`custom1` on the hero
+  sheets) keep their key, and `idle`/`walk`/`jump` are never renamed because the
+  app drives those three by name. Gear pivots follow the new names, so a hat still
+  sits right on a wave frame.
+
+- Named rows answer the expressions they describe. `wave` plays the `wave`
+  expression, `clap` plays `success`, and `dance`/`sleep` play the pack's own
+  dance and sleep instead of the sit posture.
+
+### Fixed
+
+- `--zip a.zip b.zip` — and therefore `--zip dir/*.zip`, the command the docs
+  give — imported only the first archive: each flag collected a single value, so
+  a shell glob silently dropped the rest.
+
 ## [0.34.0] — 2026-10-27
 
 ### Added

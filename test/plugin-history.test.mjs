@@ -9,11 +9,16 @@ import path from "node:path";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "bz-plugin-history-"));
 process.env.BABYZILLA_ROOT = root;
+process.env.BABYZILLA_LOG = "0";
 process.env.BABYZILLA_SELFTUNE_DISABLE = "1";
 const { default: plugin } = await import("../index.js");
 
 after(() => {
-  fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  try {
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  } catch {
+    // Windows can still hold a log handle; a temp directory is disposable.
+  }
 });
 
 async function loadPlugin() {

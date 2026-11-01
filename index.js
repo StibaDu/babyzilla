@@ -117,6 +117,7 @@ const CONTRACT_NOTE = [
 
 // Tool results are the bulk of a session. Pre-trim them so the distiller call
 // fits comfortably even when the session just overflowed its context window.
+const QUIET = process.env.BABYZILLA_LOG === "0";
 log("contextpack module loaded, data dir:", ROOT);
 
 // Defaults live in lib/defaults.mjs so the replay bench measures the real ones.
@@ -125,6 +126,7 @@ import { GROUNDING_MARK, groundSystem } from "./lib/grounding.mjs";
 import { factorFor, readCalibration, recordRequest, requestEstimate } from "./lib/calibration.mjs";
 
 function log(...args) {
+  if (QUIET) return;
   console.warn("[contextpack]", ...args);
   // console output is not captured by the background service — mirror to a file
   fs.appendFile(path.join(ROOT, "debug.log"), `[${new Date().toISOString()}] ${args.map((a) => (typeof a === "string" ? a : safeStr(a))).join(" ")}\n`).catch(() => {});

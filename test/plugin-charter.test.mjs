@@ -14,7 +14,7 @@ const { default: plugin } = await import("../index.js");
 const { CHARTER_MARK } = await import("../lib/charter.mjs");
 
 after(() => {
-  fs.rmSync(root, { recursive: true, force: true });
+  fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 function writeTabs(sessions) {
@@ -41,7 +41,7 @@ function writePack(sessionID, { state, shortTerm = [] } = {}) {
 async function loadPlugin(options = {}) {
   const contextHooks = [];
   const ctx = {
-    options: { calibrate: false, grounding: false, pet: false, ...options },
+    options: { calibrate: false, grounding: false, pet: false, checkUpdates: false, ...options },
     tool: { hook: async () => {} },
     session: {
       hook: async (name, fn) => { if (name === "context") contextHooks.push(fn); },

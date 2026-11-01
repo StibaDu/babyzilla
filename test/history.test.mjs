@@ -53,7 +53,7 @@ test("a differing module moves to short/ before the new bytes land", async () =>
     assert.equal(second.path, "short/0002-00-state.md");
     assert.equal(fs.readFileSync(path.join(base, "short", "0002-00-state.md"), "utf8"), "second state");
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 
@@ -70,7 +70,7 @@ test("a module the new pack dropped is retired, not deleted", async () => {
     assert.equal(fs.existsSync(path.join(base, "tool-old.md")), false);
     assert.equal(fs.readFileSync(path.join(base, "short", "0001-tool-old.md"), "utf8"), "old tool knowledge");
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 
@@ -102,7 +102,7 @@ test("revert restores the old revision and keeps the replaced one", async () => 
     assert.equal(listed.length, 2);
     assert.ok(listed.every((entry) => entry.scope === "session" && entry.id === "ses_rev"));
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 
@@ -125,7 +125,7 @@ test("library promotion retires the previous library copy", async () => {
     assert.equal(listed[0].scope, "library");
     assert.equal(listed[0].id, "mtg");
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 
@@ -156,6 +156,6 @@ test("CLI: memory history and revert operate on the short-term rows", async () =
     const listed = JSON.parse(spawnSync(process.execPath, [bin, "memory", "history", "--session", "ses_cli", "--json"], { encoding: "utf8", env }).stdout);
     assert.equal(listed.length, 2);
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });

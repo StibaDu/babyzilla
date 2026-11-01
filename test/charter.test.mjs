@@ -48,7 +48,7 @@ test("a full charter carries title, state, decisions and the retired count", () 
     assert.ok(charter.text.length <= 1200, `charter should fit the cap, got ${charter.text.length}`);
     assert.equal(charter.shortTerm, 2);
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 
@@ -69,7 +69,7 @@ test("the character cap wins over the state/decisions sizes", () => {
     assert.ok(charter.text.length <= 600, `expected <=600 chars, got ${charter.text.length}`);
     assert.match(charter.text, /About: Long idea/);
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 
@@ -91,7 +91,7 @@ test("a tab without a pack gets a stable thin charter from its first journal ste
     assert.doesNotMatch(first.text, /later step/);
     assert.equal(second.text, first.text, "thin charter bytes must not drift between requests");
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 
@@ -110,7 +110,7 @@ test("the title comes from OpenCode's tab strip when no title is passed", () => 
   } finally {
     if (previous === undefined) delete process.env.BABYZILLA_TABS;
     else process.env.BABYZILLA_TABS = previous;
-    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 
@@ -123,7 +123,7 @@ test("no pack, no title and no journal means no charter", () => {
   } finally {
     if (previous === undefined) delete process.env.BABYZILLA_TABS;
     else process.env.BABYZILLA_TABS = previous;
-    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 

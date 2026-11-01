@@ -12,7 +12,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+// node:sqlite is only used by the end-to-end DB tests; Node 18/20 do not have
+// it, and importing it unconditionally failed the whole file there.
+let DatabaseSync = null;
+try {
+  ({ DatabaseSync } = await import("node:sqlite"));
+} catch {
+  /* optional: the DB-backed tests below skip on this Node */
+}
+const sqliteOnly = DatabaseSync ? {} : { skip: "node:sqlite requires Node >= 22.5" };
 
 import {
   FACTOR_MAX, MIN_SAMPLES, calibrationPath, factorFor, ledgerPath, pairSamples,
@@ -264,7 +272,7 @@ function makeDb(file, rows) {
   db.close();
 }
 
-test("calibrate pairs the ledger with billed usage and writes the factor", async () => {
+test("calibrate pairs the ledger with billed usage and writes the factor", sqliteOnly, async () => {
   const root = tmpRoot("e2e");
   const dbPath = path.join(root, "opencode.db");
   const base = Date.now() - 60_000;
@@ -297,7 +305,7 @@ test("calibrate says so instead of inventing a factor from nothing", () => {
   assert.match(renderCalibration(r), /No samples recorded yet/);
 });
 
-test("usageRows reads input+cache as the billed prompt, and tolerates junk", () => {
+test("usageRows reads input+cache as the billed prompt, and tolerates junk", sqliteOnly, () => {
   const root = tmpRoot("usage");
   const dbPath = path.join(root, "opencode.db");
   const db = new DatabaseSync(dbPath);

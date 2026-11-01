@@ -13,14 +13,14 @@ process.env.BABYZILLA_SELFTUNE_DISABLE = "1";
 const { default: plugin } = await import("../index.js");
 
 after(() => {
-  fs.rmSync(root, { recursive: true, force: true });
+  fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 async function loadPlugin() {
   const handlers = new Map();
   let round = 0;
   const ctx = {
-    options: { calibrate: false, grounding: false, charter: false, pet: false, library: true },
+    options: { calibrate: false, grounding: false, charter: false, pet: false, checkUpdates: false, library: true },
     tool: { hook: async () => {} },
     session: {
       hook: async (name, fn) => { handlers.set(name, fn); },

@@ -14,7 +14,7 @@ async function loadPlugin(options, dir) {
   const handlers = new Map();
   const ctx = {
     options,
-    tool: { hook: async () => {} },
+    tool: { hook: async (name, fn) => { handlers.set(name, fn); } },
     session: {
       hook: async (name, fn) => { handlers.set(name, fn); },
       context: async () => [],
@@ -70,6 +70,34 @@ test("pet thoughts: the newest reasoning becomes one short think event", async (
     // the pet's blunt opinion of its human, plus the mood read off the sentence
     assert.equal(thought.text, "Human want me let pet talk");
     assert.ok(thought.text.length <= 95);
+  } finally {
+    delete process.env.BABYZILLA_PET_STATE;
+  }
+});
+
+test("pet reactions: the result decides the face, not only the exit code", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bz-react-"));
+  process.env.BABYZILLA_PET_STATE = dir;
+  try {
+    const handlers = await loadPlugin({}, dir);
+    const after = handlers.get("execute.after");
+    assert.ok(after, "the plugin registers the tool outcome hook");
+    // A runner that printed one failure and exited 0: the counts are the event.
+    await after({
+      sessionID: "ses_react",
+      tool: "bash",
+      input: { command: "node --test test/" },
+      result: "ℹ tests 340\nℹ pass 339\nℹ fail 1",
+      status: "completed",
+    });
+    const expr = events(dir).filter((e) => e.kind === "expr").pop();
+    assert.equal(expr?.id, "test-fail");
+    const say = events(dir).filter((e) => e.kind === "say").pop();
+    assert.match(say?.text ?? "", /1 test/);
+
+    // A search with no hits is a shrug, not a failure.
+    await after({ sessionID: "ses_react", tool: "grep", result: "", status: "completed" });
+    assert.equal(events(dir).filter((e) => e.kind === "expr").pop()?.id, "shrug");
   } finally {
     delete process.env.BABYZILLA_PET_STATE;
   }

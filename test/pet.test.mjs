@@ -13,8 +13,8 @@ import { fileURLToPath } from "node:url";
 import { EXPRESSIONS, byId, CATEGORIES } from "../pet/expressions.mjs";
 import { caveman, gist, latestThought, readMood, thought, voice } from "../lib/pet-thought.mjs";
 import {
-  TOOL_EXPRESSION, toolExpression, outcomeExpression, compactionExpression,
-  budgetExpression, updateExpression, errorExpression, sessionSummary,
+  TOOL_EXPRESSION, toolExpression, outcomeExpression, contentReaction, moodExpression,
+  compactionExpression, budgetExpression, updateExpression, errorExpression, sessionSummary,
 } from "../lib/pet-map.mjs";
 import { decodePng, encodePng } from "../pet/png.mjs";
 import { characterCrop, installPetPackage } from "../pet/pet-package.mjs";
@@ -77,6 +77,77 @@ test("mapping: every referenced expression exists", () => {
   assert.match(u.say, /9\.9\.9/);
   assert.equal(errorExpression("429 Too Many Requests").id, "rate-limited");
   assert.equal(errorExpression("fetch failed").id, "offline");
+});
+
+test("mapping: the result is read, not only the tool name", () => {
+  // Node's own summary, printed before the process exits: the counts are the
+  // verdict, and one failed test is the difference between green and red.
+  const red = contentReaction({
+    name: "bash", input: { command: "node --test test/" }, ok: true,
+    output: "ℹ tests 340\nℹ pass 339\nℹ fail 1\n✖ recordRequest",
+  });
+  assert.equal(red.id, "test-fail");
+  assert.match(red.say, /1 test/);
+
+  const green = contentReaction({
+    name: "bash", input: { command: "npm test" }, ok: true,
+    output: "Tests:  12 passed, 12 total",
+  });
+  assert.equal(green.id, "test-pass");
+  assert.match(green.say, /12/);
+
+  // A runner that exits 0 while printing failures is still a red run.
+  assert.equal(contentReaction({ name: "bash", input: { command: "pytest" }, ok: true, output: "--- FAIL: TestFoo" }).id, "test-fail");
+  assert.equal(contentReaction({ name: "bash", input: { command: "true" }, ok: true, output: "all good" }), null, "a non-test command is not a test");
+
+  assert.equal(contentReaction({ name: "read", ok: false, error: "ENOENT: no such file or directory" }).id, "notfound");
+  // A file's contents are not an error message: reading docs about ENOENT must
+  // not make the pet announce a missing file.
+  assert.equal(contentReaction({ name: "read", ok: true, output: "ENOENT: no such file or directory" }), null);
+  assert.equal(contentReaction({
+    name: "bash", input: { command: "grep -rn ENOENT src/" }, ok: false,
+    output: "src/a.mjs: throw new Error('ENOENT')", error: "Command failed with exit code 1",
+  }), null, "a grep for the word is a result, not a crash");
+  assert.equal(contentReaction({ name: "write", ok: false, error: "EACCES: permission denied" }).id, "permission-denied");
+  assert.equal(contentReaction({ name: "bash", ok: false, error: "ENOSPC: no space left on device" }).id, "disk-full");
+  assert.equal(contentReaction({ name: "bash", ok: false, error: "fetch failed" }).id, "offline");
+
+  // grep exits 1 when it finds nothing; to a reader that is a shrug.
+  assert.equal(contentReaction({ name: "grep", ok: true, output: "" }).id, "shrug");
+  assert.equal(contentReaction({ name: "grep", ok: false, error: "Command failed with exit code 1", output: "" }).id, "shrug");
+  assert.equal(contentReaction({ name: "grep", ok: false, output: "", error: "invalid regex: [" }), null);
+
+  assert.equal(contentReaction({ name: "read", ok: true, output: "x".repeat(130_000) }).id, "stack-overflow");
+  assert.equal(contentReaction({
+    name: "bash", input: { command: "git push" }, ok: true,
+    output: "! [rejected]  main -> main (non-fast-forward)",
+  }).id, "conflict");
+  assert.equal(contentReaction({
+    name: "bash", input: { command: "npm run build" }, ok: true,
+    output: "error TS1005: ';' expected",
+  }).id, "oops");
+
+  assert.equal(contentReaction({ name: "read", ok: false, error: "boom" }), null, "unknown output falls back to the plain outcome");
+  assert.match(contentReaction({ name: "read", ok: false, error: "ENOENT", language: "de" }).say, /nicht gefunden/);
+
+  for (const r of [red, green, { id: "notfound" }, { id: "permission-denied" }, { id: "disk-full" }, { id: "offline" },
+    { id: "shrug" }, { id: "stack-overflow" }, { id: "conflict" }, { id: "oops" }]) {
+    assert.ok(byId[r.id], r.id);
+  }
+});
+
+test("mapping: a mood is worn on the face, not only written in the bubble", () => {
+  assert.equal(moodExpression("angry").id, "conflict");
+  assert.equal(moodExpression("confused").id, "confused");
+  assert.equal(moodExpression("bored").id, "bored");
+  assert.equal(moodExpression("smug").id, "proud");
+  assert.equal(moodExpression("tease").id, "tilt-head");
+  assert.equal(moodExpression("flat"), null);
+  assert.equal(moodExpression(null), null);
+  assert.equal(moodExpression("angry", { rawr: true }).id, "roar", "the RAWR is the loudest thing it says");
+  for (const mood of ["angry", "confused", "bored", "smug", "tease"]) {
+    assert.ok(byId[moodExpression(mood).id], mood);
+  }
 });
 
 test("mapping: tool names are classified, not dumped raw", () => {
@@ -1088,12 +1159,23 @@ test("stream avatars: a sheet becomes a pack with its gear and pivots", async ()
   assert.equal(pack.label, "Testimp");
   // rows are the sheet's animations in order, and an animation with no frames
   // does not get a row — `sit` is empty above and must not shift `stand`
-  assert.deepEqual(Object.keys(pack.animations), ["idle", "walk", "stand", "jump", "wave", "custom2"]);
-  assert.deepEqual(Object.values(pack.animations).map((f) => f.length), [2, 3, 1, 1, 1, 1]);
+  // The sheet's rows, in sheet order, then the eight poses derived from its own
+  // idle frame — a seven-row sheet cannot answer a hundred states on its own.
+  const derived = ["nod", "sway", "shake", "stretch", "turn", "lean", "bounce", "slump"];
+  assert.deepEqual(Object.keys(pack.animations),
+    ["idle", "walk", "stand", "jump", "wave", "custom2", ...derived]);
+  assert.deepEqual(Object.values(pack.animations).slice(0, 6).map((f) => f.length), [2, 3, 1, 1, 1, 1]);
+  assert.deepEqual(pack.rows, ["idle", "walk", "stand", "jump", "wave", "custom2"]);
   // The sheet's own frame rate wins over the importer's defaults, and a row the
   // sheet named is the expression it says it is.
-  assert.deepEqual(pack.fps, { idle: 9, walk: 9, stand: 9, jump: 9, wave: 16, custom2: 9 });
+  assert.equal(pack.fps.idle, 9);
+  assert.equal(pack.fps.wave, 16);
+  assert.equal(pack.fps.custom2, 9);
+  assert.equal(pack.fps.nod, 8, "derived poses keep their own rate");
+  assert.deepEqual(pack.emotes.wave, { fps: 16, frames: 1, loops: 1, hold: 0 });
   assert.equal(pack.expressions.wave, "wave", "a named wave row answers the wave expression");
+  assert.equal(pack.expressions.thinking, "nod", "and the derived nod answers thinking");
+  assert.equal(Object.keys(pack.expressions).length > 20, true, "most of the catalogue is answered");
   assert.match(pack.license, /personal use/i);
   assert.equal(pack.atlas.cols, 3);
   for (const frame of Object.values(pack.animations).flat()) {
@@ -1111,10 +1193,24 @@ test("stream avatars: a sheet becomes a pack with its gear and pivots", async ()
   assert.equal(fire.mode, "strip");
   assert.equal(fire.cols, 3);
   assert.ok(fse(fire.file, dir), "the overlay art is copied next to the pack");
+  // Every layer carries a 32px preview for the Wear menu: the idle cell, not the
+  // whole sheet, so opening the menu never decodes six hundred grids.
+  assert.ok(crown.thumb && fire.thumb, "every layer has a preview");
+  const preview = decodePng(fs.readFileSync(path.join(dir, crown.thumb)));
+  assert.equal(preview.width, 32);
+  assert.equal(preview.height, 32);
   // the sheet's own placement survives: every walk frame is offset by one pixel,
   // and the crown is corrected by its per-item pivot
   assert.deepEqual(gear.pivots.hats.walk.slice(0, 3), [[1, 0], [1, 0], [1, 0]]);
   assert.deepEqual(gear.unique["hats/crown"].idle, [[0, 0], [0, 2]]);
+
+  // --plain keeps the sheet's own rows and nothing else.
+  const plainState = path.join(work, "plain");
+  await run(process.execPath, [path.join(ROOT, "pet/import-streamavatars.mjs"),
+    "--dir", avatar, "--plain"], { env: { ...env, BABYZILLA_PET_STATE: plainState } });
+  const plain = JSON.parse(fs.readFileSync(path.join(plainState, "packs", "testimp", "pack.json"), "utf8"));
+  assert.deepEqual(Object.keys(plain.animations), ["idle", "walk", "stand", "jump", "wave", "custom2"]);
+  assert.equal(plain.expressions.nod, undefined, "no derived poses, so nothing answers nod");
 
   fs.rmSync(work, { recursive: true, force: true });
 });
@@ -1157,6 +1253,53 @@ test("stream avatars: refuses to write paid art into the repository", async () =
   fs.rmSync(work, { recursive: true, force: true });
 });
 
+test("pet app: a chair is furniture, an emote prop only exists while emoting", async (t) => {
+  const bin = petApp(t);
+  if (!bin) return;
+  const { dir, env } = petAppState({
+    language: "en", pack: "chair-test", scale: 2,
+    worn: { b_chairs: "b_chairs/afk", b_emote: "b_emote/cake" },
+  });
+  const packDir = path.join(dir, "packs", "chair-test");
+  fs.mkdirSync(path.join(packDir, "sprites"), { recursive: true });
+  fs.mkdirSync(path.join(packDir, "gear", "b_chairs"), { recursive: true });
+  fs.mkdirSync(path.join(packDir, "gear", "b_emote"), { recursive: true });
+  for (const frame of ["idle-1", "walk-1", "sit-1", "dance-1"]) {
+    fs.writeFileSync(path.join(packDir, "sprites", `${frame}.png`), cellPng(32));
+  }
+  fs.writeFileSync(path.join(packDir, "gear", "b_chairs", "afk.png"), cellPng(16));
+  fs.writeFileSync(path.join(packDir, "gear", "b_emote", "cake.png"), cellPng(16));
+  const item = (set, name, group) => ({
+    id: `${set}/${name}`, label: name, group, set, file: `gear/${set}/${name}.png`,
+    cellW: 16, cellH: 16, cols: 1, rows: 1, mode: "single",
+  });
+  fs.writeFileSync(path.join(packDir, "pack.json"), JSON.stringify({
+    kind: "pack", name: "chair-test", label: "Chair Test", size: 32, defaultScale: 2,
+    animations: {
+      idle: ["idle-1"], walk: ["walk-1"], sit: ["sit-1"], dance: ["dance-1"],
+    },
+    fps: { idle: 9, walk: 9, sit: 9, dance: 9 },
+    gear: {
+      avatarW: 16, avatarH: 16, rows: ["idle", "walk", "sit", "dance"],
+      items: [item("b_chairs", "afk", "Chairs"), item("b_emote", "cake", "Items")],
+    },
+  }));
+
+  // Idle: the chair is there, the cake is not glued to the hand.
+  const idle = await run(bin, ["--at", "idle", "--gear"], { env, timeout: 30_000 });
+  assert.equal((idle.stdout.match(/^draw\t/mg) ?? []).length, 1, idle.stdout);
+
+  // Walking: furniture does not follow the pet around.
+  const walk = await run(bin, ["--at", "walk", "--gear"], { env, timeout: 30_000 });
+  assert.match(walk.stdout, /^draw\tnone$/m, walk.stdout);
+
+  // Dancing: chair behind, cake in hand — the prop arrives with the emote.
+  const dance = await run(bin, ["--at", "dance", "--gear"], { env, timeout: 30_000 });
+  assert.equal((dance.stdout.match(/^draw\t/mg) ?? []).length, 2, dance.stdout);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("pet app: a worn gear layer resolves to a real rect and persists", async (t) => {
   const bin = petApp(t);
   if (!bin) return;
@@ -1164,14 +1307,16 @@ test("pet app: a worn gear layer resolves to a real rect and persists", async (t
   const packDir = path.join(dir, "packs", "worn-test");
   fs.mkdirSync(path.join(packDir, "sprites"), { recursive: true });
   fs.mkdirSync(path.join(packDir, "gear", "hats"), { recursive: true });
-  for (const frame of ["idle-1", "walk-1", "walk-2", "jump-1"]) {
+  for (const frame of ["idle-1", "walk-1", "walk-2", "jump-1", "wave-1", "wave-2"]) {
     fs.writeFileSync(path.join(packDir, "sprites", `${frame}.png`), cellPng(32));
   }
   fs.writeFileSync(path.join(packDir, "gear", "hats", "crown.png"), cellPng(16));
   fs.writeFileSync(path.join(packDir, "pack.json"), JSON.stringify({
     kind: "pack", name: "worn-test", label: "Worn Test", size: 32, defaultScale: 2,
-    animations: { idle: ["idle-1"], walk: ["walk-1", "walk-2"], jump: ["jump-1"] },
-    fps: { idle: 6, walk: 12, jump: 12 },
+    animations: { idle: ["idle-1"], walk: ["walk-1", "walk-2"], jump: ["jump-1"],
+      wave: ["wave-1", "wave-2"] },
+    fps: { idle: 6, walk: 12, jump: 12, wave: 10 },
+    emotes: { wave: { fps: 10, frames: 2, loops: 30, hold: 0 } },
     gear: {
       avatarW: 16, avatarH: 16, rows: ["idle", "walk", "jump"],
       pivots: { hats: { walk: [[1, 0], [1, 1]] } },
@@ -1185,6 +1330,20 @@ test("pet app: a worn gear layer resolves to a real rect and persists", async (t
   assert.match(menu.stdout, /^Wear {2}>$/m, menu.stdout);
   assert.match(menu.stdout, /^ {2}Hats {2}>$/m, menu.stdout);
   assert.match(menu.stdout, /^ {4}Crown$/m, menu.stdout);
+  // Every row the pack carries is playable by hand, `wave` included.
+  assert.match(menu.stdout, /^Play {2}>$/m, menu.stdout);
+  assert.match(menu.stdout, /^ {2}Wave$/m, menu.stdout);
+  assert.match(menu.stdout, /^ {2}Back to idle$/m, menu.stdout);
+
+  // The Wear menu carries a picture per layer; a pack without stored previews
+  // (this fixture) is cropped from its own art at 18pt.
+  const thumbs = await run(bin, ["--wear-thumbs"], { env, timeout: 30_000 });
+  assert.match(thumbs.stdout, /^thumb\thats\/crown\t18x18$/m, thumbs.stdout);
+
+  const played = await run(bin, ["--play", "wave"], { env, timeout: 30_000 });
+  assert.match(played.stdout, /^play\twave\tok\t2\.5\d$/m, played.stdout);
+  const absent = await run(bin, ["--play", "dance"], { env, timeout: 30_000 });
+  assert.match(absent.stdout, /^play\tdance\tunsupported\t-$/m, absent.stdout);
 
   const before = await run(bin, ["--gear"], { env, timeout: 30_000 });
   assert.match(before.stdout, /^pack\tworn-test\titems=1\tgroups=1\tworn=\(none\)$/m, before.stdout);

@@ -227,6 +227,10 @@ struct PackData: Decodable {
     let source: String?
     /// hats, masks and held items the sheet was drawn with (Stream Avatars packs)
     let gear: PackGear?
+    /// the animations in the sheet's own order, for menus that must not sort
+    let rows: [String]?
+    /// what the sheet says about playing a row: rate, loops, held last frame
+    let emotes: [String: PackEmote]?
 
     /// Expressions that should use the jump animation rather than idle.
     static let energetic: Set<String> = [
@@ -239,6 +243,15 @@ struct PackData: Decodable {
               let p = try? JSONDecoder().decode(PackData.self, from: d) else { return nil }
         return p
     }
+}
+
+/// How a sheet wants a row played. Stream Avatars loops a wave thirty times and
+/// holds a sign's last frame for ten; the app caps both, but the shape is theirs.
+struct PackEmote: Decodable {
+    let fps: Double?
+    let frames: Int?
+    let loops: Int?
+    let hold: Double?
 }
 
 /// One overlay the sheet came with: a hat, a mask, a held item.
@@ -258,6 +271,8 @@ struct GearItem: Decodable {
     let rows: Int
     let mode: String
     let fps: Double?
+    /// a 32px preview of the idle cell, written by the importer
+    let thumb: String?
 }
 
 /// The overlay art a pack carries, and the pivots that place it.
@@ -771,7 +786,7 @@ final class ChatWindow: NSPanel {
 
 // ── controller ───────────────────────────────────────────────────────────────
 
-final class PetController: NSObject {
+final class PetController: NSObject, NSMenuDelegate {
     var config: PetConfig
     let configURL: URL
     let data: PetData
@@ -798,6 +813,12 @@ final class PetController: NSObject {
     private(set) var expressionId = "idle"
     private var expressionUntil: Date = .distantPast
     private var baseExpression = "idle"
+    /// An animation played on purpose — a click, the Play menu, an idle roll —
+    /// with its own deadline. A forced `wave` is not a reaction, and the
+    /// expression timer must not cut it short.
+    private var playedAnim: String?
+    private var playedUntil: Date = .distantPast
+    private var pokeIndex = 0
 
     // position & motion
     private var x: CGFloat = 0
@@ -815,6 +836,14 @@ final class PetController: NSObject {
     private(set) var hidden = false
     /// For the headless switch test: a hidden pet must have stopped ticking.
     var isTicking: Bool { timer != nil }
+    /// Headless hook: pose one animation for the gear-draw check — a chair is
+    /// hidden while walking, an emote prop only exists while emoting.
+    func poseForTests(_ anim: String) {
+        packAnim = anim
+        packFrame = 0
+        lastRendered = ""
+    }
+
     /// Headless hook: send the pet at a point, past the edge if need be.
     func walkHeadless(toX target: CGFloat) {
         expressionUntil = .distantPast
@@ -890,6 +919,10 @@ final class PetController: NSObject {
     private(set) var packFrame = 0
     private(set) var packFrameCount = 1
     private var gearImages: [String: NSImage] = [:]
+    private var gearThumbs: [String: NSImage] = [:]
+    /// Outfits to put back when the Wear menu closes: pointing at a hat previews
+    /// it on the pet, and leaving without clicking must undo that.
+    private var previewStack: [(menu: ObjectIdentifier, worn: [String: String])] = []
     private var lastExprAt = Date.distantPast
     private var lastWatchPoll = Date.distantPast
 
@@ -1107,8 +1140,9 @@ final class PetController: NSObject {
         isWalking = false
         guard !dragging else { return }
         // Stop and react, and stay put while a bubble is on screen: walking away
-        // mid-sentence reads like the pet is not listening.
-        guard Date() >= expressionUntil else { return }
+        // mid-sentence reads like the pet is not listening. The same holds while
+        // it is playing an animation you asked for.
+        guard Date() >= expressionUntil, Date() >= playedUntil else { return }
         if bubbleView.alpha > 0.02, Date() < bubbleUntil { return }
         if active { return }
         let before = x
@@ -1173,7 +1207,7 @@ final class PetController: NSObject {
 
     private func stepAI(now: Date) {
         guard !dragging, !active else { return }
-        if now < walkPauseUntil { return }
+        if now < walkPauseUntil || now < playedUntil { return }
         if targetX == nil, now >= nextWander {
             // Two of the five bands below move the pet: wandering (0–0.45) and
             // ambling toward the cursor (0.45–0.62). "Stay put" removes them by
@@ -1201,7 +1235,13 @@ final class PetController: NSObject {
                 vy = 210
                 lift = 0.5
             } else if roll < 0.86 {
-                setExpression(now.timeIntervalSince(lastInteract) > 180 ? "sleep" : "tilt-head", hold: 1.8)
+                if pack != nil {
+                    idleEmote(quiet: now.timeIntervalSince(lastInteract))
+                } else {
+                    setExpression(now.timeIntervalSince(lastInteract) > 180 ? "sleep" : "tilt-head", hold: 1.8)
+                }
+            } else if pack != nil {
+                idleEmote(quiet: now.timeIntervalSince(lastInteract))
             } else {
                 // look toward the pointer when it is around, otherwise fidget
                 let dx = NSEvent.mouseLocation.x - x
@@ -1318,7 +1358,9 @@ final class PetController: NSObject {
     private func stepPack(dt: Double) {
         guard let pack else { return }
         let anim: String
-        if lift > 0.5 || vy > 40 {
+        if Date() < playedUntil, let forced = playedAnim, pack.animations[forced]?.isEmpty == false {
+            anim = forced
+        } else if lift > 0.5 || vy > 40 {
             // the physics hop uses the sheet's own jump
             anim = "jump"
         } else if Date() < expressionUntil {
@@ -1340,7 +1382,7 @@ final class PetController: NSObject {
         let frames = pack.animations[anim] ?? pack.animations["idle"] ?? []
         guard !frames.isEmpty else { return }
         let index: Int
-        if anim == "walk" {
+        if anim == "walk", Date() >= playedUntil {
             // One cycle per stride of floor covered, not per second of wall clock:
             // this is what stops the legs outrunning the ground.
             index = Int(walkPhase * Double(frames.count)) % frames.count
@@ -1447,6 +1489,12 @@ final class PetController: NSObject {
         guard let gear = pack?.gear, !config.worn.isEmpty else { return [] }
         var out: [GearDraw] = []
         for (set, id) in config.worn.sorted(by: { $0.key < $1.key }) {
+            // A chair is furniture, not a hat: it has no business following the
+            // pet on a walk or a jump.
+            if set == "b_chairs", packAnim == "walk" || packAnim == "jump" { continue }
+            // `b_emote` layers are props held up *while emoting* — a cake, a
+            // "hype" balloon — not something glued to an idle hand.
+            if set == "b_emote", !isEmoting { continue }
             guard let item = gear.item(id), item.set == set,
                   PackGear.behind.contains(set) == behind,
                   let image = gearImage(item),
@@ -1508,9 +1556,93 @@ final class PetController: NSObject {
         return img
     }
 
+    /// The preview beside a Wear item. The importer writes one 32px cell per
+    /// layer; a pack from anywhere else is cropped on the fly, once.
+    func gearThumbnail(_ item: GearItem) -> NSImage? {
+        if let hit = gearThumbs[item.id] { return hit }
+        let dir = lib.base.deletingLastPathComponent()
+        var image: NSImage?
+        if let rel = item.thumb {
+            image = NSImage(contentsOf: dir.appendingPathComponent(rel))
+        } else if let sheet = gearImage(item),
+                  let cg = sheet.cgImage(forProposedRect: nil, context: nil, hints: nil),
+                  let crop = cg.cropping(to: cropRect(item, size: CGSize(width: cg.width, height: cg.height))) {
+            image = NSImage(cgImage: crop, size: NSSize(width: crop.width, height: crop.height))
+        }
+        guard let image else { return nil }
+        // Menus draw at most ~18pt; previews are trimmed to their long side, so
+        // scale by the larger dimension instead of squaring a thin hat.
+        let side: CGFloat = 18
+        let k = side / max(1, max(image.size.width, image.size.height))
+        image.size = NSSize(width: max(1, image.size.width * k), height: max(1, image.size.height * k))
+        gearThumbs[item.id] = image
+        return image
+    }
+
+    /// The cell a preview shows: the idle row for a grid sheet, the first frame
+    /// for a strip, the whole picture for a single.
+    private func cropRect(_ item: GearItem, size: CGSize) -> CGRect {
+        let full = CGRect(origin: .zero, size: size)
+        guard item.mode != "single" else { return full }
+        let row = item.mode == "grid" ? max(0, (pack?.gear?.rows.firstIndex(of: "idle") ?? 0)) : 0
+        let cell = CGRect(x: 0, y: CGFloat(row * item.cellH),
+                          width: CGFloat(item.cellW), height: CGFloat(item.cellH))
+        let clipped = cell.intersection(full)
+        return clipped.isEmpty ? full : clipped
+    }
+
+    /// Put one Wear row on the pet without saving it: `""` takes everything off,
+    /// `"set|"` empties one slot, `"set/name"` is the layer itself.
+    private func previewWear(_ id: String) {
+        if id.isEmpty {
+            config.worn = [:]
+        } else if let bar = id.firstIndex(of: "|") {
+            config.worn[String(id[..<bar])] = nil
+        } else if let entry = pack?.gear?.item(id) {
+            config.worn[entry.set] = id
+        }
+        view.needsDisplay = true
+    }
+
+    // ── Wear menu: previews ──────────────────────────────────────────────────
+
+    func menuWillOpen(_ menu: NSMenu) {
+        previewStack.append((ObjectIdentifier(menu), config.worn))
+    }
+
+    func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+        guard previewStack.contains(where: { $0.menu == ObjectIdentifier(menu) }),
+              let id = item?.representedObject as? String
+        else { return }
+        previewWear(id)
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        guard let i = previewStack.lastIndex(where: { $0.menu == ObjectIdentifier(menu) }) else { return }
+        let snapshot = previewStack[i].worn
+        // A submenu closes before its parent; drop its snapshot with it, but keep
+        // the outer one so the whole menu still restores the original outfit.
+        previewStack.removeSubrange(i...)
+        config.worn = snapshot
+        view.needsDisplay = true
+    }
+
+    /// Every menu and submenu, so a highlight inside Hats previews like one in
+    /// the root menu does.
+    private func adopt(_ menu: NSMenu) {
+        menu.delegate = self
+        for item in menu.items {
+            if let sub = item.submenu { adopt(sub) }
+        }
+    }
+
     // ── public actions ───────────────────────────────────────────────────────
 
     func setExpression(_ id: String, hold: TimeInterval) {
+        // A real reaction outranks a played animation: if the agent says it broke
+        // something, the wave you clicked is over.
+        playedAnim = nil
+        playedUntil = .distantPast
         // A pack has no sprite per expression — its expression map answers for the
         // id, so the id has to survive. Collapsing to "idle" here made every
         // reaction in a pack play the same face.
@@ -1519,6 +1651,78 @@ final class PetController: NSObject {
         expressionId = resolved
         expressionUntil = Date().addingTimeInterval(hold)
         applySprite()
+    }
+
+    /// How long a played animation still runs, for the harness.
+    var playedFor: TimeInterval { max(0, playedUntil.timeIntervalSinceNow) }
+
+    /// Play one of the pack's own animations on purpose. A pack is a sheet, not a
+    /// face catalogue: `wave` exists only if the artist drew it, so an absent name
+    /// is a no-op rather than a silent fallback that hides the click.
+    @discardableResult
+    func playAnim(_ name: String, hold: TimeInterval? = nil) -> Bool {
+        guard let pack, let frames = pack.animations[name], !frames.isEmpty else { return false }
+        playedAnim = name
+        playedUntil = Date().addingTimeInterval(hold ?? emoteLength(name, pack: pack))
+        // A played row replaces a reaction in progress; otherwise the expression
+        // timer would flip the pet back to idle mid-wave.
+        expressionUntil = .distantPast
+        trace(["ev": "play", "anim": name, "hold": playedUntil.timeIntervalSinceNow])
+        view.needsDisplay = true
+        return true
+    }
+
+    /// An emote lasts as long as the sheet says — capped, because the sheets loop
+    /// a wave thirty times (fifteen seconds) and a reaction that long is a
+    /// hostage video.
+    private func emoteLength(_ name: String, pack: PackData) -> TimeInterval {
+        let frames = pack.animations[name]?.count ?? 1
+        let sheet = pack.emotes?[name]
+        let fps = max(1, sheet?.fps ?? pack.fps?[name] ?? 8)
+        let cycles = Double(frames) / fps
+        let wanted = cycles * Double(max(1, sheet?.loops ?? 1))
+        let held = min(sheet?.hold ?? 0, 2.5)
+        return min(4, max(cycles, min(wanted, 2.5) + held))
+    }
+
+    /// What one click means: the pack's own emotes, in a fixed rotation, so poking
+    /// it is a toy rather than a button that always jumps.
+    static let pokeOrder = ["wave", "clap", "dance", "attack", "hover", "stomp", "spit", "squat"]
+
+    func poke(_ pack: PackData?) {
+        guard let pack else { setExpression("poke", hold: 1.0); return }
+        let list = Self.pokeOrder.filter { !(pack.animations[$0] ?? []).isEmpty }
+        guard !list.isEmpty else { setExpression("poke", hold: 1.0); return }
+        _ = playAnim(list[pokeIndex % list.count])
+        pokeIndex += 1
+    }
+
+    /// A pack's idle life comes from its own rows. The built-in art fidgets by
+    /// expression id (`blink`, `tilt-head`, `breathe`); a sheet has no such
+    /// sprites, and asking for them showed a still frame between walks.
+    private func idleEmote(quiet: TimeInterval) {
+        guard let pack else { return }
+        // A chair is furniture you sit in, not a hat: wearing one earns a sit.
+        if config.worn["b_chairs"] != nil, quiet > 30, !(pack.animations["sit"] ?? []).isEmpty {
+            _ = playAnim("sit", hold: 8)
+            return
+        }
+        let candidates: [String]
+        if quiet > 300 { candidates = ["sleep", "sit", "squat", "slump"] }
+        else if quiet > 90 { candidates = ["sit", "squat", "hover", "slump", "stretch"] }
+        // drawn rows first, then the poses derived from the idle frame: a sheet
+        // with no emotes of its own still nods and bounces between walks
+        else { candidates = ["wave", "clap", "squat", "hover", "stomp", "dance", "nod", "bounce", "lean", "sway"] }
+        let usable = candidates.filter { !(pack.animations[$0] ?? []).isEmpty }
+        guard let pick = usable.randomElement() else { return }
+        _ = playAnim(pick, hold: ["sit", "sleep"].contains(pick) ? 5 : nil)
+    }
+
+    /// Is a prop layer (`b_emote`) welcome right now? Only while the pet is
+    /// actually emoting — a birthday cake glued to an idle hand was the old look.
+    var isEmoting: Bool {
+        if Date() < playedUntil { return true }
+        return ["wave", "clap", "dance", "stomp", "spit", "attack", "squat", "hover"].contains(packAnim)
     }
 
     // ── chat ────────────────────────────────────────────────────────────────
@@ -1748,7 +1952,11 @@ final class PetController: NSObject {
         let mouse = NSEvent.mouseLocation
         if !dragMoved {
             dragMoved = true
-            setExpression("poke", hold: 0.9)
+            if let pack, (pack.animations["attack"] ?? []).isEmpty == false {
+                _ = playAnim("attack", hold: 1.2)
+            } else {
+                setExpression("poke", hold: 0.9)
+            }
             say(pick([l10n.t("Hey!"), l10n.t("Careful!"), l10n.t("Put me down!")]), hold: 2.0)
         }
         let side = CGFloat(spriteSize * config.scale)
@@ -1763,7 +1971,13 @@ final class PetController: NSObject {
         if !dragMoved {
             // A click is the pet's own button: it pokes back and opens the log,
             // because a bubble that faded before you looked is gone for good.
-            setExpression("poke", hold: 1.0)
+            // On a pack, one click plays the next emote the sheet carries; two
+            // clicks are a request for the dance.
+            if event.clickCount >= 2, let pack, (pack.animations["dance"] ?? []).isEmpty == false {
+                _ = playAnim("dance")
+            } else {
+                poke(pack)
+            }
             toggleChat()
             lastInteract = Date()
             return
@@ -1784,6 +1998,7 @@ final class PetController: NSObject {
     /// machine without accessibility permissions.
     func buildMenu() -> NSMenu {
         let menu = NSMenu()
+        defer { adopt(menu) }
         let title = NSMenuItem(title: "BabyZilla", action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
@@ -1809,8 +2024,13 @@ final class PetController: NSObject {
         Packs.installMenu(into: menu, target: self, action: #selector(choosePack(_:)),
                           current: config.pack, more: #selector(openPetBrowser), l10n: l10n)
         if let wear = WearMenu.item(pack: pack, worn: config.worn, l10n: l10n,
+                                    thumbnail: { [weak self] in self?.gearThumbnail($0) },
                                     target: self, action: #selector(chooseWear(_:))) {
             menu.addItem(wear)
+        }
+        if let play = PlayMenu.item(pack: pack, l10n: l10n, target: self,
+                                    action: #selector(choosePlay(_:))) {
+            menu.addItem(play)
         }
         let mute = NSMenuItem(title: l10n.t("Mute speech"), action: #selector(toggleMute), keyEquivalent: "")
         mute.target = self
@@ -1877,6 +2097,19 @@ final class PetController: NSObject {
         _ = usePack(id)
     }
 
+    /// Play one of the pack's own animations, or go back to idle on `""`.
+    @objc func choosePlay(_ item: NSMenuItem) {
+        guard let anim = item.representedObject as? String else { return }
+        if anim.isEmpty {
+            playedAnim = nil
+            playedUntil = .distantPast
+            expressionUntil = .distantPast
+            view.needsDisplay = true
+        } else {
+            _ = playAnim(anim)
+        }
+    }
+
     /// Wear, or take off, one of the pack's own gear layers. The id is `set/name`
     /// inside *this* pack, so a switch to another pet cannot resurrect a hat that
     /// pet never came with — `usePack` drops it instead.
@@ -1884,14 +2117,11 @@ final class PetController: NSObject {
     /// `""` clears every layer; `"set|"` clears one group's slot.
     @objc func chooseWear(_ item: NSMenuItem) {
         guard let id = item.representedObject as? String else { return }
-        if id.isEmpty {
-            config.worn = [:]
-        } else if let bar = id.firstIndex(of: "|") {
-            config.worn[String(id[..<bar])] = nil
-        } else if let entry = pack?.gear?.item(id) {
-            config.worn[entry.set] = id
-        }
+        previewWear(id)
         persist()
+        // This is a decision, not a hover: nothing to put back when the menu
+        // closes, or the hat you just picked would vanish with it.
+        previewStack.removeAll()
         view.needsDisplay = true
     }
 
@@ -2252,6 +2482,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Dress-up, headless: what the active pack offers, and where the worn
         // layer actually lands. A hat that decodes but draws nowhere is the bug
+        // Pose an animation before --gear prints: the harness cannot wait for a
+        // real walk, so the state a walk would produce is set directly.
+        if let i = CommandLine.arguments.firstIndex(of: "--at"), i + 1 < CommandLine.arguments.count,
+           let c = controller {
+            c.poseForTests(CommandLine.arguments[i + 1])
+        }
+        // The Wear menu's pictures, printed: a menu cannot be screenshotted, and
+        // "there is a thumbnail" is exactly what a test can check.
+        if CommandLine.arguments.contains("--wear-thumbs") {
+            guard let c = controller, let gear = c.pack?.gear else { print("thumbs\tnone"); exit(0) }
+            for item in gear.items {
+                if let img = c.gearThumbnail(item) {
+                    print(String(format: "thumb\t%@\t%.0fx%.0f", item.id, img.size.width, img.size.height))
+                } else {
+                    print("thumb\t\(item.id)\tnone")
+                }
+            }
+            exit(0)
+        }
         // this prints against, not something a menu screenshot could show.
         if CommandLine.arguments.contains("--gear") {
             guard let c = controller else { print("no controller"); exit(1) }
@@ -2292,6 +2541,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let rect = NSRect(x: 0, y: 0, width: c.window.frame.width, height: c.window.frame.height)
             let layers = c.gearDraws(in: rect, behind: true).count + c.gearDraws(in: rect, behind: false).count
             print("wear\t\(worn.isEmpty ? "(none)" : worn)\tconfig=\(saved.isEmpty ? "(none)" : saved)\tlayers=\(layers)")
+            exit(0)
+        }
+        // Drive a played animation headlessly: proof that a click or a menu pick
+        // actually reaches the pack, and that an absent row is refused.
+        if let i = CommandLine.arguments.firstIndex(of: "--play"), i + 1 < CommandLine.arguments.count,
+           let c = controller {
+            let name = CommandLine.arguments[i + 1]
+            let ok = c.playAnim(name)
+            print("play\t\(name)\t\(ok ? "ok" : "unsupported")\t\(ok ? String(format: "%.2f", c.playedFor) : "-")")
             exit(0)
         }
         if CommandLine.arguments.contains("--pets") {
@@ -2471,8 +2729,13 @@ extension AppDelegate: NSMenuDelegate {
         Packs.installMenu(into: menu, target: c, action: #selector(PetController.choosePack(_:)),
                           current: c.config.pack, more: #selector(PetController.openPetBrowser), l10n: l)
         if let wear = WearMenu.item(pack: c.pack, worn: c.config.worn, l10n: l,
+                                    thumbnail: { [weak c] in c?.gearThumbnail($0) },
                                     target: c, action: #selector(PetController.chooseWear(_:))) {
             menu.addItem(wear)
+        }
+        if let play = PlayMenu.item(pack: c.pack, l10n: l, target: c,
+                                    action: #selector(PetController.choosePlay(_:))) {
+            menu.addItem(play)
         }
 
         menu.addItem(.separator())

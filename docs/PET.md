@@ -95,6 +95,15 @@ node pet/import-streamavatars.mjs --zip …/premade/*.zip --zip …/StreamingAss
 - Every avatar in an archive becomes its own pack; `--only littlewalker` picks
   one, `--dir` takes an already-unpacked avatar, and a glob after `--zip` means
   every archive it matched.
+- **The pack gets reactions the sheet never drew.** After the sheet's own rows,
+  the importer runs `pet/pack-animations.mjs` on the result, which derives eight
+  poses from the pack's idle frame (`nod`, `sway`, `shake`, `stretch`, `turn`,
+  `lean`, `bounce`, `slump`) and points ~35 expression ids at them. That is what
+  turns a seven-row sheet into a pet that leans when it reads and shakes when a
+  command fails. `--plain` skips it and keeps the artist's rows alone.
+- A row the sheet *did* draw always wins: `block_man`'s real `wave`/`clap`/
+  `stomp` answer those expressions, and the derived pose only covers what the
+  sheet left out.
 - Rows keep the **frame rate the sheet states** (9 for nearly every avatar, up
   to 17 for the fast emotes), and a row the sheet named keeps that name: the
   hero sheets are `custom1`/`custom2` because that is all their labels say, while
@@ -102,7 +111,13 @@ node pet/import-streamavatars.mjs --zip …/premade/*.zip --zip …/StreamingAss
   and `jump` are never renamed — the app drives those three by name.
 - The sheet's own `expressions` come along: an avatar with a `sit` row sits for
   `sit`, `doze` and `bored-waiting` instead of hopping through them, and a named
-  `wave`, `clap`, `dance` or `sleep` row answers exactly that expression.
+  `wave`, `clap`, `dance`, `attack`, `stomp`, `spit`, `squat`, `hover` or `sleep`
+  row answers exactly that expression. The `sign_up` row is the avatar raising a
+  hand, so it answers `tool-question` — the same thing the **?** mark means.
+- **Emotes keep the sheet's timing.** `data.txt` states a frame rate, a loop
+  count and whether a row holds its last frame; `pack.json` records them per row.
+  The app plays one to five cycles (capped at 2.5s) and holds a sign for up to
+  2.5s — a wave looped thirty times would otherwise run for fifteen seconds.
 - **Paid art stays local.** The importer writes only into
   `~/.opencode/pet/packs`, refuses an `--out` inside the repository, and records
   the licence in `pack.json`: personal use is not redistribution.
@@ -131,6 +146,14 @@ a checkbox that draws nothing. Layers the sheet puts behind the body — backpac
 chairs, the off hand — are drawn behind it, everything else on top, and the whole
 layer flips, bobs and squashes with the pet. A hat that animates by itself (a
 flame, a balloon) keeps its own clock while the pet stands still.
+
+**You can see a layer before you commit to it.** Every Wear row carries a small
+picture of the item — one cell, trimmed to the ink so a pair of glasses is not a
+speck in a 32px field. The importer writes those previews (32px, nearest-
+neighbour) so opening the menu never decodes six hundred sheets; a pack from
+somewhere else is cropped on the fly. And **pointing at a row previews it on the
+pet**: the hat, mask or chair appears immediately, and closing the menu without
+clicking puts the old outfit back. Clicking is the only thing that saves.
 
 ### Known packs: OpenPet AI Girls
 
@@ -249,8 +272,9 @@ writes them to `~/.opencode/pet/packs/`, and the repo ignores
   with nowhere to go — after a drag, a throw or a pause — it faces inward too, and a
   pet thrown into the edge bounces off it instead of sticking.
 - **Reacts.** A prompt makes it listen, a tool call changes its face per tool,
-  a failure makes it wince, compaction has it squeezing something, an available
-  update makes it hold up a gift.
+  a **result is read for what it says** (a failing test, a missing file, an empty
+  search), every mood it speaks is worn on the body, compaction has it squeezing
+  something, an available update makes it hold up a gift.
 - **Tells you things.** A pixel-font bubble reports only what matters:
   compaction results, context pressure, tool failures, updates, session
   savings. Everything else is silent, because 30 tool calls should not produce
@@ -296,9 +320,10 @@ sets or clears it by hand (useful when testing the look, or to shut the dino up)
 
 | Action | Result |
 |---|---|
-| drag | move it, throw it, it falls and squashes |
-| click | poke (it reacts) |
-| right-click | hide/show, size 1×/2×/3×, stay put, pet, wear, mute, chattiness, gallery, quit |
+| drag | move it, throw it, it falls and squashes; a pack struggles with its `attack` row |
+| click | poke: a pack plays the next emote its sheet carries (wave → clap → dance → …), the dino reacts, and the log opens |
+| double-click | dance, when the pack drew one |
+| right-click | hide/show, size 1×/2×/3×, stay put, pet, wear, **play**, mute, chattiness, gallery, quit |
 | menu bar icon | **Hide Pet / Show Pet**, size, stay put, pet, wear, mute, gallery, quit |
 
 Position, size, chattiness, whether it walks, whether it is on, and what it wears
@@ -316,6 +341,27 @@ where it stands instead of letting it finish the stroll.
 It does not touch what you do: dragging and throwing still work, and an explicit
 `walk` event (nothing in the plugin sends one today) is still honoured — the option
 is about the pet's own decisions, not about commands.
+
+### Playing it: the sheet's own animations
+
+A pack is not a face catalogue, so the app cannot fake an expression it has no
+frames for. What it can do is **play the rows the sheet really has**:
+
+- **Play ▸** in either menu lists every animation the pack carries, in the order
+  the artist drew them — `block_man` shows nineteen, a seven-row hero sheet shows
+  seven plus the eight poses derived from its idle frame. Pick one and it plays
+  for as long as the sheet says (capped), then returns to idle.
+- **Clicking** cycles those emotes instead of repeating one poke; double-clicking
+  asks for the dance.
+- **Idle life comes from the same rows.** After a minute of quiet a pack sits,
+  after five it sleeps; in between it waves, squats, hovers, nods or bounces.
+  Before this, the idle fidgets asked for `blink`/`tilt-head`/`breathe`, which a
+  sheet has no sprites for, so a pack stood perfectly still between walks.
+- **A worn chair is furniture.** While it walks or jumps the chair is hidden; when
+  it sits, the sheet's own `sit` pivots put it on the chair. If you wear one it
+  will choose to sit sooner.
+- **`b_emote` props** — the birthday cake, the "hype" balloon — appear only while
+  it is actually emoting, not glued to an idle hand all day.
 
 ### Turning it off
 
@@ -342,10 +388,33 @@ the file.
 | `session.hook("prompt")` | `listening` |
 | `session.hook("context")` (throttled 900ms) | `thinking`, plus `budget-low` at 80% |
 | `tool.hook("execute.before")` | `tool-read`, `tool-grep`, `tool-edit`, `tool-bash`, `tool-task`, … |
-| `tool.hook("execute.after")` | `shell-ok`, `shell-fail`, `oops`, `celebrate` (slow success) |
+| `tool.hook("execute.after")` | `shell-ok`, `shell-fail`, `oops`, `celebrate` (slow success), plus the result's own verdict: `test-pass`/`test-fail`, `notfound`, `permission-denied`, `disk-full`, `stack-overflow`, `shrug` |
 | `session.hook("compaction")` | `compressing` → `pack-created` |
 | update check | `update-available` |
 | model / network errors | `rate-limited`, `offline`, `model-error` |
+
+### Reading the result
+
+A tool name is a category; the result is the event. The pet reads the output the
+way you would skim it, and reacts to what it finds:
+
+| in the result | face | it says |
+|---|---|---|
+| `ℹ fail 1`, `1 failed`, `--- FAIL:` | `test-fail` (a jerk of the head) | `1 test fails.` |
+| `ℹ pass 340` with no failures | `test-pass` (a satisfied sway) | `340 tests pass.` |
+| `ENOENT`, `command not found` | `notfound` | `No such file.` |
+| `EACCES`, `permission denied` | `permission-denied` | `Permission denied.` |
+| `ENOSPC`, `no space left` | `disk-full` | `No space left.` |
+| `grep`/`glob` with no hits | `shrug` | `Nothing there.` |
+| a result over ~30k tokens | `stack-overflow` | `That is a lot to read.` |
+| `! [rejected]` from a push | `conflict` | `Push rejected.` |
+| `error TS…`, `compilation failed` | `oops` | — |
+
+The exit code is not the verdict: a runner can print failing tests and still exit
+0, and that is exactly the case worth reading. `grep` exits 1 when it finds
+nothing, which is a shrug rather than a crash. The same verdict twice in eight
+seconds is one remark, not two, and anything not in the table keeps the quiet
+behaviour: a face per tool, speech only for real failures.
 
 ## Thinking out loud
 
@@ -519,9 +588,11 @@ moves between them:
   register (`Dino note.` `Another rock.`) — it never performs a feeling it cannot
   back up.
 
-Anger is not only written: an angry thought also asks the app for `conflict`, which
-the pack's expressions map turns into the shaking animation. The dino trembles at
-the bug it is complaining about.
+A mood is not only written: every thought with one asks the app for the pose that
+fits it — angry → `conflict` (the shaking animation), confused → `confused` (a
+head-turn), bored → `bored` (a slouch), smug → `proud` (a satisfied sway), teasing →
+`tilt-head` — and a `Rawr!` asks for `roar`. A pack without that face maps it to a
+derived posture or idle, so the body never freezes to make a point.
 
 **Rawr.** About one thought in twenty-three is a plain `Rawr!` instead of an aside,
 in front or behind the thought — deterministic per sentence (so a test can never
@@ -563,7 +634,9 @@ expression id at an animation name:
 
 `pet/pack-animations.mjs` adds nine of them without repainting anything — the
 palette, the pixel blocks and the baseline cannot drift, because every frame comes
-either from the artist's own sheet or from the pack's own idle frame:
+either from the artist's own sheet or from the pack's own idle frame. The
+Stream Avatars importer runs the eight derived poses itself (pass `--plain` to
+skip); for a hand-drawn pack, run it by hand:
 
 ```sh
 node pet/pack-animations.mjs --pack ~/.opencode/pet/packs/lil-dino \

@@ -19,6 +19,10 @@ import {
   resetCalibration, summarize, writeCalibration,
 } from "../lib/calibration.mjs";
 import { readPage, prunePages } from "../lib/pages.mjs";
+import { searchMemory, renderMemory, DEFAULT_LIMIT, DEFAULT_MAX_CHARS } from "../lib/memory.mjs";
+import { readSessionTabs } from "../lib/session-tabs.mjs";
+import { buildCharter } from "../lib/charter.mjs";
+import { historyEntries, revertVersion } from "../lib/history.mjs";
 import { extractProbes, scorePack, missingFactsModule } from "../lib/eval.mjs";
 import { loadDB, explain as explainModels } from "../lib/modeldb.mjs";
 import {
@@ -68,6 +72,21 @@ export function packRoot() {
 
 const sessionsRoot = (root) => path.join(root, "sessions");
 const libraryRoot = (root) => path.join(root, "library");
+
+function renderHistory(entries) {
+  if (!entries.length) return "short-term memory: empty";
+  const root = packRoot();
+  const lines = [`short-term memory (${entries.length} retired)`];
+  for (const entry of entries) {
+    const where = entry.scope === "library" ? `library ${entry.id}` : `session ${entry.id}`;
+    const date = String(entry.at ?? "").slice(0, 10);
+    lines.push(`${where} · ${entry.name}${entry.kind ? ` (${entry.kind})` : ""} · #${entry.seq} · ${date} · ${fmtTokens(Number(entry.tokens) || 0)} tok`);
+    const rel = entry.rootPath ?? path.relative(root, entry.absPath).split(path.sep).join("/");
+    const target = entry.replacedBy ? ` → ${entry.replacedBy}` : "  (dropped)";
+    lines.push(`  ${rel}${entry.revertedAt ? "  [reverted]" : ""}${target}`);
+  }
+  return lines.join("\n");
+}
 
 // ── pack model ──────────────────────────────────────────────────────────────
 
@@ -919,6 +938,19 @@ Usage:
                                     print the original text behind an elision marker
   babyzilla retrieve <path>[:<start>[-<end>]] [--context N] [--max-lines N]
                                     print an exact, numbered line range
+  babyzilla charter [--session ID] [--json] [--max-chars N]
+                                    print the session's stable charter (state +
+                                    decisions, or a thin title/journal header)
+  babyzilla memory search <words> [--open|--all] [--cwd DIR] [--project DIR]
+                                    [--limit N] [--max-chars N] [--json]
+                                    BM25 over session + library modules; default
+                                    is the tabs open in this workspace (--all for
+                                    history). No model, no embeddings, no network.
+  babyzilla memory history [--session ID|--project DIR|--all] [--json]
+                                    retired revisions (long-term → short-term)
+  babyzilla memory revert <.../short/NNNN-file.md> [--dry-run] [--json]
+                                    restore a retired revision; the content it
+                                    replaces is kept as a new short-term row
   babyzilla eval [<session-id>] [--json] [--db <path>]
                                     score a pack against the transcript it replaced
   babyzilla prune [--older-than 2w] [--dry-run]
@@ -942,6 +974,7 @@ Usage:
 
 Environment:
   BABYZILLA_ROOT=<dir>              data root (default ~/.opencode/contextpacks)
+  BABYZILLA_TABS=<file>             open-tab state for memory search
   OPENCODE_DB=<path>                OpenCode database for babyzilla cost/recall
 `;
 
@@ -1348,7 +1381,7 @@ async function confirm(question) {
   }
 }
 
-function main() {
+async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   const out = (x) => process.stdout.write(x);
   try {
@@ -1409,6 +1442,103 @@ function main() {
         const maxLines = rest.includes("--max-lines") ? Number(rest[rest.indexOf("--max-lines") + 1]) : 400;
         const ctxLines = rest.includes("--context") ? Number(rest[rest.indexOf("--context") + 1]) : 0;
         out(retrieve(ref, { maxLines, context: ctxLines }));
+        break;
+      }
+      case "memory": {
+        const sub = rest[0] === "search" || rest[0] === "history" || rest[0] === "revert" ? rest[0] : "search";
+        if (sub === "history") {
+          const asJson = rest.includes("--json");
+          const sessionFlag = rest.includes("--session") ? rest[rest.indexOf("--session") + 1] : null;
+          const projectFlag = rest.includes("--project") ? rest[rest.indexOf("--project") + 1] : null;
+          const all = rest.includes("--all");
+          const sessionID = sessionFlag ?? (all || projectFlag ? null : process.env.OPENCODE_SESSION_ID ?? null);
+          const entries = historyEntries({
+            root: packRoot(),
+            sessionID,
+            projectDir: projectFlag ? path.resolve(projectFlag) : null,
+            all: all || (!sessionID && !projectFlag),
+          });
+          out(asJson ? JSON.stringify(entries, null, 2) + "\n" : renderHistory(entries) + "\n");
+          break;
+        }
+        if (sub === "revert") {
+          const shortPath = rest[1] && !rest[1].startsWith("--") ? rest[1] : null;
+          if (!shortPath) {
+            throw new Error("usage: babyzilla memory revert <.../short/NNNN-file.md> [--dry-run] [--json]");
+          }
+          const dryRun = rest.includes("--dry-run");
+          const result = await revertVersion({
+            root: packRoot(),
+            shortPath,
+            dryRun,
+          });
+          if (rest.includes("--json")) out(JSON.stringify(result, null, 2) + "\n");
+          else {
+            const verb = dryRun ? "would revert" : "reverted";
+            out(`${verb} ${result.row.path} → ${result.target}${result.retired ? ` (previous content kept as ${result.retired.path})` : ""}\n`);
+          }
+          break;
+        }
+        const args = rest[0] === "search" ? rest.slice(1) : rest;
+        const words = [];
+        let project = null;
+        let limit = DEFAULT_LIMIT;
+        let maxChars = DEFAULT_MAX_CHARS;
+        let asJson = false;
+        let scope = "open";
+        let cwd = process.cwd();
+        let cwdExplicit = false;
+        for (let i = 0; i < args.length; i++) {
+          const arg = args[i];
+          if (arg === "--json") asJson = true;
+          else if (arg === "--all") scope = "all";
+          else if (arg === "--open") scope = "open";
+          else if (arg === "--project") project = args[++i] ?? null;
+          else if (arg === "--cwd") { cwd = args[++i] ?? cwd; cwdExplicit = true; }
+          else if (arg === "--limit") limit = Number(args[++i]);
+          else if (arg === "--max-chars") maxChars = Number(args[++i]);
+          else if (arg.startsWith("--")) throw new Error(`unknown flag ${arg}`);
+          else words.push(arg);
+        }
+        const query = words.join(" ").trim();
+        if (!query) {
+          throw new Error("usage: babyzilla memory search <words> [--open|--all] [--cwd DIR] [--project DIR] [--limit N] [--max-chars N] [--json]");
+        }
+        // Default scope: the tab strip that belongs to the workspace containing
+        // cwd. A missing tab file falls back to all packs so the command still
+        // works outside the TUI.
+        const tabs = scope === "open"
+          ? readSessionTabs(cwdExplicit ? { cwd, sessionID: null } : { cwd })
+          : null;
+        const open = tabs?.sessions.length ? tabs : null;
+        const result = searchMemory(packRoot(), query, {
+          projectDir: project ? path.resolve(project) : null,
+          sessionIDs: open ? open.sessions.map((session) => session.id) : null,
+          includeLibrary: !open,
+          limit,
+        });
+        result.open = open
+          ? { cwd: open.workspace, sessions: open.sessions.length, file: open.file }
+          : null;
+        out(asJson ? JSON.stringify(result, null, 2) + "\n" : renderMemory(result, { maxChars }));
+        break;
+      }
+      case "charter": {
+        const sidFlag = rest.includes("--session") ? rest[rest.indexOf("--session") + 1] : null;
+        const sid = sidFlag || process.env.OPENCODE_SESSION_ID
+          || readSessionTabs({ cwd: process.cwd() }).sessions[0]?.id;
+        if (!sid) throw new Error("usage: babyzilla charter [--session ID] [--json] [--max-chars N]");
+        const charter = buildCharter({
+          root: packRoot(),
+          sessionID: sid,
+          maxChars: rest.includes("--max-chars") ? Number(rest[rest.indexOf("--max-chars") + 1]) : undefined,
+        });
+        if (!charter) {
+          out(`charter: no pack or journal for ${sid}\n`);
+          break;
+        }
+        if (rest.includes("--json")) out(JSON.stringify({ sessionID: sid, ...charter }, null, 2) + "\n");
+        else out(`session ${sid} · ${charter.kind}\n${charter.text}\n`);
         break;
       }
       case "prune": {
@@ -2140,5 +2270,10 @@ A pack is a second look built from a sprite sheet; see docs/PET.md.
 if (process.argv[1]) {
   let self = path.resolve(process.argv[1]);
   try { self = fs.realpathSync(self); } catch { /* keep the resolved path */ }
-  if (import.meta.url === pathToFileURL(self).href) main();
+  if (import.meta.url === pathToFileURL(self).href) {
+    void main().catch((e) => {
+      process.stderr.write(`error: ${e?.message ?? e}\n`);
+      process.exitCode = 1;
+    });
+  }
 }

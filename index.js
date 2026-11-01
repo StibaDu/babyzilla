@@ -36,7 +36,9 @@ import {
   reduceForDistill, distillInputBudget, DISTILL_INSTRUCTIONS, distillationPrompt, USER_BUDGET_TOKENS,
   parseModules, moduleFileFor, buildSummary,
 } from "./lib/distill.mjs";
-import { libraryIndex } from "./lib/library.mjs";
+import { libraryIndex, planAttach, promoteModules, CARRY_CORE } from "./lib/library.mjs";
+import { createVersioner } from "./lib/history.mjs";
+import { buildCharter, addCharterToSystem } from "./lib/charter.mjs";
 import { anchorModule, ANCHOR_KIND } from "./lib/anchor.mjs";
 import { renderModules } from "./lib/eval.mjs";
 import { assemblePack } from "./lib/pack.mjs";
@@ -51,7 +53,7 @@ import { thought as petThoughtText, latestThought } from "./lib/pet-thought.mjs"
 import { resolveLanguage, line as petLine } from "./lib/pet-lang.mjs";
 import { classifyTurn, lastAnswer } from "./lib/pet-mark.mjs";
 import { resolveVoice } from "./lib/pet-voice.mjs";
-import { toolExpression, outcomeExpression, compactionExpression, budgetExpression, updateExpression } from "./lib/pet-map.mjs";
+import { toolExpression, outcomeExpression, contentReaction, moodExpression, compactionExpression, budgetExpression, updateExpression } from "./lib/pet-map.mjs";
 import { hasBareLowfat, pinLowfat, withLowfatOnPath } from "./lib/lowfat.mjs";
 
 const execAsync = promisify(execCb);
@@ -67,16 +69,8 @@ const JOURNAL_LIMIT_ENTRIES = 2000;
 // Tools whose results are safe to compress at the source. Shell output is
 // already handled by lowfat, so re-compressing it would only lose structure.
 const COMPRESSIBLE_TOOLS = new Set(["read", "grep", "glob", "list"]);
-// Module kinds that are still useful to a later session of the same project
-// (see promoteToLibrary). Anchors are per-session turn snapshots and
-// `recovered` holds the last exchange's rescued facts — both are stale by
-// the time the next session opens, so they stay out. state/decisions keep
-// their hot flag on promotion and become the carry-in set for new sessions;
-// tool/errors stay cold and attach by keyword as before.
-const CARRY_KINDS = new Set(["state", "decisions", "tool", "errors"]);
-// Among the promoted kinds, these two are the hot core a new session carries
-// in on its first prompt (trigger-free). tool/errors stay cold.
-const CARRY_CORE = new Set(["state", "decisions"]);
+// Module kinds worth carrying across sessions and their hot core live in
+// lib/library.mjs (shared with the promotion path, which owns the versioning).
 
 // Vision auto-routing (v0.7.7): historically the main session model was
 // assumed text-only, so image work was always delegated to the `vision`
@@ -411,29 +405,6 @@ async function writeJournal(sessionID, entry) {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Trigger matching
-// ---------------------------------------------------------------------------
-
-function normalizeTriggerText(text) {
-  return ` ${String(text).toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
-}
-
-function matchModules(idx, userText) {
-  const hay = normalizeTriggerText(userText);
-  const scored = [];
-  for (const m of idx.modules || []) {
-    if (m.hot) continue; // state/decisions already in context
-    let hits = 0;
-    for (const t of m.triggers || []) {
-      if (hay.includes(` ${t} `) || (t.includes(" ") && t.split(" ").every((w) => hay.includes(` ${w} `)))) hits++;
-    }
-    if (hits) scored.push({ m, hits });
-  }
-  scored.sort((x, y) => y.hits - x.hits || x.m.tokens - y.m.tokens);
-  return scored.map((s) => s.m);
-}
-
-// ---------------------------------------------------------------------------
 // Vision routing
 // ---------------------------------------------------------------------------
 
@@ -549,50 +520,8 @@ function explicitVisionDelegate(text) {
 // Library (cross-session packs)
 // ---------------------------------------------------------------------------
 
-async function promoteToLibrary(sessionID, modules, projectDir) {
-  if (!projectDir || projectDir === os.homedir()) return;
-  // Temp/test locations must not pollute the cross-session library (realpath
-  // of $TMPDIR on macOS carries a /private prefix).
-  const tmpdir = os.tmpdir();
-  if (
-    projectDir === tmpdir ||
-    projectDir.startsWith(tmpdir + path.sep) ||
-    projectDir.startsWith("/tmp/") ||
-    projectDir.startsWith("/private/tmp/") ||
-    projectDir.startsWith("/private/var/folders/")
-  ) return;
-
-  // Only promote when there is actually something to promote — an empty
-  // library row would skew `lowfat pack stats` project counts.
-  const isCarry = (m) => CARRY_KINDS.has(m.kind) && m.name !== "recovered";
-  const carry = modules.filter(isCarry);
-  if (!carry.length) return;
-
-  const lib = path.join(ROOT, "library", dirSlug(projectDir));
-  await fs.mkdir(lib, { recursive: true });
-  const existing = await readJson(path.join(lib, "index.json")) ?? { modules: [] };
-  if (!Array.isArray(existing.modules)) existing.modules = [];
-  for (const m of carry) {
-    const file = `lib-${m.name}.md`;
-    await fs.writeFile(path.join(lib, file), m.content);
-    const prev = existing.modules.find((x) => x.name === m.name);
-    // state/decisions stay hot: the carry-in layer attaches them on the next
-    // session's first prompt without a keyword match. Everything else is
-    // cold — trigger-matched only, exactly like the pre-0.7.6 library.
-    const entry = {
-      name: m.name,
-      kind: m.kind,
-      file,
-      tokens: estTokens(m.content),
-      triggers: m.triggers,
-      hot: CARRY_CORE.has(m.kind) && !!m.hot,
-    };
-    if (prev) Object.assign(prev, entry); else existing.modules.push(entry);
-  }
-  existing.projectDir = projectDir;
-  existing.updated = new Date().toISOString();
-  await fs.writeFile(path.join(lib, "index.json"), JSON.stringify(existing, null, 2));
-}
+// Promotion itself lives in lib/library.mjs (promoteModules), next to the
+// scoring it feeds; it owns the long-term/short-term versioning as well.
 
 // ---------------------------------------------------------------------------
 // Plugin
@@ -757,9 +686,11 @@ export default {
       if (!said || said.text === lastThought) return;
       lastThought = said.text;
       petThink(said.text);
-      // The mood is not only written: an angry dino trembles where the pack has a
-      // pose for it (the expressions map turns `conflict` into `shake`).
-      if (said.mood === "angry") petExpr("conflict", 1.4);
+      // The mood is not only written: the dino wears it. A grumble gets the
+      // conflict pose, a puzzled line a head-turn, and a rare RAWR the roar.
+      // A pack without that face maps it to a derived posture or idle.
+      const face = moodExpression(said.mood, { rawr: said.rawr });
+      if (face) petExpr(face.id, face.hold);
     };
     const petThrottled = (key, ms) => {
       const now = Date.now();
@@ -885,6 +816,23 @@ export default {
           // turn: a badge that stays up after the retry worked is crying wolf
           raiseMark(failed ? "error" : null);
           petOn(() => {
+            // Read the result, not only the exit code: "1 failed" printed by a
+            // runner that exited 0 is still a failing test, and grep's empty
+            // answer is a shrug rather than a crash.
+            const c = contentReaction({
+              name: toolName,
+              input: event?.input ?? event?.args,
+              ok: !failed,
+              output: out,
+              error: err,
+              language: resolveLanguage(),
+            });
+            if (c) {
+              petExpr(c.id, c.hold);
+              // The same verdict twice in eight seconds is one remark, not two.
+              if (c.say && petThrottled(`content:${c.id}`, 8000)) petSay(c.say);
+              return;
+            }
             const o = outcomeExpression({ name: toolName, ok: !failed, ms: Number(event?.durationMs ?? event?.duration) || 0 });
             if (o) petExpr(o.id, o.hold);
             if (failed) petSay(petLine(resolveLanguage(), "toolFailed", toolName));
@@ -993,6 +941,35 @@ export default {
         } catch (e) {
           // A directive is never worth a failed request.
           log("grounding skipped:", e?.message ?? e);
+        }
+      });
+    }
+
+    // ---- session charter: stable orientation --------------------------------
+    // One system part per request: "what this session is" from the pack's hot
+    // modules. Built from disk (never from the live transcript), so its bytes
+    // change only at compaction and the provider can cache the prefix. A tab
+    // without a pack gets a thin title + first-journal-step version; the first
+    // step is stable, unlike the latest one, so it does not bust the cache on
+    // every tool call. Set charter:false to drop it entirely.
+    if (typeof ctx.session?.hook === "function" && opts.charter !== false) {
+      let charterLogged = false;
+      await ctx.session.hook("context", (event) => {
+        try {
+          if (!event?.sessionID || !Array.isArray(event?.system)) return;
+          const charter = buildCharter({
+            root: ROOT,
+            sessionID: event.sessionID,
+            maxChars: opts.charterMaxChars,
+          });
+          if (!charter || !addCharterToSystem(event.system, charter.text)) return;
+          if (!charterLogged) {
+            charterLogged = true;
+            log(`charter: ${charter.kind} ${charter.text.length} chars${charter.shortTerm ? ` (${charter.shortTerm} retired)` : ""}`);
+          }
+        } catch (e) {
+          // Orientation must never fail a request.
+          log("charter skipped:", e?.message ?? e);
         }
       });
     }
@@ -1203,10 +1180,49 @@ export default {
           const d = await packDir(event.sessionID);
           await fs.mkdir(d, { recursive: true });
           const files = {};
+          // Long-term -> short-term: a differing module is versioned before it
+          // is overwritten. Anchors/recovered are per-turn snapshots and are
+          // deliberately not versioned (they change at every compaction).
+          let versioner;
+          try {
+            versioner = await createVersioner(d, prevIdx?.shortTerm ?? []);
+          } catch (e) {
+            log("module history unavailable:", e?.message ?? e);
+            versioner = {
+              rows: [],
+              write: async (file, content) => { await fs.writeFile(path.join(d, file), content); },
+              retire: async () => null,
+            };
+          }
           for (const m of chosen) {
             const file = moduleFileFor(m);
-            await fs.writeFile(path.join(d, file), m.content);
-            files[moduleFileFor(m)] = path.join(d, file);
+            const durable = m.kind !== ANCHOR_KIND && m.name !== "recovered";
+            if (durable) {
+              try {
+                await versioner.write(file, m.content, {
+                  name: m.name, kind: m.kind, triggers: m.triggers,
+                  hot: m.kind === "state" || m.kind === "decisions",
+                });
+              } catch (e) {
+                log("module history skipped:", e?.message ?? e);
+                await fs.writeFile(path.join(d, file), m.content);
+              }
+            } else {
+              await fs.writeFile(path.join(d, file), m.content);
+            }
+            files[file] = path.join(d, file);
+          }
+          // A module the new pack no longer carries is retired too: "dropped"
+          // is a replacement by nothing, and its bytes stay recoverable.
+          const kept = new Set(chosen.map(moduleFileFor));
+          for (const prev of prevIdx?.modules ?? []) {
+            if (!prev?.file || kept.has(prev.file)) continue;
+            if (prev.kind === ANCHOR_KIND || prev.name === "recovered") continue;
+            try {
+              await versioner.retire(prev.file, {
+                name: prev.name, kind: prev.kind, triggers: prev.triggers, hot: prev.hot,
+              });
+            } catch (e) { log("dropped-module history skipped:", e?.message ?? e); }
           }
 
           // project dir: needed verifiably by `lowfat pack verify` (relative
@@ -1234,12 +1250,16 @@ export default {
               tokens: estTokens(m.content), triggers: m.triggers,
               hot: m.kind === "state" || m.kind === "decisions" || m.kind === ANCHOR_KIND || m.name === "recovered",
             })),
+            shortTerm: [
+              ...(Array.isArray(prevIdx?.shortTerm) ? prevIdx.shortTerm : []),
+              ...versioner.rows,
+            ],
           }, null, 2));
 
           // cross-session library promotion (tool knowledge outlives sessions)
           if (opts.library && projectDir) {
             try {
-              await promoteToLibrary(event.sessionID, chosen, projectDir);
+              await promoteModules({ root: ROOT, projectDir, modules: chosen });
             } catch (e) { log("library promotion skipped:", e?.message); }
           }
 
@@ -1368,10 +1388,12 @@ export default {
               log(`prompt hook: carry-in ${hot.length} hot module(s) from library ${dirSlug(projectDir)}`);
             }
           }
+          let fromLibrary = false;
           if (!idx?.modules?.length && !carried && opts.library && projectDir) {
             // v0.7.5 behavior: keyword-matched attach from the project library
             // (also covers prompt 2+ of a carry-in session before distill).
             idx = await libraryIndex(projectDir, ROOT).catch(() => null);
+            fromLibrary = true;
             if (!idx?.modules?.length) {
               log(`prompt hook: no modules to attach (session=${sid.slice(0, 14)}…, pack=${idx ? "empty" : "none"})`);
               return;
@@ -1388,14 +1410,34 @@ export default {
 
           // Carried context skips the keyword gate entirely — the whole point
           // is that any first prompt (even "ok go") opens the project warm.
-          const matched = carried ? idx.modules : matchModules(idx, text);
-          log(`prompt hook: session=${sid.slice(0, 14)}… candidates=${matched.length}${idx.projectDir ? ` (library for ${idx.projectDir.slice(0, 30)})` : ""}`);
+          // Otherwise fold the project library into the same candidate set.
+          // planAttach caps the merged pick at the session-only cost: a library
+          // row may replace a row, never enlarge the prompt.
+          let planned = null;
+          let matched;
+          if (carried) {
+            matched = idx.modules;
+          } else {
+            const lib = !fromLibrary && opts.library && projectDir
+              ? await libraryIndex(projectDir, ROOT).catch(() => null)
+              : null;
+            planned = planAttach({
+              session: idx,
+              library: lib,
+              text,
+              maxAttach: opts.maxAttach,
+              budgetTokens: opts.attachBudgetTokens,
+            });
+            matched = planned.picked;
+          }
+          log(`prompt hook: session=${sid.slice(0, 14)}… candidates=${planned ? planned.merged.length : matched.length}${planned?.libraryScored.length ? ` (${planned.libraryScored.length} library)` : ""}${idx.projectDir ? ` (project ${idx.projectDir.slice(0, 30)})` : ""}`);
           let budget = opts.attachBudgetTokens;
           const picked = [];
           for (const m of matched) {
-            if (picked.length >= opts.maxAttach || m.tokens > budget) continue;
+            const cost = Number(m.tokens) || 0;
+            if (picked.length >= opts.maxAttach || cost > budget) continue;
             picked.push(m);
-            budget -= m.tokens;
+            budget -= cost;
           }
           for (const m of picked) {
             const p = m.path ?? path.join(ROOT, "sessions", sid, m.file);

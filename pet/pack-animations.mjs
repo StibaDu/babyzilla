@@ -50,20 +50,21 @@ const EXPRESSIONS = {
   dash: ["compressing", "ship-it", "self-tune", "determined"],
   // paying attention to the human
   nod: ["thinking", "listening", "retrieve", "recall", "tool-todo"],
-  // turning to face the human, because it needs an answer
-  turn: ["tool-question", "waiting"],
-  // something went wrong
-  shake: ["shell-fail", "oops", "conflict", "model-error", "offline", "rate-limited"],
+  // turning to face the human, because it needs an answer; also the "what?"
+  // of a puzzled thought and of a search that found nothing
+  turn: ["tool-question", "waiting", "confused", "notfound", "shrug"],
+  // something went wrong: a failing test is a jerk of the head, not a mood
+  shake: ["shell-fail", "oops", "conflict", "test-fail", "model-error", "offline", "rate-limited"],
   // waiting on something slow, so it stretches instead of standing still
   stretch: ["tool-task", "subagent-wait"],
   // reading or searching: it tips towards whatever it is looking at
   lean: ["tool-read", "tool-grep", "tool-list", "tool-webfetch", "tool-websearch", "tool-lsp", "tool-mcp"],
   // hands on the keyboard, doing the work
   bounce: ["tool-edit", "tool-write", "tool-bash", "tool-imagegen", "typing"],
-  // the context is filling up and the pet is being squashed by it
-  slump: ["budget-low", "budget-full"],
+  // squashed by something: a full context, a blocked path, too much output
+  slump: ["budget-low", "budget-full", "permission-denied", "disk-full", "stack-overflow", "bored"],
   // pleased with itself
-  sway: ["celebrate", "shell-ok", "pack-created", "update-available"],
+  sway: ["celebrate", "test-pass", "shell-ok", "pack-created", "proud", "tilt-head", "update-available"],
 };
 
 const FPS = { dash: 12, nod: 8, sway: 8, shake: 14, stretch: 5, turn: 7, lean: 5, bounce: 12, slump: 3 };
@@ -244,7 +245,10 @@ for (const [name, fps] of Object.entries(FPS)) if (pack.animations[name]) pack.f
 pack.expressions = { ...(pack.expressions ?? {}) };
 for (const [anim, ids] of Object.entries(EXPRESSIONS)) {
   if (!pack.animations[anim]) continue;
-  for (const id of ids) pack.expressions[id] = anim;
+  // Never overwrite a mapping the pack already has: a row the artist drew (or
+  // the importer's named row) is a better answer than a derived guess, and
+  // re-running this tool must not lose it.
+  for (const id of ids) if (!(id in pack.expressions)) pack.expressions[id] = anim;
 }
 
 fs.writeFileSync(path.join(packDir, "pack.json"), `${JSON.stringify(pack, null, 2)}\n`);

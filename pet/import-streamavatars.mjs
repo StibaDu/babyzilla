@@ -27,6 +27,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { tool } from "../lib/tool.mjs";
+import { decodePng, encodePng } from "./png.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
@@ -121,8 +122,19 @@ const POSTURES = {
 const NAMED = {
   dance: ["party", "dance", "celebrate"],
   wave: ["wave"],
-  clap: ["success", "ship-it"],
+  clap: ["success", "test-pass", "ship-it"],
   sleep: ["sleep", "zzz", "doze"],
+  attack: ["conflict", "glitch", "segfault"],
+  stomp: ["model-error", "rate-limited", "offline"],
+  spit: ["oops", "glitch"],
+  squat: ["waiting-approval"],
+  hover: ["compressing", "self-tune"],
+  // The sign rows are the avatar raising one hand: that is the "it needs an
+  // answer" gesture, not a decoration.
+  sign_up: ["tool-question", "waiting"],
+  sign_left: ["waiting"],
+  sign_right: ["waiting"],
+  sign_down: ["shrug"],
 };
 
 export function labelFor(id) {
@@ -179,7 +191,7 @@ function anyOffset(animsOf) {
  * Turn one unpacked avatar folder into a pack. Returns a summary; throws so a
  * batch of fifteen archives can report one bad avatar and keep the rest.
  */
-export function installAvatar(dir, { outRoot, name = null, upscale = 0, scale = 0, only = null, source = null } = {}) {
+export function installAvatar(dir, { outRoot, name = null, upscale = 0, scale = 0, only = null, source = null, plain = false } = {}) {
   const dataFile = path.join(dir, "data.txt");
   if (!fs.existsSync(dataFile)) throw new Error("no data.txt — not a Stream Avatars avatar");
   const data = JSON.parse(fs.readFileSync(dataFile, "utf8"));
@@ -205,6 +217,8 @@ export function installAvatar(dir, { outRoot, name = null, upscale = 0, scale = 
         frames: (v.frameData ?? []).length,
         customName: v.customName,
         fps: v.framesPerSecond,
+        loops: Number(v.loopCount) || 1,
+        hold: Number(v.holdLastFrame) || 0,
       }))
       .filter((a) => a.frames > 0);
     if (!anims.length) throw new Error(`${key}: no animation frames`);
@@ -272,13 +286,34 @@ export function installAvatar(dir, { outRoot, name = null, upscale = 0, scale = 
     // Its own summary line would repeat the table this script prints.
     execFileSync(process.execPath, packArgs, { stdio: ["ignore", "ignore", "inherit"] });
 
+    // Seven rows of sheet cannot answer a hundred states, so the pack also gets
+    // the eight poses `pack-animations` derives from its own idle frame. They are
+    // added *before* the expression map below, so a row the artist really drew
+    // (a true `wave`) wins over a derived one.
+    if (!plain) {
+      execFileSync(process.execPath, [path.join(ROOT, "pet/pack-animations.mjs"), "--pack", out],
+        { stdio: ["ignore", "ignore", "inherit"] });
+    }
+
     const packFile = path.join(out, "pack.json");
     const pack = JSON.parse(fs.readFileSync(packFile, "utf8"));
     pack.source = `${source ?? path.basename(dir)} → avatars/${key}.png`;
     pack.imported = "streamavatars";
     pack.atlas = { sheet: `${sheet.width}x${sheet.height}`, cell: `${cellW}x${cellH}`, cols, rows, animations: anims.length };
+    // Sheet order, for menus that must not sort alphabetically.
+    pack.rows = anims.map((a) => a.id);
+    // What the sheet says about playing a row: its own rate, how many times it
+    // loops, and whether it holds the last frame (the signs do, for 10s).
+    pack.emotes = Object.fromEntries(anims.map((a) => [a.id, {
+      ...(Number(a.fps) ? { fps: Number(a.fps) } : {}),
+      frames: a.frames,
+      loops: a.loops,
+      hold: a.hold,
+    }]));
 
-    const expressions = {};
+    // pack-animations has already mapped its derived poses; a row the artist
+    // really drew overrides the derived one that answered the same expression.
+    const expressions = { ...(pack.expressions ?? {}) };
     for (const [anim, ids] of Object.entries({ ...POSTURES, ...NAMED })) {
       if (!pack.animations[anim]?.length) continue;
       for (const expr of ids) expressions[expr] = anim;
@@ -300,6 +335,57 @@ export function installAvatar(dir, { outRoot, name = null, upscale = 0, scale = 
   }
   if (!installed.length) throw new Error(only ? `no avatar named ${only.join(",")}` : "nothing to install");
   return installed;
+}
+
+const THUMB = 32;
+
+/** The cell a Wear-menu preview should show: the idle pose, or the first frame. */
+function thumbCell(img, shape, row) {
+  if (shape.mode === "single") return img;
+  const cw = shape.cellW;
+  const ch = shape.cellH;
+  const r = shape.mode === "grid" ? row : 0;
+  const data = Buffer.alloc(cw * ch * 4);
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+    const s = ((r * ch + y) * img.width + x) * 4;
+    const d = (y * cw + x) * 4;
+    if (s + 3 >= img.data.length) continue;
+    for (let k = 0; k < 4; k++) data[d + k] = img.data[s + k];
+  }
+  return { width: cw, height: ch, data };
+}
+
+/**
+ * Nearest-neighbour, trimmed to the ink and fitted to `size` on its long side.
+ *
+ * Items are drawn on a full avatar cell, so a pair of glasses is nine pixels
+ * tall inside a 32px square. Keeping the cell made every preview a speck in a
+ * field of nothing; trimming to what was actually drawn makes the menu readable.
+ */
+function fitThumb(img, size = THUMB) {
+  let x0 = img.width, y0 = img.height, x1 = -1, y1 = -1;
+  for (let y = 0; y < img.height; y++) for (let x = 0; x < img.width; x++) {
+    if (!img.data[(y * img.width + x) * 4 + 3]) continue;
+    if (x < x0) x0 = x;
+    if (y < y0) y0 = y;
+    if (x > x1) x1 = x;
+    if (y > y1) y1 = y;
+  }
+  if (x1 < x0 || y1 < y0) return { width: size, height: size, data: Buffer.alloc(size * size * 4) };
+  const cw = x1 - x0 + 1;
+  const ch = y1 - y0 + 1;
+  const k = Math.min(size / cw, size / ch);
+  const w = Math.max(1, Math.round(cw * k));
+  const h = Math.max(1, Math.round(ch * k));
+  const data = Buffer.alloc(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const sx = x0 + Math.min(cw - 1, Math.floor(x / k));
+    const sy = y0 + Math.min(ch - 1, Math.floor(y / k));
+    const s = (sy * img.width + sx) * 4;
+    const d = (y * w + x) * 4;
+    for (let i = 0; i < 4; i++) data[d + i] = img.data[s + i];
+  }
+  return { width: w, height: h, data };
 }
 
 /**
@@ -325,6 +411,18 @@ function importGear(dir, out, av, avatar, anims) {
       const rel = path.join("gear", set, file);
       fs.mkdirSync(path.join(out, "gear", set), { recursive: true });
       fs.copyFileSync(src, path.join(out, rel));
+      // A 32px preview beside the name, written now: decoding six hundred
+      // sheets every time the Wear menu opens is not free, and a thumbnail is
+      // one cell of art, not the sheet.
+      let thumb = null;
+      try {
+        const row = Math.max(0, anims.findIndex((a) => a.id === "idle"));
+        const cell = fitThumb(thumbCell(decodePng(fs.readFileSync(src)), shape, row));
+        const thumbRel = path.join("thumbs", set, file);
+        fs.mkdirSync(path.join(out, "thumbs", set), { recursive: true });
+        fs.writeFileSync(path.join(out, thumbRel), encodePng(cell.width, cell.height, cell.data));
+        thumb = thumbRel.split(path.sep).join("/");
+      } catch { /* a broken PNG already failed classifyGear; no preview then */ }
       items.push({
         id: `${set}/${base}`,
         label: base.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase()),
@@ -336,6 +434,7 @@ function importGear(dir, out, av, avatar, anims) {
         cols: shape.cols,
         rows: shape.rows,
         mode: shape.mode,
+        ...(thumb ? { thumb } : {}),
         ...(shape.mode === "strip" ? { fps: 8 } : {}),
       });
     }
@@ -401,7 +500,7 @@ function main() {
   const zips = all("zip");
   const dirs = all("dir");
   if (!zips.length && !dirs.length) {
-    console.error("usage: node pet/import-streamavatars.mjs --zip <avatar.zip> [--zip …] [--dir <unpacked>] [--only id,id] [--upscale N] [--scale N] [--out <packs dir>]");
+    console.error("usage: node pet/import-streamavatars.mjs --zip <avatar.zip> [--zip …] [--dir <unpacked>] [--only id,id] [--upscale N] [--scale N] [--plain] [--out <packs dir>]");
     process.exit(2);
   }
 
@@ -409,6 +508,7 @@ function main() {
   const only = arg("only") && arg("only") !== true ? String(arg("only")).split(",").map((s) => s.trim()).filter(Boolean) : null;
   const upscale = Number(arg("upscale", 0)) || 0;
   const scale = Number(arg("scale", 0)) || 0;
+  const plain = Boolean(arg("plain", false));
 
   try {
     assertLocal(outRoot);
@@ -435,7 +535,7 @@ function main() {
     let total = 0;
     for (const source of sources) {
       try {
-        const built = installAvatar(source.dir, { outRoot, only, upscale, scale, source: source.label });
+        const built = installAvatar(source.dir, { outRoot, only, upscale, scale, plain, source: source.label });
         for (const p of built) {
           total++;
           const gearNote = p.gear ? ` gear=${p.gear}${p.skipped ? ` (+${p.skipped} unsupported)` : ""}` : "";

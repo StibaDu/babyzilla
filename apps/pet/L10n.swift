@@ -45,6 +45,23 @@ struct L10n {
         "Mute speech": "Sprache stumm",
         "Size": "Größe",
         "Wear": "Tragen",
+        "Play": "Spielen",
+        "Back to idle": "Zurück zur Ruhe",
+        // the sheet's own animation names, where a German word exists
+        "Idle": "Ruhen",
+        "Walk": "Gehen",
+        "Jump": "Springen",
+        "Sit": "Sitzen",
+        "Stand": "Stehen",
+        "Wave": "Winken",
+        "Clap": "Klatschen",
+        "Dance": "Tanzen",
+        "Attack": "Angriff",
+        "Hover": "Schweben",
+        "Stomp": "Stampfen",
+        "Squat": "Hocken",
+        "Spit": "Spucken",
+        "Sleep": "Schlafen",
         "Nothing": "Nichts",
         "Hats": "Hüte",
         "Heads": "Köpfe",
@@ -139,8 +156,9 @@ enum LanguageMenu {    /// In display order, with the names a person recognises 
 /// sheet's own folders — hats, masks, held items — because that is how the artist
 /// organised them.
 enum WearMenu {
-    static func item(pack: PackData?, worn: [String: String], l10n: L10n, target: AnyObject,
-                     action: Selector) -> NSMenuItem? {
+    static func item(pack: PackData?, worn: [String: String], l10n: L10n,
+                     thumbnail: ((GearItem) -> NSImage?)? = nil,
+                     target: AnyObject, action: Selector) -> NSMenuItem? {
         guard let gear = pack?.gear, !gear.items.isEmpty else { return nil }
         let title = NSMenuItem(title: l10n.t("Wear"), action: nil, keyEquivalent: "")
         let sub = NSMenu()
@@ -171,6 +189,7 @@ enum WearMenu {
                 let row = NSMenuItem(title: wearItem.label, action: action, keyEquivalent: "")
                 row.target = target
                 row.representedObject = wearItem.id
+                row.image = thumbnail?(wearItem)
                 row.state = worn[set] == wearItem.id ? .on : .off
                 items.addItem(row)
             }
@@ -179,5 +198,49 @@ enum WearMenu {
         }
         title.submenu = sub
         return title
+    }
+}
+
+/// The animation menu: every row the active pack actually carries, in the order
+/// the artist drew them. A seven-row sheet shows seven; `block_man` shows
+/// nineteen. It is the honest answer to "are there more animations?" — yes, and
+/// here they are.
+enum PlayMenu {
+    static func item(pack: PackData?, l10n: L10n, target: AnyObject, action: Selector) -> NSMenuItem? {
+        guard let pack, !pack.animations.isEmpty else { return nil }
+        let title = NSMenuItem(title: l10n.t("Play"), action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        let back = NSMenuItem(title: l10n.t("Back to idle"), action: action, keyEquivalent: "")
+        back.target = target
+        back.representedObject = ""
+        sub.addItem(back)
+        sub.addItem(.separator())
+        for anim in order(pack) {
+            let row = NSMenuItem(title: l10n.t(label(anim)), action: action, keyEquivalent: "")
+            row.target = target
+            row.representedObject = anim
+            sub.addItem(row)
+        }
+        title.submenu = sub
+        return title
+    }
+
+    /// Sheet order first — `rows` is what the importer wrote from `data.txt` —
+    /// then the poses derived from the idle frame, alphabetically.
+    static func order(_ pack: PackData) -> [String] {
+        let sheet = pack.rows ?? pack.gear?.rows ?? []
+        let known = sheet.filter { pack.animations[$0] != nil }
+        let rest = pack.animations.keys.filter { !known.contains($0) }.sorted()
+        if !known.isEmpty { return known + rest }
+        let preferred = ["idle", "walk", "jump", "sit", "stand"]
+        let first = preferred.filter { pack.animations[$0] != nil }
+        return first + rest.filter { !first.contains($0) }
+    }
+
+    /// `sign_up` reads as "Sign Up"; `sign_up` is a key, not a word.
+    static func label(_ anim: String) -> String {
+        anim.split(separator: "_")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
     }
 }

@@ -2,6 +2,109 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.36.0] — 2026-10-27
+
+### Added
+
+- **Memory search over the tabs that are actually open.** `babyzilla memory
+  search "gateway ECONNRESET"` ranks the modules of the current workspace's
+  open tab strip with Okapi BM25 and prints a citation plus a `read` path for
+  each hit; `--all` widens it to every compacted pack and the project library.
+  The tab scope comes from OpenCode's `tui/tabs.json` (longest workspace that
+  contains cwd wins; `--cwd` overrides; no tab file falls back to all). A tab
+  that never compacted falls back to its `journal.jsonl` rows (tool, status,
+  truncated head), so a six-tab workspace reports `6 of 6 open sessions` even
+  before the sixth pack exists. It is read-only and on demand: no model call, no
+  embeddings, no network, no new dependency, and zero prompt tokens until
+  invoked. `--project`, `--limit`, `--max-chars` and `--json` keep the answer
+  small. Raw tool pages are not indexed — they are bytes with a hash, not
+  distilled facts.
+- **A session charter on every request.** The context hook now adds one stable
+  system part describing what the session is: `About`, the last compaction's
+  state and decisions, a retired-count line, and the pack path. It is built
+  from disk so its bytes change only at compaction and stay in the cached
+  prefix; a tab with no pack gets a thin title + first-journal-step header.
+  Capped at 1,200 chars (`charterMaxChars`), printed by `babyzilla charter`,
+  disabled with `charter: false`. It is labeled as a snapshot — newer turns
+  outrank it, and missing detail means "read the module files", not guess.
+- **Long-term / short-term memory.** Every durable module write — a session
+  compaction or a library promotion — now versions the previous bytes instead
+  of overwriting them. A differing module moves to `short/NNNN-<file>` with a
+  `shortTerm` row in `index.json`; identical bytes write nothing; a module the
+  new pack drops is retired too. `babyzilla memory history` lists retired
+  revisions, `babyzilla memory revert <path>` restores one (retiring the
+  content it replaces, so reverts are reversible), and `memory search` finds
+  them labeled `short-term`. Zero model calls, kept forever, never
+  auto-attached.
+- **A session that has its own pack still consults the project library.** The
+  prompt hook now merges library rows into the session's trigger matches, but
+  as a replacement only: the merged set is capped at the session-only module
+  count and token total, so a library row can never enlarge the prompt. If the
+  session had no match, the library contributes nothing.
+
+- **The pet reads the result, not just the tool name.** A failing test is not a
+  missing file and an empty `grep` is not a crash: `execute.after` now reads the
+  output and answers with the face the moment deserves — `test-fail` from
+  `ℹ fail 1` / `1 failed` / `--- FAIL:` even when the runner exited 0,
+  `test-pass` from `ℹ pass 340`, `notfound` from `ENOENT`, `permission-denied`
+  from `EACCES`, `disk-full` from `ENOSPC`, a shrug for a search with no hits,
+  `stack-overflow` for a result over ~30k tokens, `conflict` for a rejected push.
+  It says one line about the notable ones (`1 test fails.`, `No such file.`), at
+  most once per verdict every eight seconds. Every expression it can pick now
+  resolves on a sheet pack: the derived postures gained `test-fail`/`test-pass`,
+  `confused`/`notfound`, `permission-denied`/`disk-full`/`stack-overflow` and
+  `proud`. `pack-animations` no longer overwrites a mapping a pack already has, so
+  re-running it cannot lose the artist's own row.
+- **Every mood it speaks is worn on the body.** An angry thought still trembles
+  (`conflict`), but a puzzled one now turns its head, boredom slumps, smugness
+  sways (`proud`), teasing tilts, and a rare `Rawr!` asks for the roar — instead of
+  the mood living only in the words.
+
+- **Previews in the Wear menu, and a live preview on the pet.** Every layer row
+  carries a thumbnail of the item (one cell, trimmed to the ink): the importer
+  writes 32px previews next to the art so opening a 600-layer menu stays instant,
+  and a pack from elsewhere is cropped on the fly. Pointing at a row puts it on
+  the pet without saving; closing the menu restores the old outfit, and only a
+  click commits. A worn **chair** is finally furniture: hidden while walking or
+  jumping, and wearing one makes the pet choose to sit — the sheet's own `sit`
+  pivots line it up. `b_emote` props (cake, `hype`) appear only while it is
+  actually emoting.
+
+- **Play ▸** — a menu (both menus) listing every animation the active pack
+  actually carries, in the order the sheet drew them: `block_man` shows nineteen,
+  a hero sheet shows seven plus the poses derived from its idle frame. Picking one
+  plays it and returns to idle; **Back to idle** cancels.
+- **A pack now reacts like a pet, not like a still image.** The importer runs
+  `pet/pack-animations.mjs` on every Stream Avatars pack (skip with `--plain`), so
+  each one gains `nod`, `sway`, `shake`, `stretch`, `turn`, `lean`, `bounce` and
+  `slump` derived from its own idle frame — and ~35 expression ids that used to
+  collapse to idle now answer with one of them. A seven-row sheet went from 6
+  mapped expressions to 39.
+- The sheet's own rows answer more of the catalogue: `attack` → conflict/glitch/
+  segfault, `stomp` → model-error/offline, `spit` → oops, `squat` →
+  waiting-approval, `hover` → compressing, `clap` → success/test-pass, and
+  `sign_up` → tool-question — the avatar raising a hand for the **?** mark.
+- **Emote timing from the sheet.** `framesPerSecond`, `loopCount` and
+  `holdLastFrame` are recorded per row in `pack.json`; an emote plays one to five
+  cycles (capped at 2.5s) and a sign holds its frame for up to 2.5s, instead of a
+  wave loop running for fifteen seconds.
+
+### Changed
+
+- **Clicking a pack cycles its emotes** (wave → clap → dance → attack → hover →
+  stomp → spit → squat) instead of always jumping, and **double-click** asks for
+  the dance.
+- **Idle life comes from the pack's own rows**: a sit after a quiet minute, sleep
+  after five, and waves/nods/bounces in between. The built-in fidget ids
+  (`blink`, `tilt-head`, `breathe`) have no sprites on a sheet, so packs used to
+  stand still between walks.
+- Dragging a pack plays its `attack` row — it struggles instead of poking.
+
+### Fixed
+
+- A walk played from the Play menu animates on the clock instead of freezing on
+  its first frame (a walk is normally driven by ground covered).
+
 ## [0.35.0] — 2026-10-27
 
 ### Changed

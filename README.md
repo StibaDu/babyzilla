@@ -15,6 +15,12 @@
   summary is replaced by AI-distilled **context modules** — state, decisions,
   code pointers, failure histories — dropping tool-output bulk while keeping
   exact, re-fetchable facts.
+- **Long-term ↔ short-term memory**: when a compaction rewrites a module — or
+  a library promotion updates one — the previous bytes move to `short/` and a
+  row in `index.json` instead of being deleted. `babyzilla memory history`
+  lists retired revisions; `babyzilla memory revert` restores one and keeps
+  the pre-revert content as a new row. Retired rows stay searchable
+  (`memory search`, labeled `short-term`) but are never auto-attached.
 - **Layer 1b — Per-request budget**: before *every* request the outgoing
   message list is capped — target 8% of the incoming context
   (`requestTargetRatio`), floored at 12K and hard-capped at 45K
@@ -34,6 +40,13 @@
   part: answer directly when sure, say "I'm not sure" or check it with a tool
   when not, never pass a guess off as a fact, and never ask you to verify what
   the model could check itself. On by default (`grounding: false` drops it).
+- **Session charter — stable orientation**: every request also carries one
+  small system part built from the session's state and decisions (or a thin
+  title/first-journal-step header before the first compaction), capped at
+  1,200 chars (`charterMaxChars`). Bytes change only at compaction, so it sits
+  in the cached prefix; `babyzilla charter` prints it, `charter: false` drops
+  it. It is labeled as the last compaction's snapshot — newer turns outrank
+  it, and the model is told to read module files rather than guess.
 - **Token calibration — `babyzilla calibrate`**: `chars/4` is the estimate behind
   every absolute number (budget floor/cap, compaction trigger, reported savings),
   and it drifts by model and by content. The plugin appends one line per request;
@@ -135,6 +148,7 @@ babyzilla selftune status   # self-tuning loop: knobs, pending proposal, floor
 babyzilla recall 8c1f0b7a9d2e4c15   # exact original behind a paging marker / ledger row
 babyzilla recall 8c1f0b7a9d2e4c15:120-180   # just those lines
 babyzilla retrieve src/app.js:120-160   # exact span, numbered
+babyzilla memory search "gateway ECONNRESET"   # search the tabs open in this workspace (--all for history)
 ```
 
 ### Desktop pet
@@ -239,7 +253,11 @@ You do not have to trust a benchmark table — the plugin logs its own numbers.
    `babyzilla recall <handle>` returns the exact original text. If you ever
    cannot recover something, that is a bug — please open an issue with the
    handle.
-4. **The tuner stays visible.** With the self-tuning loop on (default),
+4. **It knows what the session is.** `babyzilla charter` prints the header the
+   model gets (state, decisions, retired count); `babyzilla memory history`
+   lists superseded revisions, and `babyzilla memory revert <path>` restores
+   one while keeping the content it replaced.
+5. **The tuner stays visible.** With the self-tuning loop on (default),
    `babyzilla selftune status` shows its knobs, any pending proposal, the
    measured noise floor, and the decision counts — every change is also in
    `~/.opencode/contextpacks/selftune/ledger.jsonl`.
@@ -310,7 +328,10 @@ except Layer 1.
    exit 1 · 3.1K tok · recall 8c1f…`), never anonymous markers, and the newest
    ~8K tokens of tool results stay byte-for-byte. Every row and pointer is
    reversible through the content-addressed page store (falling back to the
-   session database). Works for `shell`, `grep`, `read` — everything.
+   session database). Works for `shell`, `grep`, `read` — everything. The same
+   pre-request pass adds the **session charter**: state + decisions, or a thin
+   title/first-journal-step header before the first compaction, so every turn
+   starts oriented without a search.
 4. **Layer 1b, historical user bulk**: a user message *older than the current
    turn* above 32K tokens (`requestUserBulkMinTokens`) is condensed the same
    way — opening, constraint lines and closing kept verbatim, the rest paged
@@ -336,7 +357,10 @@ except Layer 1.
    module (*hot*), and topic/code/errors modules (*cold*). Two modules are
    never written by the model: `00-anchors.md`, the last question and the reply
    it answers kept verbatim, and `00-recovered.md`, the facts and `path:line`
-   pointers the model dropped but the transcript still had.
+   pointers the model dropped but the transcript still had. Before any durable
+   module is written, one whose bytes differ from the previous pack is retired
+   into `short/` with an index row; the same happens on library promotion.
+   `babyzilla memory history` and `memory revert` operate on those rows.
 8. **On later prompts** cold modules auto-attach when the prompt matches
    their trigger words (max 2 modules, 6K-token budget) — so long-session
    context stays available *without staying in the window*. With

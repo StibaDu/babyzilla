@@ -88,6 +88,39 @@ false`) for work where being wrong out loud is the point — brainstorming, firs
 drafts. It is an instruction, not a guarantee: it makes verification the cheap
 path and a silent guess the exception, and it cannot make a model infallible.
 
+### 0c. `session.hook("context")` — session charter
+
+One more system part on every request: a stable "what this session is" header,
+built from the pack's `state` and `decisions` modules plus `index.json`:
+
+```text
+[babyzilla:charter] Session memory — distilled at the last compaction and updated only then. Newer turns below outrank it; if a detail you need is not here, read the module files; do not guess.
+About: MTG Commander Deck
+Snapshot: 2026-10-29
+State:
+# State
+- 78 cards final; proxies allowed
+Decisions:
+- Removed Wormcoil Engine (illegal)
+Superseded: 2 retired facts · inspect: babyzilla memory history
+Modules: ~/.opencode/contextpacks/sessions/<sid>/ (index.json lists every path)
+```
+
+- **Built from disk, not the live transcript.** The bytes change only at
+  compaction, so the header stays in the provider's cached prefix instead of
+  busting it on every turn.
+- **Capped at 1,200 chars** (`charterMaxChars`): state gets about 60% of the
+  room after the fixed lines, decisions the rest.
+- **Thin before the first compaction.** A tab with no pack gets `About: <tab
+  title>` plus its *first* journal step. The first step is used, not the latest,
+  because the journal is append-only: the first one is stable, while "latest"
+  would change on every tool call.
+- **A snapshot, not an oracle.** The header says newer turns outrank it and
+  points at the module files. It prevents losing the beginning of the session;
+  it never overrides something fresher in the conversation.
+- `babyzilla charter` prints it on demand; `charter: false` disables it
+  entirely.
+
 ### 1. `session.hook("compaction")` — replace the summary
 
 When OpenCode compacts a session (automatic when the context fills, or manual
@@ -287,7 +320,81 @@ with `carryIn: true` a new session's first prompt carries the project's hot
 modules over trigger-free, labeled `[carry-in]`, at most once per session (a
 `.carryin` stamp under `sessions/<sid>/` prevents repeats). Home-dir and
 temp-dir sessions are skipped; promotions are add/merge-only; empty promotions
-write nothing.
+write nothing. A promoted module whose bytes differ from the library copy first
+retires that copy into `library/<slug>/short/` — the same long-term/short-term
+rule as a session pack.
+
+## Long-term and short-term memory
+
+Every durable module write goes through one deterministic versioner: a session
+compaction, or a library promotion. There are no model calls and no inferred
+diffs.
+
+- **Differs** → the old bytes move to `<base>/short/NNNN-<file>` and a row is
+  appended to the base's `index.json` under `shortTerm`:
+  `{name, kind, seq, at, tokens, path, replacedBy, reason, triggers, hot}`.
+- **Identical** → nothing is written, so a no-op compaction creates no history.
+- **Dropped** → a module the new pack no longer carries is retired the same
+  way, with `replacedBy: null`; "replaced by nothing" is still a fact worth
+  keeping.
+- **Anchors and `recovered` are not versioned.** They are per-turn snapshots
+  and change at every compaction; versioning them would be noise.
+
+`babyzilla memory history` lists the rows (optionally `--session`, `--project`
+or `--all`). `babyzilla memory revert <.../short/NNNN-file.md>` copies the old
+revision back into the current slot — and the content it replaces is retired
+first, so a revert can itself be reverted. The restored module is visible to
+the charter and the next prompt immediately, no restart. Retired rows are also
+part of `babyzilla memory search` (labeled `short-term`) but they are never
+auto-attached: they are backup, not context.
+
+Retention is forever. A revision is 1–3KB on disk; `prune` only removes whole
+old session packs, not `short/` rows.
+
+## Memory search
+
+`recall` needs a handle; trigger matching needs the author's keyword. Neither
+answers "which session dealt with the ECONNRESET gateway bug?". `babyzilla
+memory search <words>` fills that gap by ranking the modules already on disk
+with Okapi BM25:
+
+```sh
+babyzilla memory search "gateway ECONNRESET"          # open tabs in this workspace
+babyzilla memory search "gateway ECONNRESET" --all    # every compacted pack + library
+babyzilla memory search "invoice" --project ~/work/shop --limit 3
+babyzilla memory search "接続" --json
+```
+
+- By default the corpus is the **sessions with an open tab in the current
+  workspace**, read from `~/.local/state/opencode/latest/tui/tabs.json`. The
+  current OpenCode session (`OPENCODE_SESSION_ID`) selects its own strip, so
+  running the CLI from any directory inside that session still finds the six
+  tabs; otherwise the longest workspace that contains cwd wins. `--cwd`
+  overrides. A missing tab file falls back to all packs.
+- `--all` searches every compacted session plus the project library. When the
+  search is scoped to open tabs, the library is excluded: its rows do not carry
+  a source session, so they cannot be attributed to a tab.
+- Raw pages are not indexed: a page is a byte blob with a hash, not a distilled
+  fact. A tab that never compacted has no modules, so its `journal.jsonl` rows
+  are used as a fallback (tool, status, and the truncated head) — enough to
+  find "which tab wrote that file", not the full original. If even the journal
+  is empty, the header reports `5 of 6 open sessions` rather than pretending
+  otherwise.
+- Retired revisions from `short/` are indexed as well, labeled `short-term`
+  in the citation. They are backup: searchable, never auto-attached.
+- No model, no embeddings, no network, no new dependency. The index is built
+  per invocation from the module files, so it cannot go stale.
+- Output is capped at 1,200 characters by default (`--max-chars`), one block per
+  hit with a citation and a `read` path. `--json` returns the uncapped result
+  and the resolved scope (`open` or `all`).
+- The command is **on demand**: it costs zero prompt tokens until the model or
+  the user runs it. BabyZilla never auto-invokes a search on a prompt.
+- The prompt hook's library merge is the other half: when a session has its own
+  pack, matching library rows may now replace session rows, but the merged pick
+  is capped at the session-only selection's module count and token total. A
+  library row cannot enlarge a prompt; if the session had no match, the library
+  still contributes nothing (zero would grow to one). Set `library: false` to
+  disable the merge.
 
 ## Data layout
 
@@ -297,14 +404,16 @@ write nothing.
 ├── calibration.json                 # learned billed/estimated factor per model
 ├── calibration/requests.jsonl       # one estimate per request (measurement buffer)
 ├── sessions/<sessionID>/
-│   ├── index.json                   # stats: rawTokens/packTokens/savedPct, module rows, projectDir
+│   ├── index.json                   # stats, module rows, projectDir, shortTerm history
 │   ├── 00-state.md                  # hot
 │   ├── decisions-*.md               # hot
 │   ├── topic-*.md / code-*.md       # cold
 │   ├── errors-*.md / tool-*.md      # cold (+ library-promoted)
+│   ├── short/0001-*.md              # retired revisions (never auto-attached)
 │   └── journal.jsonl
 └── library/<project-slug>/          # cross-session modules: hot state/decisions
                                       # + cold tool/errors, carry-in source
+                                      # + short/ retired library copies
 ```
 
 ## Why pointers-first matters
@@ -318,6 +427,9 @@ you can see how much of a pack is still live.
 
 ## Known limitations
 
+- The charter and every pack module are a **snapshot from the last
+  compaction**. Between compactions newer turns outrank the header (it says so
+  itself); `/compact` or a lower `proactiveCompactRatio` refreshes it.
 - Plugin load is lazy per location; a compaction firing immediately at load
   can be missed (benign — next compaction works).
 - Distillation quality depends on the model; very weak models may produce

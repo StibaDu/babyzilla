@@ -2,6 +2,20 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.37.0] — 2026-11-02
+
+### Added
+
+- **Loop guard for long autonomous runs.** Proactive compaction waits for a
+  user turn; a screenshot/test/edit loop can run for dozens of turns without
+  ever reaching one, so stable-prefix sessions can keep resending a growing
+  cached prompt. Once a loop has `loopGuardTurns` assistant turns since the
+  last user message and `loopGuardMinTokens` prompt tokens, BabyZilla requests
+  a queued compaction, rate-limited by `loopGuardCooldownMs` (30 min). The
+  guard is on by default and is the mid-loop counterpart to
+  `proactiveCompaction`; set `loopGuard: false` to allow unbounded loops. The
+  three numeric knobs are documented in `docs/OPTIONS.md`.
+
 ## [0.36.0] — 2026-10-27
 
 ### Added

@@ -36,6 +36,13 @@
   `max(proactiveCompactMinTokens, proactiveCompactRatio × window)` BabyZilla
   asks OpenCode to compact (rate-limited per session), so the pack kicks in at
   ~35% of the window instead of ~90%. Disable with `proactiveCompaction: false`.
+- **Loop guard — bounded autonomous runs**: proactive compaction waits for a
+  user turn, but a long tool loop can run for dozens of turns without one. Once
+  a loop reaches `loopGuardTurns` assistant turns since the last user message
+  and `loopGuardMinTokens` prompt tokens, BabyZilla asks OpenCode for a queued
+  compaction, at most once per `loopGuardCooldownMs`. This catches the
+  screenshot/test/edit loops that would otherwise grow the cached prefix
+  indefinitely. Disable with `loopGuard: false`.
 - **Grounding — no silent guesses**: every request carries one constant system
   part: answer directly when sure, say "I'm not sure" or check it with a tool
   when not, never pass a guess off as a fact, and never ask you to verify what
@@ -351,7 +358,13 @@ except Layer 1.
    `max(proactiveCompactMinTokens, proactiveCompactRatio × window)` BabyZilla
    asks OpenCode to compact (rate-limited per session), so the pack kicks in at
    ~35% of the window instead of ~90%. Disable with `proactiveCompaction: false`.
-7. **Layer 1, at compaction**: BabyZilla hooks OpenCode's `compaction` hook,
+7. **Loop guard, mid-loop**: proactive compaction waits for a user turn, so a
+   screenshot/test/edit loop can run for dozens of turns without ever hitting
+   one. After `loopGuardTurns` assistant turns since the last user message and
+   `loopGuardMinTokens` prompt tokens, BabyZilla asks OpenCode for a queued
+   compaction, rate-limited by `loopGuardCooldownMs`. Disable with
+   `loopGuard: false`.
+8. **Layer 1, at compaction**: BabyZilla hooks OpenCode's `compaction` hook,
    receives the full transcript, and calls your configured model to distill it
    into JSONL modules: a state module (*hot*, always inlined), a decisions
    module (*hot*), and topic/code/errors modules (*cold*). Two modules are
@@ -361,15 +374,15 @@ except Layer 1.
    module is written, one whose bytes differ from the previous pack is retired
    into `short/` with an index row; the same happens on library promotion.
    `babyzilla memory history` and `memory revert` operate on those rows.
-8. **On later prompts** cold modules auto-attach when the prompt matches
+9. **On later prompts** cold modules auto-attach when the prompt matches
    their trigger words (max 2 modules, 6K-token budget) — so long-session
    context stays available *without staying in the window*. With
    `carryIn: true`, a new session's **first prompt** additionally carries the
    project library's hot modules over trigger-free (once per session, labeled
    `[carry-in]`) — the next session starts where the last one left off.
-9. **Tool results** are journaled (kind + token estimate + 1200-char head) so
+10. **Tool results** are journaled (kind + token estimate + 1200-char head) so
    savings are measurable and future sessions can reuse them.
-10. **Anything fails → nothing happens.** OpenCode's native compaction runs.
+11. **Anything fails → nothing happens.** OpenCode's native compaction runs.
     BabyZilla never modifies or deletes session history: paging moves text to a
     local page store, it does not destroy it.
 

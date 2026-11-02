@@ -57,6 +57,14 @@ ever gets a chance to run. Triggers are rate-limited per session
 (`proactiveCompactCooldownMs`, 10 min) so a compaction that frees little cannot
 loop.
 
+Proactive compaction deliberately waits for a user turn (compacting mid-task
+replaces the working set). A long autonomous tool loop never reaches that
+boundary, so in stable-prefix mode the cached prompt can keep growing. The
+**loop guard** covers that case: after `loopGuardTurns` assistant turns since
+the last user message and `loopGuardMinTokens` prompt tokens, it asks for a
+queued compaction, rate-limited by `loopGuardCooldownMs`. Set `loopGuard: false`
+to allow unbounded tool loops.
+
 ### 0b. `session.hook("context")` — grounding: don't guess, verify
 
 A second, independent `context` hook adds one constant system part to every
@@ -286,7 +294,8 @@ skipped rather than averaging them in.
 
 The factor is applied where a *provider* number is compared with an *estimated*
 one — the budget cap and floor, the `requestMinTokens` "don't bother" floor, the
-`max(proactiveCompactMinTokens, ratio × window)` trigger, the overflow valve —
+`max(proactiveCompactMinTokens, ratio × window)` trigger, the loop-guard
+`loopGuardMinTokens` floor, the overflow valve —
 by converting the threshold into estimate space (`estForReal`). Savings
 percentages are ratios and cancel out, so they are left alone.
 

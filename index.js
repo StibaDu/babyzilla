@@ -95,6 +95,10 @@ const compactionInFlight = new Map();
 // sessions for which BabyZilla already requested a proactive compaction, so a
 // 1M-token model does not get a /compact every single step.
 const proactiveRequested = new Map();
+// Sessions where the loop guard already requested a mid-loop compaction.
+// Separate from proactiveRequested because the two have different cooldowns
+// and different triggers, but both feed the same re-entrancy check.
+const loopGuardRequested = new Map();
 // Sessions that already got the one-time compression contract note.
 const contractSent = new Set();
 
@@ -340,6 +344,20 @@ async function distillText(ctx, { sessionID, model, prompt, preferSession, allow
   });
 }
 
+// How many assistant turns have happened since the last real user message.
+// A tool result or synthetic/system row does not reset the count; only a new
+// user prompt does. This is the signal that a long autonomous loop is running.
+function assistantTurnsSinceUser(messages) {
+  if (!Array.isArray(messages)) return 0;
+  let turns = 0;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const role = messages[i]?.role ?? messages[i]?.type;
+    if (role === "user") break;
+    if (role === "assistant") turns += 1;
+  }
+  return turns;
+}
+
 // Ask OpenCode for a real compaction once the context is a fraction of the
 // model's window. On 1M-token models OpenCode's own threshold is so high that
 // it effectively never fires; this keeps sessions bounded and gives Layer 1 a
@@ -368,12 +386,58 @@ function maybeRequestCompaction(ctx, event, stats, opts) {
     );
     if (stats.before < threshold) return;
     const now = Date.now();
-    if (now - (proactiveRequested.get(sessionID) ?? 0) < (opts.proactiveCompactCooldownMs ?? 600_000)) return;
+    const lastRequest = Math.max(
+      proactiveRequested.get(sessionID) ?? 0,
+      loopGuardRequested.get(sessionID) ?? 0,
+    );
+    if (now - lastRequest < (opts.proactiveCompactCooldownMs ?? 600_000)) return;
     proactiveRequested.set(sessionID, now);
     log(`proactive compaction requested: ${fmt(stats.before)} tok ≥ ${fmt(threshold)} (model=${event?.model?.id ?? "?"})`);
     void Promise.resolve(ctx.session.compact({ sessionID, delivery: "queue" })).catch((e) => log("proactive compaction failed:", e?.message ?? e));
   } catch (e) {
     log("proactive compaction skipped:", e?.message ?? e);
+  }
+}
+
+// The mid-loop counterpart to proactive compaction. A long tool loop may run
+// for dozens of turns without a user message; proactive compaction deliberately
+// waits for a user boundary, so the stable prefix grows all the way to the
+// overflow valve. This guard asks for a queued compaction once the loop is both
+// long and expensive, then respects a cooldown so a failed/ignored compaction
+// cannot spam the host.
+function maybeLoopGuard(ctx, event, stats, opts) {
+  try {
+    if (opts.loopGuard === false) return;
+    if (typeof ctx.session?.compact !== "function") return;
+    const sessionID = event?.sessionID;
+    if (!sessionID || !stats?.after) return;
+    const turns = assistantTurnsSinceUser(event?.messages);
+    // A fresh user turn starts a new loop; do not let the previous loop's
+    // cooldown hide a second runaway run.
+    if (turns === 0) {
+      loopGuardRequested.delete(sessionID);
+      return;
+    }
+    const turnLimit = Math.max(1, Number(opts.loopGuardTurns) || 40);
+    if (turns < turnLimit) return;
+    const factor = opts.tokenFactor ?? 1;
+    const floor = Math.max(1, Number(opts.loopGuardMinTokens) || 120_000);
+    const threshold = estForReal(floor, factor);
+    if (stats.after < threshold) return;
+    const now = Date.now();
+    const cooldown = Math.max(0, Number(opts.loopGuardCooldownMs) || 30 * 60_000);
+    const lastRequest = Math.max(
+      loopGuardRequested.get(sessionID) ?? 0,
+      proactiveRequested.get(sessionID) ?? 0,
+    );
+    if (now - lastRequest < cooldown) return;
+    if ((compactionInFlight.get(sessionID) ?? 0) > now) return;
+    loopGuardRequested.set(sessionID, now);
+    log(`loop guard: ${turns} assistant turns without a user, ${fmt(stats.after)} tok ≥ ${fmt(threshold)}; requesting compaction`);
+    void Promise.resolve(ctx.session.compact({ sessionID, delivery: "queue" }))
+      .catch((e) => log("loop guard compaction failed:", e?.message ?? e));
+  } catch (e) {
+    log("loop guard skipped:", e?.message ?? e);
   }
 }
 
@@ -1014,6 +1078,9 @@ export default {
             // asking the host to compact still makes sense at the usual
             // thresholds, and it is the host's own summary either way.
             maybeRequestCompaction(ctx, event, stable, { ...opts, tokenFactor });
+            // Proactive compaction waits for a user turn; a tool loop never
+            // reaches one. The loop guard is the only thing that can bound it.
+            maybeLoopGuard(ctx, event, stable, { ...opts, tokenFactor });
             const ratio = Number(opts.stableOverflowRatio ?? 0.9);
             const est = estimateMessagesTokens(messages);
             // Both sides of this comparison are provider tokens; the estimate

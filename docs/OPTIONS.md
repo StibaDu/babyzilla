@@ -41,6 +41,10 @@ hot-reload on config change):
         "toolResultProtectTurn": true,
         "proactiveCompactRatio": 0.35,
         "proactiveCompactMinTokens": 120000,
+        "loopGuard": true,
+        "loopGuardTurns": 40,
+        "loopGuardMinTokens": 120000,
+        "loopGuardCooldownMs": 1800000,
         "maxAttach": 2,
         "attachBudgetTokens": 6000,
         "library": true,
@@ -114,6 +118,10 @@ once.)
 | `proactiveCompactRatio` | `0.35` | Fraction of the model's context window that triggers a proactive compaction. `0.35` compacts a 1M-token Kimi K3 session at ~367K; `0` disables by ratio (the floor still applies). |
 | `proactiveCompactMinTokens` | `120000` | Absolute floor for proactive compaction, so small-window models are untouched. |
 | `proactiveCompactCooldownMs` | `600000` | Minimum gap between two proactive compactions for the same session. Prevents a `/compact` on every step if a compaction produces little reduction. |
+| `loopGuard` | `true` | Mid-loop counterpart to proactive compaction (stable-prefix mode). A long autonomous tool loop never reaches a user turn, so proactive compaction cannot fire and the cached prefix keeps growing. Once the loop is both long and large, ask OpenCode for a queued compaction at most once per cooldown. Set `false` to allow unbounded tool loops. |
+| `loopGuardTurns` | `40` | Assistant turns since the last user message required before the loop guard may compact. Lower = fewer tokens, more interruption; higher = fewer compactions, more spend. |
+| `loopGuardMinTokens` | `120000` | Prompt-token floor for the loop guard. A long but small loop is left alone; the floor uses the calibrated provider-token scale. |
+| `loopGuardCooldownMs` | `1800000` | Minimum gap between two loop-guard compactions for the same session. Prevents a failed or ignored compaction from being requested every step. |
 | `selfLearn` | `true` | Self-tuning loop. Per-session telemetry is always recorded (plain file appends, no model calls); when this is on, a cheap analysis call may also propose **one numeric knob change** after `selfLearnSessions` new sessions and `selfLearnIntervalHours` hours. Proposals are applied provisionally, verified by a deterministic replay of the compression pipeline, then kept or reverted. `false` stops the loop but keeps telemetry. |
 | `selflearnModel` | `null` | Model for the analysis call. `null` = the session's own model (session-scoped route — free on `opencode`-tier models). Set `{"providerID":"…","id":"…"}` to pin a cheap analyst. Distinct from `distillModel` so the two roles can use different models. |
 | `pet` | `true` | Emit desktop-pet events (one small append to `~/.opencode/pet/events.jsonl` per prompt, tool call, compaction and error). `false` disables them; `BABYZILLA_PET=0` does the same without editing config. No effect unless the pet app is installed (`babyzilla pet install`, see [PET.md](PET.md)). |

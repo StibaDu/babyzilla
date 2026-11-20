@@ -402,9 +402,9 @@ function maybeRequestCompaction(ctx, event, stats, opts) {
 // The mid-loop counterpart to proactive compaction. A long tool loop may run
 // for dozens of turns without a user message; proactive compaction deliberately
 // waits for a user boundary, so the stable prefix grows all the way to the
-// overflow valve. This guard asks for a queued compaction once the loop is both
-// long and expensive, then respects a cooldown so a failed/ignored compaction
-// cannot spam the host.
+// overflow valve. This guard asks for a compaction at the next safe step
+// boundary once the loop is both long and expensive, then respects a cooldown
+// so a failed/ignored compaction cannot spam the host.
 function maybeLoopGuard(ctx, event, stats, opts) {
   try {
     if (opts.loopGuard === false) return;
@@ -433,8 +433,11 @@ function maybeLoopGuard(ctx, event, stats, opts) {
     if (now - lastRequest < cooldown) return;
     if ((compactionInFlight.get(sessionID) ?? 0) > now) return;
     loopGuardRequested.set(sessionID, now);
-    log(`loop guard: ${turns} assistant turns without a user, ${fmt(stats.after)} tok ≥ ${fmt(threshold)}; requesting compaction`);
-    void Promise.resolve(ctx.session.compact({ sessionID, delivery: "queue" }))
+    log(`loop guard: session=${sessionID} ${turns} assistant turns without a user, ${fmt(stats.after)} tok ≥ ${fmt(threshold)}; requesting compaction`);
+    // Default "steer" delivery: run at the next safe step boundary. `queue`
+    // would wait behind the prompt queue, which is exactly the delay a loop
+    // guard must avoid.
+    void Promise.resolve(ctx.session.compact({ sessionID }))
       .catch((e) => log("loop guard compaction failed:", e?.message ?? e));
   } catch (e) {
     log("loop guard skipped:", e?.message ?? e);

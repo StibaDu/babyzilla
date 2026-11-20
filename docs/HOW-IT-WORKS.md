@@ -62,8 +62,8 @@ replaces the working set). A long autonomous tool loop never reaches that
 boundary, so in stable-prefix mode the cached prompt can keep growing. The
 **loop guard** covers that case: after `loopGuardTurns` assistant turns since
 the last user message and `loopGuardMinTokens` prompt tokens, it asks for a
-queued compaction, rate-limited by `loopGuardCooldownMs`. Set `loopGuard: false`
-to allow unbounded tool loops.
+compaction at the next safe step boundary, rate-limited by
+`loopGuardCooldownMs`. Set `loopGuard: false` to allow unbounded tool loops.
 
 ### 0b. `session.hook("context")` — grounding: don't guess, verify
 

@@ -1,6 +1,7 @@
 // Integration: the loop guard is the mid-loop counterpart to proactive
 // compaction. It must fire only when a tool loop is both long and large, and
-// must not request a second compaction while the first is cooling down.
+// must not request a second compaction while the first is cooling down. It uses
+// the default steering delivery so the host runs it at the next step boundary.
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -75,7 +76,7 @@ function eventFor(sessionID, messages) {
   };
 }
 
-test("a long, large tool loop requests one queued compaction", async () => {
+test("a long, large tool loop requests one compaction at the next step boundary", async () => {
   const { contextHooks, compactions } = await loadPlugin({
     loopGuardTurns: 3,
     loopGuardMinTokens: 1,
@@ -83,7 +84,7 @@ test("a long, large tool loop requests one queued compaction", async () => {
   });
   await run(contextHooks, eventFor("ses_loop_trigger", loopMessages(4)));
   assert.equal(compactions.length, 1);
-  assert.deepEqual(compactions[0], { sessionID: "ses_loop_trigger", delivery: "queue" });
+  assert.deepEqual(compactions[0], { sessionID: "ses_loop_trigger" });
 });
 
 test("the cooldown prevents a second compaction in the same loop", async () => {

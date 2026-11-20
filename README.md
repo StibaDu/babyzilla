@@ -39,10 +39,10 @@
 - **Loop guard — bounded autonomous runs**: proactive compaction waits for a
   user turn, but a long tool loop can run for dozens of turns without one. Once
   a loop reaches `loopGuardTurns` assistant turns since the last user message
-  and `loopGuardMinTokens` prompt tokens, BabyZilla asks OpenCode for a queued
-  compaction, at most once per `loopGuardCooldownMs`. This catches the
-  screenshot/test/edit loops that would otherwise grow the cached prefix
-  indefinitely. Disable with `loopGuard: false`.
+  and `loopGuardMinTokens` prompt tokens, BabyZilla asks OpenCode for a
+  compaction at the next safe step boundary, at most once per
+  `loopGuardCooldownMs`. This catches the screenshot/test/edit loops that would
+  otherwise grow the cached prefix indefinitely. Disable with `loopGuard: false`.
 - **Grounding — no silent guesses**: every request carries one constant system
   part: answer directly when sure, say "I'm not sure" or check it with a tool
   when not, never pass a guess off as a fact, and never ask you to verify what
@@ -361,9 +361,9 @@ except Layer 1.
 7. **Loop guard, mid-loop**: proactive compaction waits for a user turn, so a
    screenshot/test/edit loop can run for dozens of turns without ever hitting
    one. After `loopGuardTurns` assistant turns since the last user message and
-   `loopGuardMinTokens` prompt tokens, BabyZilla asks OpenCode for a queued
-   compaction, rate-limited by `loopGuardCooldownMs`. Disable with
-   `loopGuard: false`.
+   `loopGuardMinTokens` prompt tokens, BabyZilla asks OpenCode for a compaction
+   at the next safe step boundary, rate-limited by `loopGuardCooldownMs`.
+   Disable with `loopGuard: false`.
 8. **Layer 1, at compaction**: BabyZilla hooks OpenCode's `compaction` hook,
    receives the full transcript, and calls your configured model to distill it
    into JSONL modules: a state module (*hot*, always inlined), a decisions

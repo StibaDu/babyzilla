@@ -2,6 +2,16 @@
 
 All notable changes to BabyZilla. Versions follow [SemVer](https://semver.org/).
 
+## [0.37.1] — 2026-11-20
+
+### Fixed
+
+- **The loop guard now uses steering delivery.** `session.compact` defaults to
+  running at the next safe step boundary; `delivery: "queue"` stays behind the
+  prompt queue. A mid-loop guard must not wait there, so the guard no longer
+  passes `delivery`. Proactive compaction still queues at user boundaries.
+  The test now asserts the compact call has no delivery override.
+
 ## [0.37.0] — 2026-11-02
 
 ### Added
